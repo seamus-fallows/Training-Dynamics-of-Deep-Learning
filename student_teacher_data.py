@@ -6,6 +6,8 @@ from torch.utils.data import Dataset, TensorDataset
 import matplotlib.pyplot as plt
 from torch import Tensor
 
+MAIN = __name__ == "__main__"
+#%%
 
 def generate_teacher_student_data(num_samples: int = 100, in_size: int = 5, scale_factor: float = 10.) -> tuple[Tensor, Tensor]:
     """ Generate teacher-student data from a single layer linear teacher model."""
@@ -18,7 +20,8 @@ def generate_teacher_student_data(num_samples: int = 100, in_size: int = 5, scal
     return inputs, outputs
 
 #%%
-inputs, outputs = generate_teacher_student_data(3, 5)
-print(inputs)
-print(outputs)
+if MAIN:
+    inputs, outputs = generate_teacher_student_data(3, 5)
+    print(inputs)
+    print(outputs)
 # %%

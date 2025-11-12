@@ -1,26 +1,15 @@
 #%%
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, Literal, List, Dict, Union, Optional, Tuple, Sequence
-from jaxtyping import Int, Float
-import numpy as np
-import math
-import sys
 import torch as t
 from IPython.display import display
-import einops
 import torch.nn as nn
-import torch.nn.functional as F
-from torch import Tensor
-from torch.utils.data import DataLoader, Dataset, TensorDataset
-from tqdm.notebook import tqdm
+from torch import Tensor, optim
+from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
-from torch import optim
-
 
 device = t.device(
     "cuda" if t.cuda.is_available() else "cpu"
 )
-
 
 MAIN = __name__ == "__main__"
 
@@ -31,17 +20,17 @@ class DeepLinearNetworkConfig:
     hidden_size: int
     in_size: int
     out_size: int
-    weight_var: float = 1.0
+    weight_var: float
     bias: bool = False
 
 @dataclass
 class TrainingConfig:
     batch_size: int
     num_epochs: int
-    lr: float = 0.01
+    lr: float
     optimizer_cls: type[optim.Optimizer] = optim.SGD
     criterion_cls: type[nn.Module] = nn.MSELoss
-    show_progress: bool = False
+
 
 class DeepLinearNetwork(nn.Module):
     def __init__(self, config: DeepLinearNetworkConfig):
@@ -70,7 +59,7 @@ class DeepLinearNetwork(nn.Module):
 
 
 class DeepLinearNetworkTrainer:
-    def __init__(self, model: DeepLinearNetwork, config: TrainingConfig, train_set: Dataset, test_set: Dataset):
+    def __init__(self, model: DeepLinearNetwork, config: TrainingConfig, train_set: Tensor, test_set: Tensor):
         self.model = model.to(device)
         self.config = config
         self.train_set = train_set
@@ -78,6 +67,9 @@ class DeepLinearNetworkTrainer:
         self.optimizer = config.optimizer_cls(self.model.parameters(), lr=config.lr)
         self.criterion = config.criterion_cls()
 
+        # Prepare data loaders
+        train_set = TensorDataset(train_set[0], train_set[1])
+        test_set = TensorDataset(test_set[0], test_set[1])
         self.train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True)
         self.test_loader = DataLoader(test_set, batch_size=config.batch_size, shuffle=False)
         self.history = {
@@ -112,37 +104,32 @@ class DeepLinearNetworkTrainer:
         self.optimizer.step()
         return loss
 
-    def _train_epoch(self, epoch: int) -> float:
+    def _train_epoch(self) -> float:
         """Train for one epoch and return average training loss."""
         total_loss = 0.0
         n_examples = 0
         
         loader = self.train_loader
-        if self.config.show_progress:
-            loader = tqdm(loader, total=len(loader), ascii=True)
-            loader.set_description(f"Epoch {epoch+1}/{self.config.num_epochs}")
         
         for x, y in loader:
             x, y = x.to(device), y.to(device)
             loss = self.training_step(x, y)
-            
             batch_size = x.size(0)
             total_loss += loss.item() * batch_size
             n_examples += batch_size
-            
-            if self.config.show_progress:
-                loader.set_postfix(loss=loss.item())
         
         return total_loss / n_examples
 
     def train(self) -> DeepLinearNetwork:
         """Performs a full training run."""
         for epoch in range(self.config.num_epochs):
-            train_loss = self._train_epoch(epoch)
+            train_loss = self._train_epoch()
             test_loss = self.evaluate()
             
             self.history["train_loss"].append(train_loss)
             self.history["test_loss"].append(test_loss)
         
         return self.model
+
+#%%
 
