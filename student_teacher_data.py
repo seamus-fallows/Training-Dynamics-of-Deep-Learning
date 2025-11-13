@@ -16,6 +16,7 @@ def generate_teacher_student_data(num_samples: int = 100, in_size: int = 5, scal
     # Create input and output data
     inputs = t.randn(num_samples, in_size)
     outputs = einops.einsum(teacher_matrix, inputs, 'h w, n w -> n h')
+    
 
     return inputs, outputs
 

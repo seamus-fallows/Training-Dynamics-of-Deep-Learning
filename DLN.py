@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch import Tensor, optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
-
+from configs import DeepLinearNetworkConfig, TrainingConfig
 device = t.device(
     "cuda" if t.cuda.is_available() else "cpu"
 )
@@ -14,23 +14,6 @@ device = t.device(
 MAIN = __name__ == "__main__"
 
 #%%
-@dataclass
-class DeepLinearNetworkConfig:
-    num_hidden: int
-    hidden_size: int
-    in_size: int
-    out_size: int
-    weight_var: float
-    bias: bool = False
-
-@dataclass
-class TrainingConfig:
-    num_epochs: int
-    lr: float
-    optimizer_cls: type[optim.Optimizer] = optim.SGD
-    criterion_cls: type[nn.Module] = nn.MSELoss
-    batch_size: int | None = None
-
 
 class DeepLinearNetwork(nn.Module):
     def __init__(self, config: DeepLinearNetworkConfig):
@@ -93,6 +76,7 @@ class DeepLinearNetworkTrainer:
             if self.config.batch_size is None:
                 output = self.model(self.test_features)
                 loss = self.criterion(output, self.test_targets)
+                self.model.train()
                 return loss.item()
 
             else:
