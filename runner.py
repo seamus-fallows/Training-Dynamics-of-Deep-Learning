@@ -1,44 +1,44 @@
-#%%
-import random
+# %%
 import torch as t
-import numpy as np
 from DLN import DeepLinearNetwork, DeepLinearNetworkTrainer
-from configs import DeepLinearNetworkConfig, TrainingConfig, TeacherStudentExperimentConfig
-from student_teacher_data import generate_teacher_student_data
+from configs import TeacherStudentExperimentConfig
+from data_utils import (
+    generate_teacher_student_data,
+    train_test_split,
+    get_data_loaders,
+    set_all_seeds,
+)
 
-MAIN = __name__ == "__main__"
-#%%
-
-def _set_all_seeds(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    t.manual_seed(seed)
-    if t.cuda.is_available():
-        t.cuda.manual_seed_all(seed)
 
 def run_once(exp: TeacherStudentExperimentConfig, run_id: int):
+    device = t.device("cuda" if t.cuda.is_available() else "cpu")
     model_config = exp.dln_config
     training_config = exp.training_config
-    device = t.device("cuda" if t.cuda.is_available() else "cpu")
     seed = exp.base_seed + run_id
-    _set_all_seeds(seed)
+    hidden_size = model_config.hidden_size
+    weight_std = hidden_size ** (-exp.gamma / 2)
+    set_all_seeds(seed)
 
-    # Generate data
+    # Generate data from teacher-student model
     inputs, outputs = generate_teacher_student_data(
         num_samples=exp.num_samples,
         in_size=model_config.in_size,
-        scale_factor=exp.teacher_matrix_scale_factor
+        scale_factor=exp.teacher_matrix_scale_factor,
     )
-    
-    # Split data into train and test sets
-    n_train = int((1 - exp.test_split) * exp.num_samples)
-    train_set = (inputs[:n_train], outputs[:n_train])
-    test_set = (inputs[n_train:], outputs[n_train:])
+
+    # Split into train and test sets and create data loaders
+    train_set, test_set = train_test_split(inputs, outputs, exp.test_split)
+    train_set_loader, test_set_loader = get_data_loaders(
+        train_set, test_set, training_config.batch_size
+    )
 
     # Initialize model
     model = DeepLinearNetwork(model_config)
-    model.init_weights(exp.gamma)
-    trainer = DeepLinearNetworkTrainer(model, training_config, train_set, test_set, device)
+
+    model.init_weights(std=weight_std)
+    trainer = DeepLinearNetworkTrainer(
+        model, training_config, train_set_loader, test_set_loader, device
+    )
 
     # Train model
     trainer.train()
@@ -50,3 +50,5 @@ def run_once(exp: TeacherStudentExperimentConfig, run_id: int):
     }
     return run_log
 
+
+# %%

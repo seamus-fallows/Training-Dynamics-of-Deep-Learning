@@ -1,16 +1,10 @@
-#%%
-from dataclasses import dataclass
 import torch as t
-from IPython.display import display
 import torch.nn as nn
-from torch import Tensor, optim
-from torch.utils.data import DataLoader, TensorDataset
-import matplotlib.pyplot as plt
+from torch import Tensor
+from torch.utils.data import DataLoader
 from configs import DeepLinearNetworkConfig, TrainingConfig
+from typing import Optional
 
-MAIN = __name__ == "__main__"
-
-#%%
 
 class DeepLinearNetwork(nn.Module):
     def __init__(self, config: DeepLinearNetworkConfig):
@@ -19,16 +13,21 @@ class DeepLinearNetwork(nn.Module):
         self.config = config
 
         # Build model
-        sizes = [config.in_size] + [config.hidden_size] * config.num_hidden + [config.out_size]
+        sizes = (
+            [config.in_size]
+            + [config.hidden_size] * config.num_hidden
+            + [config.out_size]
+        )
         self.model = nn.Sequential(
-            *[nn.Linear(sizes[i], sizes[i + 1], bias=config.bias) for i in range(len(sizes) - 1)]
+            *[
+                nn.Linear(sizes[i], sizes[i + 1], bias=config.bias)
+                for i in range(len(sizes) - 1)
+            ]
         )
 
-
-    def init_weights(self, gamma: float) -> None:
-        std = self.config.hidden_size ** (-gamma / 2)
+    def init_weights(self, std: float) -> None:
         with t.no_grad():
-            for m in self.model:
+            for m in self.model.modules():
                 if isinstance(m, nn.Linear):
                     nn.init.normal_(m.weight, mean=0.0, std=std)
 
@@ -36,57 +35,47 @@ class DeepLinearNetwork(nn.Module):
         return self.model(x)
 
 
-
 class DeepLinearNetworkTrainer:
-    def __init__(self, model: DeepLinearNetwork, config: TrainingConfig, train_set: Tensor, test_set: Tensor, device: t.device):
+    def __init__(
+        self,
+        model: DeepLinearNetwork,
+        config: TrainingConfig,
+        train_loader: DataLoader,
+        test_loader: Optional[DataLoader],
+        device: t.device,
+    ):
         self.device = device
         self.model = model.to(device)
         self.config = config
-        self.train_set = train_set
-        self.test_set = test_set
+        self.train_loader = train_loader
+        self.test_loader = test_loader
+
+        self.evaluate_every = config.evaluate_every
         self.optimizer = config.optimizer_cls(self.model.parameters(), lr=config.lr)
         self.criterion = config.criterion_cls()
-        self.evaluate_every = config.evaluate_every
-
-        # If using full batch training then move data to device else create data loaders
-        if config.batch_size is None:
-            self.train_features = train_set[0].to(device)
-            self.train_targets = train_set[1].to(device)
-            self.test_features = test_set[0].to(device)
-            self.test_targets = test_set[1].to(device)
-        else:
-            train_dataset = TensorDataset(train_set[0], train_set[1])
-            test_dataset = TensorDataset(test_set[0], test_set[1])
-            self.train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-            self.test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False)
 
         self.history = {
             "train_loss": [],
             "test_loss": [],
         }
 
+    def evaluate(self) -> float | None:
+        """Compute test loss, return None if no test set."""
+        if self.test_loader is None:
+            return None
 
-    def evaluate(self) -> float:
-        """Compute test loss."""
         self.model.eval()
+        total_loss = 0.0
+        n_examples = 0
 
         with t.no_grad():
-            if self.config.batch_size is None:
-                output = self.model(self.test_features)
-                loss = self.criterion(output, self.test_targets)
-                self.model.train()
-                return loss.item()
-
-            else:
-                total_loss = 0.0
-                n_examples = 0
-                for features, targets in self.test_loader:
-                    features, targets = features.to(self.device), targets.to(self.device)
-                    output = self.model(features)
-                    loss = self.criterion(output, targets)
-                    batch_size = features.size(0)
-                    total_loss += loss.item() * batch_size
-                    n_examples += batch_size
+            for features, targets in self.test_loader:
+                features, targets = features.to(self.device), targets.to(self.device)
+                output = self.model(features)
+                loss = self.criterion(output, targets)
+                batch_size = features.size(0)
+                total_loss += loss.item() * batch_size
+                n_examples += batch_size
 
         self.model.train()
         return total_loss / n_examples
@@ -102,35 +91,31 @@ class DeepLinearNetworkTrainer:
 
     def train_epoch(self) -> float:
         """Train for one epoch and return average training loss."""
-        if self.config.batch_size is None:
-            loss = self.training_step(self.train_features, self.train_targets)
-            return loss.item()
-        else:
-            total_loss = 0.0
-            n_examples = 0
+        total_loss = 0.0
+        n_examples = 0
 
-            for features, targets in self.train_loader:
-                features, targets = features.to(self.device), targets.to(self.device)
-                loss = self.training_step(features, targets)
-                batch_size = features.size(0)
-                total_loss += loss.item() * batch_size
-                n_examples += batch_size
-        
+        for features, targets in self.train_loader:
+            features, targets = features.to(self.device), targets.to(self.device)
+            loss = self.training_step(features, targets)
+            batch_size = features.size(0)
+            total_loss += loss.item() * batch_size
+            n_examples += batch_size
+
         return total_loss / n_examples
 
     def train(self) -> DeepLinearNetwork:
         """Performs a full training run."""
         for epoch in range(self.config.num_epochs):
             train_loss = self.train_epoch()
-            if (epoch + 1) % self.evaluate_every == 0 or epoch == 0:
+
+            if self.test_loader is not None and (
+                (epoch + 1) % self.evaluate_every == 0 or epoch == 0
+            ):
                 test_loss = self.evaluate()
             else:
                 test_loss = None
-            
+
             self.history["train_loss"].append(train_loss)
             self.history["test_loss"].append(test_loss)
-        
+
         return self.model
-
-#%%
-
