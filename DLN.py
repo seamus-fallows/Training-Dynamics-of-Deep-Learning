@@ -68,7 +68,7 @@ class DeepLinearNetworkTrainer:
         total_loss = 0.0
         n_examples = 0
 
-        with t.no_grad():
+        with t.inference_mode():
             for features, targets in self.test_loader:
                 features, targets = features.to(self.device), targets.to(self.device)
                 output = self.model(features)
@@ -77,7 +77,6 @@ class DeepLinearNetworkTrainer:
                 total_loss += loss.item() * batch_size
                 n_examples += batch_size
 
-        self.model.train()
         return total_loss / n_examples
 
     def training_step(self, features: Tensor, targets: Tensor) -> Tensor:
@@ -91,6 +90,7 @@ class DeepLinearNetworkTrainer:
 
     def train_epoch(self) -> float:
         """Train for one epoch and return average training loss."""
+        self.model.train()
         total_loss = 0.0
         n_examples = 0
 
