@@ -14,11 +14,11 @@ class DeepLinearNetworkConfig:
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int
     lr: float
+    max_steps: int = 10_000
+    evaluate_every: int = 100
     optimizer_cls: type[optim.Optimizer] = optim.SGD
     criterion_cls: type[nn.Module] = nn.MSELoss
-    evaluate_every: int = 50  # Evaluate test loss every k epochs
     batch_size: int | None = None  # None means full batch training
 
 

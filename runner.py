@@ -1,4 +1,3 @@
-# %%
 import torch as t
 from DLN import DeepLinearNetwork, DeepLinearNetworkTrainer
 from configs import TeacherStudentExperimentConfig
@@ -8,6 +7,7 @@ from data_utils import (
     get_data_loaders,
     set_all_seeds,
 )
+from utils import initialize_dln_weights
 
 
 def run_once(exp: TeacherStudentExperimentConfig, run_id: int):
@@ -34,8 +34,8 @@ def run_once(exp: TeacherStudentExperimentConfig, run_id: int):
 
     # Initialize model
     model = DeepLinearNetwork(model_config)
+    initialize_dln_weights(model, weight_std)
 
-    model.init_weights(std=weight_std)
     trainer = DeepLinearNetworkTrainer(
         model, training_config, train_set_loader, test_set_loader, device
     )
@@ -49,6 +49,3 @@ def run_once(exp: TeacherStudentExperimentConfig, run_id: int):
         "history": trainer.history,
     }
     return run_log
-
-
-# %%

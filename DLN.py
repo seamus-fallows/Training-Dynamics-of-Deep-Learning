@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader
 from configs import DeepLinearNetworkConfig, TrainingConfig
-from typing import Optional
+from typing import Optional, List, Dict, Any, Iterator
 
 
 class DeepLinearNetwork(nn.Module):
@@ -50,16 +50,59 @@ class DeepLinearNetworkTrainer:
         self.train_loader = train_loader
         self.test_loader = test_loader
 
-        self.evaluate_every = config.evaluate_every
         self.optimizer = config.optimizer_cls(self.model.parameters(), lr=config.lr)
         self.criterion = config.criterion_cls()
 
-        self.history = {
-            "train_loss": [],
-            "test_loss": [],
-        }
+        self.history: List[Dict[str, Any]] = []
+        self.step_counter = 0
 
-    def evaluate(self) -> float | None:
+        # Create an infinite iterator so we can just call next() for each step
+        self.train_iterator = self._infinite_batch_iterator()
+
+    def _infinite_batch_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
+        """Yields batches forever, automatically resetting the loader at epoch ends."""
+        while True:
+            for batch in self.train_loader:
+                yield batch
+
+    def train(self) -> DeepLinearNetwork:
+        """
+        Standard training loop for a single model, looping for max_steps.
+        """
+        self.model.train()
+
+        for _ in range(self.config.max_steps):
+            train_loss = self.training_step()
+
+            # Evaluation and Logging
+            if self.step_counter % self.config.evaluate_every == 0:
+                test_loss = self.evaluate()
+                self._log(train_loss, test_loss)
+
+        return self.model
+
+    def training_step(self) -> float:
+        """
+        Perform one gradient update step.
+        """
+        self.model.train()
+
+        # Get data and move to device
+        features, targets = next(self.train_iterator)
+        features = features.to(self.device)
+        targets = targets.to(self.device)
+
+        # Optimization step
+        self.optimizer.zero_grad()
+        output = self.model(features)
+        loss = self.criterion(output, targets)
+        loss.backward()
+        self.optimizer.step()
+
+        self.step_counter += 1
+        return loss.item()
+
+    def evaluate(self) -> Optional[float]:
         """Compute test loss, return None if no test set."""
         if self.test_loader is None:
             return None
@@ -70,52 +113,24 @@ class DeepLinearNetworkTrainer:
 
         with t.inference_mode():
             for features, targets in self.test_loader:
-                features, targets = features.to(self.device), targets.to(self.device)
+                features = features.to(self.device)
+                targets = targets.to(self.device)
+
                 output = self.model(features)
                 loss = self.criterion(output, targets)
+
                 batch_size = features.size(0)
                 total_loss += loss.item() * batch_size
                 n_examples += batch_size
 
-        return total_loss / n_examples
-
-    def training_step(self, features: Tensor, targets: Tensor) -> Tensor:
-        """Perform one gradient update step."""
-        self.optimizer.zero_grad()
-        output = self.model(features)
-        loss = self.criterion(output, targets)
-        loss.backward()
-        self.optimizer.step()
-        return loss
-
-    def train_epoch(self) -> float:
-        """Train for one epoch and return average training loss."""
         self.model.train()
-        total_loss = 0.0
-        n_examples = 0
-
-        for features, targets in self.train_loader:
-            features, targets = features.to(self.device), targets.to(self.device)
-            loss = self.training_step(features, targets)
-            batch_size = features.size(0)
-            total_loss += loss.item() * batch_size
-            n_examples += batch_size
-
         return total_loss / n_examples
 
-    def train(self) -> DeepLinearNetwork:
-        """Performs a full training run."""
-        for epoch in range(self.config.num_epochs):
-            train_loss = self.train_epoch()
-
-            if self.test_loader is not None and (
-                (epoch + 1) % self.evaluate_every == 0 or epoch == 0
-            ):
-                test_loss = self.evaluate()
-            else:
-                test_loss = None
-
-            self.history["train_loss"].append(train_loss)
-            self.history["test_loss"].append(test_loss)
-
-        return self.model
+    def _log(self, train_loss: float, test_loss: Optional[float]) -> None:
+        self.history.append(
+            {
+                "step": self.step_counter,
+                "train_loss": train_loss,
+                "test_loss": test_loss,
+            }
+        )
