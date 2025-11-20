@@ -24,8 +24,11 @@ class DeepLinearNetwork(nn.Module):
                 for i in range(len(sizes) - 1)
             ]
         )
+        if config.gamma is not None:
+            std = config.hidden_size ** (-config.gamma / 2)
+            self._init_weights(std)
 
-    def init_weights(self, std: float) -> None:
+    def _init_weights(self, std: float) -> None:
         with t.no_grad():
             for m in self.model.modules():
                 if isinstance(m, nn.Linear):

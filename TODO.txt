@@ -5,3 +5,7 @@
 - Implement wandb logging
 - Make sure that in_size for data and model always match
 - Make gamma/weight initialization optional so ExperimentBuilder is more general
+- change max_steps for comparative_trainer.
+- What dataclasses should I use??
+- Comparative runner a function?
+- model seed part of model class

@@ -3,11 +3,11 @@ import matplotlib.pyplot as plt
 from configs import (
     DeepLinearNetworkConfig,
     TrainingConfig,
-    DataConfig,
+    DiagonalTeacherConfig,
     ExperimentConfig,
     GridSearchConfig,
 )
-from runner import run_sweep, run_comparative
+from runner import run_single, run_sweep, run_comparative
 
 MAIN = __name__ == "__main__"
 # %%
@@ -19,6 +19,7 @@ if MAIN:
         hidden_size=100,
         in_size=5,
         out_size=5,
+        gamma=1.5,
     )
 
     training_config = TrainingConfig(
@@ -27,35 +28,35 @@ if MAIN:
         evaluate_every=1,
     )
 
-    data_config = DataConfig(num_samples=100, in_size=5, test_split=None)
+    base_data_config = DiagonalTeacherConfig(
+        num_samples=125,
+        in_size=5,
+        test_split=0.2,
+        scale_factor=10.0,
+        seed=42,
+    )
 
     base_exp = ExperimentConfig(
         name="base",
         dln_config=dln_config,
         training_config=training_config,
-        data_config=data_config,
-        gamma=1.5,
+        data_config=base_data_config,
         model_seed=42,
     )
 # %%
 if MAIN:
     # Single training run, no sweep
-    print("--- STARTING SINGLE RUN ---")
-    single_run_log = run_sweep(
-        GridSearchConfig(
-            name="single_run",
-            base_config=base_exp,
-            param_grid={},
-        )
-    )[0]
-    print(f"Single Run Final Loss: {single_run_log['history'][-1]['train_loss']:.5f}")
-    # Plot train loss
-    train_loss = [h["train_loss"] for h in single_run_log["history"]]
+    # Usage
+    result = run_single(base_exp)
+    # plot train loss with log scale
+    train_loss = [h["train_loss"] for h in result["history"]]
     plt.plot(train_loss)
+    plt.yscale("log")
     plt.xlabel("Gradient Steps")
     plt.ylabel("Train Loss")
     plt.title("Single Run Train Loss")
     plt.show()
+
 
 # %%
 if MAIN:
@@ -64,7 +65,7 @@ if MAIN:
         name="seed_robustness",
         base_config=base_exp,
         param_grid={
-            "model_seed": [0, 1],  # Run each LR twice with different weights
+            "model_seed": [0, 1],
             "data_config.seed": [0, 1],
         },
     )
@@ -97,7 +98,7 @@ if MAIN:
     config_full.training_config.batch_size = None
 
     print("\n--- STARTING COMPARISON ---")
-    comp_res = run_comparative(config_batch, config_full, steps=50000)
+    comp_res = run_comparative(config_batch, config_full, steps=10000)
 
     # Plot Distance
     dists = [x["param_euclidean_dist"] for x in comp_res["history"]]
@@ -105,4 +106,26 @@ if MAIN:
     plt.title("Parameter Distance: Batch vs Full")
     plt.show()
 
+# %%
+# %%
+if MAIN:
+    # 2. RUN A SWEEP (Robustness Check)
+    # ---------------------------------
+    # We can sweep over parameters AND dataset types seamlessly.
+
+    sweep_def = GridSearchConfig(
+        name="dataset_robustness",
+        base_config=base_exp,
+        param_grid={"data_config.scale_factor": [5.0, 10.0]},
+    )
+
+    print("\n--- STARTING DATASET SWEEP ---")
+    sweep_results = run_sweep(sweep_def)
+
+    # Plotting logic remains the same
+    for res in sweep_results:
+        loss = [h["train_loss"] for h in res["history"]]
+        plt.plot(loss)
+    plt.title("Comparison of Datasets")
+    plt.show()
 # %%

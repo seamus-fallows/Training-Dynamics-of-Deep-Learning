@@ -1,0 +1,25 @@
+type: single
+name: "baseline_run"
+model_seed: 42
+
+dln_config:
+  num_hidden: 3
+  hidden_size: 100
+  in_size: 5
+  out_size: 5
+  gamma: 1.5
+  bias: false
+
+training_config:
+  lr: 0.0001
+  max_steps: 10000
+  evaluate_every: 1
+  batch_size: null
+
+data_config:
+  name: "diagonal_teacher" # see data_utils.py for options
+  num_samples: 125
+  in_size: 5
+  test_split: null
+  seed: 42
+  scale_factor: 10.0

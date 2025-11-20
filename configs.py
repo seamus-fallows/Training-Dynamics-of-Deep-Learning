@@ -10,6 +10,7 @@ class DeepLinearNetworkConfig:
     hidden_size: int
     in_size: int
     out_size: int
+    gamma: float | None
     bias: bool = False
 
 
@@ -25,11 +26,25 @@ class TrainingConfig:
 
 @dataclass
 class DataConfig:
-    num_samples: int = 125
-    in_size: int = 5
-    teacher_matrix_scale_factor: float = 10.0
-    test_split: float | None = 0.2
-    seed: int = 42
+    name: str = ""
+    num_samples: int
+    in_size: int
+    test_split: float | None
+    seed: int
+
+
+@dataclass
+class DiagonalTeacherConfig(DataConfig):
+    name: str = "diagonal_teacher"
+    scale_factor: float
+
+
+@dataclass
+class RandomTeacherConfig(DataConfig):
+    name: str = "random_teacher"
+    scale_factor: float
+    mean: float
+    std: float
 
 
 @dataclass
@@ -38,9 +53,8 @@ class ExperimentConfig:
     dln_config: DeepLinearNetworkConfig
     training_config: TrainingConfig
     data_config: DataConfig
-    gamma: float
     # seed for model initialization and dataloader shuffling
-    model_seed: int = 42
+    model_seed: int
 
 
 @dataclass
