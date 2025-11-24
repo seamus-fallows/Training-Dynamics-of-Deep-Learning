@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from registries import register_criterion
+from legacy.registries import register_criterion
 
 
 @register_criterion("RidgeRegressionLoss")

@@ -1,5 +1,5 @@
 import torch as t
-from registries import register_metric
+from legacy.registries import register_metric
 from DLN import DeepLinearNetworkTrainer
 
 

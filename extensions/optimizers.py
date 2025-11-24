@@ -1,6 +1,6 @@
 import torch
 from torch.optim import Optimizer
-from registries import register_optimizer
+from legacy.registries import register_optimizer
 
 
 @register_optimizer("SgdWithNoise")

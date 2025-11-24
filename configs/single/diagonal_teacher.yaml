@@ -1,0 +1,32 @@
+
+defaults:
+  - _base # hydra config defining output path
+  - _self_
+
+experiment:
+  name: "diagonal_teacher"
+
+model:
+  in_dim: 5
+  out_dim: 5
+  num_hidden: 3
+  hidden_size: 100
+  gamma: 1.5
+  bias: false
+
+data:
+  type: "diagonal_teacher"
+  num_samples: 100
+  test_split: null # equivalent to None
+  data_seed: 0
+  params:
+    scale: 10
+
+training:
+  lr: 0.0001
+  max_steps: 20000
+  batch_size: null # equivalent to None
+  evaluate_every: 1
+  optimizer: "SGD"
+  criterion: "MSELoss"
+  model_seed: 0

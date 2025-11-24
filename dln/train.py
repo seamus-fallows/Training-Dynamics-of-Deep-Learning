@@ -1,47 +1,44 @@
+from typing import Optional, List, Dict, Any, Type, Iterator
+
 import torch as t
 import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader
-from configs import DeepLinearNetworkConfig, TrainingConfig
-from typing import Optional, List, Dict, Any, Iterator, Type
+
+from .config import TrainingConfig
+from .model import DeepLinearNetwork
 
 
-class DeepLinearNetwork(nn.Module):
-    def __init__(
-        self,
-        config: DeepLinearNetworkConfig,
-    ):
-        super().__init__()
-
-        self.config = config
-
-        # Build model
-        sizes = (
-            [config.in_size]
-            + [config.hidden_size] * config.num_hidden
-            + [config.out_size]
-        )
-        self.model = nn.Sequential(
-            *[
-                nn.Linear(sizes[i], sizes[i + 1], bias=config.bias)
-                for i in range(len(sizes) - 1)
-            ]
-        )
-        if config.gamma is not None:
-            std = config.hidden_size ** (-config.gamma / 2)
-            self._init_weights(std)
-
-    def _init_weights(self, std: float) -> None:
-        with t.no_grad():
-            for m in self.model.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.normal_(m.weight, mean=0.0, std=std)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.model(x)
+def _get_optimizer_cls(name: str) -> Type[t.optim.Optimizer]:
+    """Resolve optimizer class from torch.optim by name."""
+    try:
+        return getattr(t.optim, name)
+    except AttributeError as e:
+        raise ValueError(
+            f"Unknown optimizer '{name}' in TrainingConfig.optimizer"
+        ) from e
 
 
-class DeepLinearNetworkTrainer:
+def _get_criterion_cls(name: str) -> Type[nn.Module]:
+    """Resolve loss criterion class from torch.nn by name."""
+    try:
+        return getattr(nn, name)
+    except AttributeError as e:
+        raise ValueError(
+            f"Unknown criterion '{name}' in TrainingConfig.criterion"
+        ) from e
+
+
+class Trainer:
+    """
+    Minimal trainer for a single DeepLinearNetwork model.
+
+    - Loops for `max_steps` gradient steps.
+    - Logs train and test loss every `evaluate_every` steps.
+    - Keeps a history list of dicts:
+        {"step": int, "train_loss": float, "test_loss": float | None}
+    """
+
     def __init__(
         self,
         model: DeepLinearNetwork,
@@ -49,8 +46,6 @@ class DeepLinearNetworkTrainer:
         train_loader: DataLoader,
         test_loader: Optional[DataLoader],
         device: t.device,
-        optimizer_cls: Type[t.optim.Optimizer],
-        criterion_cls: Type[nn.Module],
     ):
         self.device = device
         self.model = model.to(device)
@@ -58,43 +53,38 @@ class DeepLinearNetworkTrainer:
         self.train_loader = train_loader
         self.test_loader = test_loader
 
+        optimizer_cls = _get_optimizer_cls(config.optimizer)
+        criterion_cls = _get_criterion_cls(config.criterion)
+
         self.optimizer = optimizer_cls(self.model.parameters(), lr=config.lr)
         self.criterion = criterion_cls()
 
         self.history: List[Dict[str, Any]] = []
         self.step_counter = 0
 
-        # Create an infinite iterator so we can just call next() for each step
+        # Infinite iterator over training batches
         self.train_iterator = self._infinite_batch_iterator()
 
     def _infinite_batch_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
-        """Yields batches forever, automatically resetting the loader at epoch ends."""
+        """Yield batches forever, cycling through the DataLoader."""
         while True:
             for batch in self.train_loader:
                 yield batch
 
-    def train(self) -> DeepLinearNetwork:
-        """
-        Standard training loop for a single model, looping for max_steps.
-        """
+    def train(self) -> List[Dict[str, Any]]:
         self.model.train()
 
         for _ in range(self.config.max_steps):
             train_loss = self.training_step()
 
-            # Evaluation and Logging
+            # Evaluation + logging
             if self.step_counter % self.config.evaluate_every == 0:
                 test_loss = self.evaluate()
                 self._log(train_loss, test_loss)
 
-        return self.model
+        return self.history
 
     def training_step(self) -> float:
-        """
-        Perform one gradient update step.
-        """
-        self.model.train()
-
         # Get data and move to device
         features, targets = next(self.train_iterator)
         features = features.to(self.device)
@@ -108,10 +98,10 @@ class DeepLinearNetworkTrainer:
         self.optimizer.step()
 
         self.step_counter += 1
-        return loss.item()
+        return float(loss.item())
 
     def evaluate(self) -> Optional[float]:
-        """Compute test loss, return None if no test set."""
+        """Compute test loss, or return None if no test set is provided."""
         if self.test_loader is None:
             return None
 
@@ -128,7 +118,7 @@ class DeepLinearNetworkTrainer:
                 loss = self.criterion(output, targets)
 
                 batch_size = features.size(0)
-                total_loss += loss.item() * batch_size
+                total_loss += float(loss.item()) * batch_size
                 n_examples += batch_size
 
         self.model.train()
@@ -138,7 +128,7 @@ class DeepLinearNetworkTrainer:
         self.history.append(
             {
                 "step": self.step_counter,
-                "train_loss": train_loss,
-                "test_loss": test_loss,
+                "train_loss": float(train_loss),
+                "test_loss": None if test_loss is None else float(test_loss),
             }
         )
