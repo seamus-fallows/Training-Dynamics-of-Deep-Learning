@@ -1,21 +1,21 @@
 import json
+from ..utils import seed_rng, get_device
 from pathlib import Path
 import hydra
 import torch as t
-from .config import ExperimentConfig, register_configs
-from .data import create_dataset, get_data_loaders
-from .model import DeepLinearNetwork
-from .train import Trainer
+from data import create_dataset, get_data_loaders
+from model import DeepLinearNetwork
+from train import Trainer
 from hydra.core.hydra_config import HydraConfig
-
-# 1. Register configs before running
-register_configs()
+from omegaconf import DictConfig
 
 
-def run_experiment(cfg: ExperimentConfig) -> Path:
+def run_experiment(cfg: DictConfig) -> Path:
     output_dir = Path(HydraConfig.get().runtime.output_dir)
+    device = get_device()
 
-    # Build components using cfg directly
+    # Data generation
+    seed_rng(cfg.data.data_seed)
     train_set, test_set = create_dataset(
         cfg.data,
         in_dim=cfg.model.in_dim,
@@ -33,14 +33,15 @@ def run_experiment(cfg: ExperimentConfig) -> Path:
     if t.cuda.is_available():
         t.cuda.manual_seed_all(cfg.training.model_seed)
 
-    # Build model and trainer
+    # Model initialization
+    seed_rng(cfg.training.model_seed)
     model = DeepLinearNetwork(cfg.model)
     trainer = Trainer(
         model=model,
         config=cfg.training,
         train_loader=train_loader,
         test_loader=test_loader,
-        device=t.device("cuda" if t.cuda.is_available() else "cpu"),
+        device=device,
     )
 
     history = trainer.train()
@@ -59,7 +60,7 @@ def run_experiment(cfg: ExperimentConfig) -> Path:
 @hydra.main(
     version_base=None, config_path="../configs/single", config_name="diagonal_teacher"
 )
-def main(cfg: ExperimentConfig) -> None:
+def main(cfg: DictConfig) -> None:
     run_experiment(cfg)
 
 

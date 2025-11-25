@@ -1,0 +1,85 @@
+defaults:
+  - output_paths
+  - _self_
+
+experiment:
+  name: "diagonal_teacher_comparative"
+
+# ==========================================
+# 1. SHARED VALUES
+# ==========================================
+# Change these to update both models/trainers simultaneously.
+shared:
+  model:
+    in_dim: 5
+    out_dim: 5
+    num_hidden: 3
+    hidden_size: 100
+    gamma: 1.5
+    bias: false
+  
+  training:
+    lr: 0.0001
+    batch_size: null
+    optimizer: "SGD"
+    optimizer_params: null
+    criterion: "MSELoss"
+    model_seed: 0
+
+# ==========================================
+# 2. MODEL CONFIGURATION
+# ==========================================
+# We explicitly list the keys so Hydra knows they exist.
+# We link values to 'shared' so they stay synced.
+
+model_a:
+  in_dim: ${shared.model.in_dim}
+  out_dim: ${shared.model.out_dim}
+  num_hidden: ${shared.model.num_hidden}
+  hidden_size: ${shared.model.hidden_size}
+  gamma: ${shared.model.gamma}
+  bias: ${shared.model.bias}
+
+model_b:
+  in_dim: ${shared.model.in_dim}
+  out_dim: ${shared.model.out_dim}
+  num_hidden: ${shared.model.num_hidden}
+  hidden_size: ${shared.model.hidden_size}
+  gamma: ${shared.model.gamma}
+  bias: ${shared.model.bias}
+
+# ==========================================
+# 3. TRAINING CONFIGURATION
+# ==========================================
+
+training_a:
+  lr: ${shared.training.lr}
+  batch_size: ${shared.training.batch_size}
+  optimizer: ${shared.training.optimizer}
+  optimizer_params: ${shared.training.optimizer_params}
+  criterion: ${shared.training.criterion}
+  model_seed: ${shared.training.model_seed}
+
+training_b:
+  lr: ${shared.training.lr}
+  batch_size: ${shared.training.batch_size}
+  optimizer: ${shared.training.optimizer}
+  optimizer_params: ${shared.training.optimizer_params}
+  criterion: ${shared.training.criterion}
+  model_seed: ${shared.training.model_seed}
+
+# ==========================================
+# 4. DATA & METRICS
+# ==========================================
+data:
+  type: "diagonal_teacher"
+  num_samples: 100
+  test_split: null
+  data_seed: 0
+  params:
+    scale: 10.0
+
+max_steps: 20000
+evaluate_every: 1
+metrics:
+  - "param_distance"

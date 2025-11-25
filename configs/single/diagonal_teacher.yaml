@@ -1,6 +1,6 @@
 
 defaults:
-  - _base # hydra config defining output path
+  - output_paths
   - _self_
 
 experiment:
@@ -24,9 +24,10 @@ data:
 
 training:
   lr: 0.0001
-  max_steps: 20000
   batch_size: null # equivalent to None
-  evaluate_every: 1
   optimizer: "SGD"
+  optimizer_params: null
   criterion: "MSELoss"
   model_seed: 0
+  max_steps: 20000
+  evaluate_every: 1

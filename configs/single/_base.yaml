@@ -1,8 +1,0 @@
-# Base hydra config that defines paths to outputs
-
-hydra:
-  run:
-    dir: single_run_results/${experiment.name}_${now:%Y-%m-%d_%H-%M-%S}
-  sweep:
-    dir: multirun_results/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
-    subdir: ${hydra.job.num}

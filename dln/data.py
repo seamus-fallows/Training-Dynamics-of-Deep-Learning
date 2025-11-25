@@ -1,24 +1,10 @@
-import random
 from typing import Dict, Any
-
-import numpy as np
 import torch as t
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 import einops
 
 from .config import DataConfig
-
-
-def set_all_seeds(seed: int) -> None:
-    """
-    Set Python, NumPy, and PyTorch seeds for data generation.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    t.manual_seed(seed)
-    if t.cuda.is_available():
-        t.cuda.manual_seed_all(seed)
 
 
 def generate_diagonal_teacher(
@@ -94,8 +80,6 @@ def create_dataset(
     in_dim: int,
     out_dim: int,
 ) -> tuple[tuple[Tensor, Tensor], tuple[Tensor, Tensor] | None]:
-    set_all_seeds(cfg.data_seed)
-
     if cfg.type not in _DATASET_GENERATORS:
         raise ValueError(f"Unknown dataset type: {cfg.type!r}")
 

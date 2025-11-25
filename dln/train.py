@@ -44,7 +44,7 @@ class Trainer:
         model: DeepLinearNetwork,
         config: TrainingConfig,
         train_loader: DataLoader,
-        test_loader: Optional[DataLoader],
+        test_loader: DataLoader | None,
         device: t.device,
     ):
         self.device = device
@@ -56,7 +56,11 @@ class Trainer:
         optimizer_cls = _get_optimizer_cls(config.optimizer)
         criterion_cls = _get_criterion_cls(config.criterion)
 
-        self.optimizer = optimizer_cls(self.model.parameters(), lr=config.lr)
+        opt_kwargs = {"lr": config.lr}
+        if config.optimizer_params:
+            opt_kwargs.update(config.optimizer_params)
+
+        self.optimizer = optimizer_cls(self.model.parameters(), **opt_kwargs)
         self.criterion = criterion_cls()
 
         self.history: List[Dict[str, Any]] = []

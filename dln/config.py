@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Literal, Dict, Any
+from dataclasses import dataclass, field
+from typing import Literal, Dict, Any, List
 from hydra.core.config_store import ConfigStore
 
 
@@ -16,25 +16,30 @@ class ModelConfig:
 @dataclass
 class DataConfig:
     type: Literal["diagonal_teacher", "random_teacher"]
-
     num_samples: int
     test_split: float | None
-    data_seed: int = 0
-
-    # Dictionary for dataset-specific parameters.
-    params: Dict[str, Any] | None = None
+    data_seed: int
+    params: Dict[str, Any] | None  # Dictionary for dataset-specific parameters.
 
 
 @dataclass
-class TrainingConfig:
-    lr: float
-    max_steps: int
-    batch_size: int | None  # None means full batch
-    evaluate_every: int
+class ModelTrainingConfig:
+    """Per-model training parameters"""
 
-    optimizer: str = "SGD"
-    criterion: str = "MSELoss"
-    model_seed: int = 0
+    lr: float
+    batch_size: int
+    optimizer: str
+    optimizer_params: Dict[str, Any] | None
+    criterion: str
+    model_seed: int
+
+
+@dataclass
+class TrainingConfig(ModelTrainingConfig):
+    """Full training config for single-model experiments."""
+
+    max_steps: int
+    evaluate_every: int
 
 
 @dataclass
@@ -50,7 +55,14 @@ class ExperimentConfig:
     training: TrainingConfig
 
 
-def register_configs():
-    cs = ConfigStore.instance()
-    # This registers the schema "ExperimentConfig" as the default base configuration
-    cs.store(name="base_config", node=ExperimentConfig)
+@dataclass
+class ComparativeExperimentConfig:
+    experiment: ExperimentMeta
+    model_a: ModelConfig
+    model_b: ModelConfig
+    data: DataConfig
+    training_a: ModelTrainingConfig
+    training_b: ModelTrainingConfig
+    max_steps: int
+    evaluate_every: int
+    metrics: List[str] = field(default_factory=lambda: ["param_distance"])

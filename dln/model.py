@@ -38,7 +38,3 @@ class DeepLinearNetwork(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return self.model(x)
-
-
-def build_model(cfg: ModelConfig) -> nn.Module:
-    return DeepLinearNetwork(cfg)
