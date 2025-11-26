@@ -1,17 +1,17 @@
 import json
-from ..utils import seed_rng, get_device
 from pathlib import Path
 import hydra
-import torch as t
-from data import create_dataset, get_data_loaders
-from model import DeepLinearNetwork
-from train import Trainer
-from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
+from hydra.core.hydra_config import HydraConfig
+from dln.utils import seed_rng, get_device
+from dln.data import create_dataset, get_data_loaders, to_device
+from dln.model import DeepLinearNetwork
+from dln.train import Trainer
 
 
-def run_experiment(cfg: DictConfig) -> Path:
-    output_dir = Path(HydraConfig.get().runtime.output_dir)
+def run_experiment(cfg: DictConfig, output_dir: Path | None = None) -> Path:
+    if output_dir is None:
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
     device = get_device()
 
     # Data generation
@@ -22,17 +22,17 @@ def run_experiment(cfg: DictConfig) -> Path:
         out_dim=cfg.model.out_dim,
     )
 
+    # Move data if requested
+    if cfg.training.preload_data:
+        train_set = to_device(train_set, device)
+        test_set = to_device(test_set, device)
+
     train_loader, test_loader = get_data_loaders(
         train_set,
         test_set,
         batch_size=cfg.training.batch_size,
         seed=cfg.data.data_seed,
     )
-
-    # Seed model
-    t.manual_seed(cfg.training.model_seed)
-    if t.cuda.is_available():
-        t.cuda.manual_seed_all(cfg.training.model_seed)
 
     # Model initialization
     seed_rng(cfg.training.model_seed)
@@ -59,7 +59,7 @@ def run_experiment(cfg: DictConfig) -> Path:
 
 # 2. Hydra Decorator
 @hydra.main(
-    version_base=None, config_path="../configs/single", config_name="diagonal_teacher"
+    version_base=None, config_path="configs/single", config_name="diagonal_teacher"
 )
 def main(cfg: DictConfig) -> None:
     run_experiment(cfg)

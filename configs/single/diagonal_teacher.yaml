@@ -1,6 +1,6 @@
 
 defaults:
-  - output_paths
+  - paths
   - _self_
 
 experiment:
@@ -10,7 +10,7 @@ model:
   in_dim: 5
   out_dim: 5
   num_hidden: 3
-  hidden_size: 100
+  hidden_size: 10
   gamma: 1.5
   bias: false
 
@@ -23,11 +23,12 @@ data:
     scale: 10
 
 training:
-  lr: 0.0001
+  lr: 0.0005
   batch_size: null # equivalent to None
   optimizer: "SGD"
   optimizer_params: null
   criterion: "MSELoss"
   model_seed: 0
-  max_steps: 20000
+  max_steps: 2000
   evaluate_every: 1
+  preload_data: true

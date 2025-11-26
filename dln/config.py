@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from typing import Literal, Dict, Any, List
-from hydra.core.config_store import ConfigStore
 
 
 @dataclass
@@ -32,6 +31,7 @@ class ModelTrainingConfig:
     optimizer_params: Dict[str, Any] | None
     criterion: str
     model_seed: int
+    preload_data: bool
 
 
 @dataclass
@@ -66,3 +66,4 @@ class ComparativeExperimentConfig:
     max_steps: int
     evaluate_every: int
     metrics: List[str] = field(default_factory=lambda: ["param_distance"])
+    shared: Dict[str, Any] = field(default_factory=dict)

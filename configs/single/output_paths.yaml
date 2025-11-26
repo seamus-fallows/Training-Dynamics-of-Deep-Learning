@@ -1,8 +1,0 @@
-# Defines paths to outputs
-
-hydra:
-  run:
-    dir: single_run_outputs/${experiment.name}_${now:%Y-%m-%d_%H-%M-%S}
-  sweep:
-    dir: multirun_outputs/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
-    subdir: ${hydra.job.num}

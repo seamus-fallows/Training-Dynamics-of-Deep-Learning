@@ -1,5 +1,5 @@
 defaults:
-  - output_paths
+  - paths
   - _self_
 
 experiment:
@@ -14,17 +14,18 @@ shared:
     in_dim: 5
     out_dim: 5
     num_hidden: 3
-    hidden_size: 100
+    hidden_size: 10
     gamma: 1.5
     bias: false
   
   training:
-    lr: 0.0001
+    lr: 0.0005
     batch_size: null
     optimizer: "SGD"
     optimizer_params: null
     criterion: "MSELoss"
     model_seed: 0
+    preload_data: false
 
 # ==========================================
 # 2. MODEL CONFIGURATION
@@ -59,6 +60,7 @@ training_a:
   optimizer_params: ${shared.training.optimizer_params}
   criterion: ${shared.training.criterion}
   model_seed: ${shared.training.model_seed}
+  preload_data: ${shared.training.preload_data}
 
 training_b:
   lr: ${shared.training.lr}
@@ -67,6 +69,7 @@ training_b:
   optimizer_params: ${shared.training.optimizer_params}
   criterion: ${shared.training.criterion}
   model_seed: ${shared.training.model_seed}
+  preload_data: ${shared.training.preload_data}
 
 # ==========================================
 # 4. DATA & METRICS
@@ -79,7 +82,7 @@ data:
   params:
     scale: 10.0
 
-max_steps: 20000
+max_steps: 2000
 evaluate_every: 1
 metrics:
   - "param_distance"

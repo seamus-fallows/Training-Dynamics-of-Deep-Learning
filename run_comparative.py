@@ -1,19 +1,19 @@
-# run_comparative.py
 import json
 from pathlib import Path
 import hydra
-import torch as t
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
-from data import create_dataset, get_data_loaders
-from model import DeepLinearNetwork
-from train import Trainer
-from comparative import ComparativeTrainer
-from ..utils import seed_rng, get_device
+from dln.utils import seed_rng, get_device
+from dln.data import create_dataset, get_data_loaders, to_device
+from dln.model import DeepLinearNetwork
+from dln.train import Trainer
+from dln.comparative import ComparativeTrainer
 
 
-def run_comparative_experiment(cfg: DictConfig) -> Path:
-    output_dir = Path(HydraConfig.get().runtime.output_dir)
+def run_comparative_experiment(cfg: DictConfig, output_dir: Path | None = None) -> Path:
+    if output_dir is None:
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+
     device = get_device()
 
     # Shared dataset
@@ -24,7 +24,11 @@ def run_comparative_experiment(cfg: DictConfig) -> Path:
         out_dim=cfg.model_a.out_dim,
     )
 
-    # Separate data loaders (possibly different batch sizes)
+    # Preloading should be same for both models so just use training_a' flag
+    if cfg.training_a.preload_data:
+        train_set = to_device(train_set, device)
+        test_set = to_device(test_set, device)
+
     train_loader_a, test_loader_a = get_data_loaders(
         train_set,
         test_set,
@@ -71,7 +75,7 @@ def run_comparative_experiment(cfg: DictConfig) -> Path:
 
 @hydra.main(
     version_base=None,
-    config_path="../configs/comparative",
+    config_path="configs/comparative",
     config_name="diagonal_teacher",
 )
 def main(cfg: DictConfig) -> None:

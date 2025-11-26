@@ -1,12 +1,12 @@
-from typing import Optional, List, Dict, Any, Type, Iterator
-
+from typing import Optional, List, Dict, Any, Type
+from tqdm import tqdm
 import torch as t
 import torch.nn as nn
-from torch import Tensor
 from torch.utils.data import DataLoader
 
 from .config import TrainingConfig
 from .model import DeepLinearNetwork
+from .utils import infinite_batch_iterator
 
 
 def _get_optimizer_cls(name: str) -> Type[t.optim.Optimizer]:
@@ -67,24 +67,22 @@ class Trainer:
         self.step_counter = 0
 
         # Infinite iterator over training batches
-        self.train_iterator = self._infinite_batch_iterator()
-
-    def _infinite_batch_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
-        """Yield batches forever, cycling through the DataLoader."""
-        while True:
-            for batch in self.train_loader:
-                yield batch
+        self.train_iterator = infinite_batch_iterator(self.train_loader)
 
     def train(self) -> List[Dict[str, Any]]:
         self.model.train()
 
-        for _ in range(self.config.max_steps):
+        progress_bar = tqdm(range(self.config.max_steps), desc="Training")
+
+        for _ in progress_bar:
             train_loss = self.training_step()
 
             # Evaluation + logging
             if self.step_counter % self.config.evaluate_every == 0:
                 test_loss = self.evaluate()
                 self._log(train_loss, test_loss)
+
+                progress_bar.set_postfix({"loss": f"{train_loss:.4f}"})
 
         return self.history
 

@@ -7,6 +7,15 @@ import einops
 from .config import DataConfig
 
 
+def to_device(
+    data: tuple[Tensor, Tensor] | None, device: t.device
+) -> tuple[Tensor, Tensor] | None:
+    if data is None:
+        return None
+    inputs, targets = data
+    return inputs.to(device), targets.to(device)
+
+
 def generate_diagonal_teacher(
     cfg: DataConfig,
     in_dim: int,

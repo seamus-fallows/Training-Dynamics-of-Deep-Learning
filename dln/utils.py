@@ -17,7 +17,12 @@ def seed_rng(seed: int) -> None:
 
 
 def get_device() -> t.device:
-    return t.device("cuda" if t.cuda.is_available() else "cpu")
+    if t.cuda.is_available():
+        return t.device("cuda")
+    elif t.backends.mps.is_available():
+        return t.device("mps")
+    else:
+        return t.device("cpu")
 
 
 def infinite_batch_iterator(loader: DataLoader) -> Iterator[tuple[Tensor, Tensor]]:
