@@ -1,10 +1,22 @@
-from typing import Dict, Any
 import torch as t
 from torch import Tensor
 import einops
 from .config import DataConfig
+from typing import Callable
+
+# Mapping from dataset type -> generator function.
+DATASET_GENERATORS: dict[str, Callable] = {}
 
 
+def register_dataset(name: str):
+    def decorator(fn):
+        DATASET_GENERATORS[name] = fn
+        return fn
+
+    return decorator
+
+
+@register_dataset("diagonal_teacher")
 def generate_diagonal_teacher(
     cfg: DataConfig,
     in_dim: int,
@@ -16,8 +28,7 @@ def generate_diagonal_teacher(
             f"but got in_dim={in_dim}, out_dim={out_dim}."
         )
 
-    params = cfg.params or {}
-    scale = params.get("scale", 10)
+    scale = cfg.params["scale"]
 
     teacher_matrix = scale * t.diag(t.arange(1, in_dim + 1).float())
     inputs = t.randn(cfg.num_samples, in_dim)
@@ -25,6 +36,7 @@ def generate_diagonal_teacher(
     return inputs, targets
 
 
+@register_dataset("random_teacher")
 def generate_random_teacher_data(
     cfg: DataConfig,
     in_dim: int,
@@ -36,9 +48,8 @@ def generate_random_teacher_data(
             f"but got in_dim={in_dim}, out_dim={out_dim}."
         )
 
-    params = cfg.params or {}
-    mean = params.get("mean", 0.0)
-    std = params.get("std", 1.0)
+    mean = cfg.params["mean"]
+    std = cfg.params["std"]
 
     teacher_matrix = t.normal(
         mean=mean,
@@ -48,14 +59,6 @@ def generate_random_teacher_data(
     inputs = t.randn(cfg.num_samples, in_dim)
     targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
     return inputs, targets
-
-
-# Mapping from dataset type -> generator function.
-# Update config.py if adding more
-_DATASET_GENERATORS: Dict[str, Any] = {
-    "diagonal_teacher": generate_diagonal_teacher,
-    "random_teacher": generate_random_teacher_data,
-}
 
 
 def train_test_split(
@@ -78,10 +81,10 @@ def create_dataset(
     in_dim: int,
     out_dim: int,
 ) -> tuple[tuple[Tensor, Tensor], tuple[Tensor, Tensor] | None]:
-    if cfg.type not in _DATASET_GENERATORS:
+    if cfg.type not in DATASET_GENERATORS:
         raise ValueError(f"Unknown dataset type: {cfg.type!r}")
 
-    generator = _DATASET_GENERATORS[cfg.type]
+    generator = DATASET_GENERATORS[cfg.type]
     inputs, targets = generator(cfg, in_dim=in_dim, out_dim=out_dim)
     train_set, test_set = train_test_split(inputs, targets, cfg.test_split)
     return train_set, test_set

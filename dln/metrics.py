@@ -10,14 +10,40 @@ from torch.nn import Module
 from typing import Callable
 
 # ============================================
+# Registries
+# ============================================
+
+MODEL_METRICS: dict[str, Callable] = {}
+COMPARATIVE_METRICS: dict[str, Callable] = {}
+
+
+def model_metric(name: str):
+    def decorator(fn):
+        MODEL_METRICS[name] = fn
+        return fn
+
+    return decorator
+
+
+def comparative_metric(name: str):
+    def decorator(fn):
+        COMPARATIVE_METRICS[name] = fn
+        return fn
+
+    return decorator
+
+
+# ============================================
 # Single-Model Metrics
 # ============================================
 
 
+@model_metric("weight_norm")
 def weight_norm(model: Module) -> float:
     return t.cat([p.view(-1) for p in model.parameters()]).norm().item()
 
 
+@model_metric("gradient_norm")
 def gradient_norm(model: Module) -> float:
     """L2 norm of all gradients (call after backward, before optimizer step)."""
     total = 0.0
@@ -27,16 +53,12 @@ def gradient_norm(model: Module) -> float:
     return total**0.5
 
 
-MODEL_METRICS: dict[str, Callable] = {
-    "weight_norm": weight_norm,
-    "gradient_norm": gradient_norm,
-}
-
 # ============================================
 # Comparative Metrics
 # ============================================
 
 
+@comparative_metric("param_distance")
 def param_distance(model_a: Module, model_b: Module) -> float:
     """Euclidean distance between flattened parameters of two models."""
     params_a = t.cat([p.view(-1) for p in model_a.parameters()])
@@ -44,9 +66,13 @@ def param_distance(model_a: Module, model_b: Module) -> float:
     return t.norm(params_a - params_b, p=2).item()
 
 
-COMPARATIVE_METRICS: dict[str, callable] = {
-    "param_distance": param_distance,
-}
+@comparative_metric("param_cosine_sim")
+def param_cosine_similarity(model_a: Module, model_b: Module) -> float:
+    """Cosine similarity between flattened parameters of two models."""
+    params_a = t.cat([p.view(-1) for p in model_a.parameters()])
+    params_b = t.cat([p.view(-1) for p in model_b.parameters()])
+    return t.nn.functional.cosine_similarity(params_a, params_b, dim=0).item()
+
 
 # ============================================
 # Helper Functions

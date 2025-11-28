@@ -1,21 +1,7 @@
-# PyTorch with CUDA support
---extra-index-url https://download.pytorch.org/whl/cu118
+hydra-core
+omegaconf
 torch
-torchvision
-torchinfo
-einops
-pandas
-scikit-learn
-
-# Utilities
-requests
-pytest
+numpy
 tqdm
-ipykernel
-notebook
-jupyter
-jaxtyping
-
-# Visualization
 matplotlib
-plotly
+einops

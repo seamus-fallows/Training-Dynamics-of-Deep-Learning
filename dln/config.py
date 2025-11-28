@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Literal, Any
+from typing import Any
 
 
 @dataclass
@@ -14,7 +14,7 @@ class ModelConfig:
 
 @dataclass
 class DataConfig:
-    type: Literal["diagonal_teacher", "random_teacher"]
+    type: str
     num_samples: int
     test_split: float | None
     data_seed: int

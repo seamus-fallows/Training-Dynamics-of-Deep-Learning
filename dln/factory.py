@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple
 import torch
 from torch import Tensor
 from omegaconf import DictConfig

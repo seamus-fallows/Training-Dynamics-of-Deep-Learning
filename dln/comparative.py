@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 from .train import Trainer, run_training_loop
-from .metrics import compute_model_metrics, compute_comparative_metrics
+from .metrics import compute_comparative_metrics
 
 
 class ComparativeTrainer:
