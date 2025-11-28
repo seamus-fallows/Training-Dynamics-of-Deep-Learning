@@ -11,7 +11,7 @@
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models on shared data.
   * `metrics.py`: Model metrics (`weight_norm`, `gradient_norm`) and comparative metrics (`param_distance`, `param_cosine_sim`).
   * `config.py`: Dataclass definitions (`ModelConfig`, `DataConfig`, `TrainingConfig`, etc.) that define the schema for experiment configurations.
-  * `factory.py`: Creates a Trainer from model and training configs, handling iterator setup and seeding.
+  * `factory.py`: Creates a Trainer from model and training configs.
   * `utils.py`: Utilities (seeding, batching, device selection).
 * **`configs/`**: [Hydra](https://hydra.cc/) configuration files.
 * **`notebook_utils.py`**, **`experiment_examples.py`**: Quickly written utilities for demonstrating usage in a notebook environment. Not part of the core library.
@@ -49,7 +49,7 @@ python run.py metrics=[weight_norm,gradient_norm]
 
 ### 2. Comparative Experiments
 
-Train two models (Model A and Model B) simultaneously to isolate specific factors affecting optimization trajectories.
+Train two models (Model A and Model B) simultaneously to track comparative metrics during training
 
 ```bash
 # Run standard comparative experiment
