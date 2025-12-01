@@ -7,14 +7,14 @@
 * **`dln/`**: Core library.
   * `model.py`: `DeepLinearNetwork` architecture (stacked linear layers with configurable depth, width, and initialization scaling via `gamma`).
   * `data.py`: Synthetic data generators using teacher-student setups (`diagonal_teacher`, `random_teacher`).
-  * `train.py`: `Trainer` class and generic training loop.
+  * `train.py`: `Trainer` class and generic training loop. Supports mid-training batch size switching.
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models on shared data.
   * `metrics.py`: Model metrics (`weight_norm`, `gradient_norm`) and comparative metrics (`param_distance`, `param_cosine_sim`).
-  * `config.py`: Dataclass definitions (`ModelConfig`, `DataConfig`, `TrainingConfig`, etc.) that define the schema for experiment configurations.
-  * `factory.py`: Creates a Trainer from model and training configs.
+  * `config.py`: Dataclass definitions (`ModelConfig`, `DataConfig`, `TrainingConfig`, `SwitchConfig`, etc.) that define the schema for experiment configurations.
+  * `factory.py`: Creates a Trainer from model and training configs, handling seeding.
   * `utils.py`: Utilities (seeding, batching, device selection).
 * **`configs/`**: [Hydra](https://hydra.cc/) configuration files.
-* **`notebook_utils.py`**, **`experiment_examples.py`**: Quickly written utilities for demonstrating usage in a notebook environment. Not part of the core library.
+* **`notebook_utils.py`**, **`experiment_examples.py`**: Quickly written (by Claude) utilities for demonstrating usage in a notebook environment. Not part of the core library.
 
 ## Installation
 
@@ -45,11 +45,14 @@ python run.py data.params.scale=50.0
 
 # Track metrics during training
 python run.py metrics=[weight_norm,gradient_norm]
+
+# Switch batch size mid-training
+python run.py training.batch_size=10 switch.step=1000 switch.batch_size=null
 ```
 
 ### 2. Comparative Experiments
 
-Train two models (Model A and Model B) simultaneously to track comparative metrics during training
+Train two models (Model A and Model B) simultaneously to track comparative metrics during training.
 
 ```bash
 # Run standard comparative experiment
@@ -88,24 +91,7 @@ python run_comparative.py -m shared.training.lr=0.0005,0.001,0.002
 
 ### 4. Programmatic Usage
 
-For Jupyter notebooks or scripted analysis, use the wrappers in `notebook_utils.py`:
-
-```python
-from notebook_utils import run_single, run_comparative, run_sweep
-from notebook_utils import plot_metrics, plot_comparative, plot_sweep
-
-# Single experiment
-history = run_single("my_exp", "diagonal_teacher", overrides=["training.lr=0.001"])
-plot_metrics(history, ["train_loss"])
-
-# Comparative experiment
-history = run_comparative("my_comparison", "diagonal_teacher", overrides=["training_b.batch_size=10"])
-plot_comparative(history, comparative_metrics=["param_distance"])
-
-# Parameter sweep
-results = run_sweep("my_sweep", "diagonal_teacher", "training.lr", [0.0005, 0.001, 0.002])
-plot_sweep(results)
-```
+See `experiment_examples.py` for usage demonstrations.
 
 ## Configuration
 
@@ -113,6 +99,22 @@ Configuration files are located in `configs/`:
 
 * **`configs/single/`**: Configs for `run.py`.
 * **`configs/comparative/`**: Configs for `run_comparative.py`.
+
+### Single Config Structure
+
+Single configs support an optional `switch` section for batch size switching experiments:
+
+```yaml
+training:
+  lr: 0.0005
+  batch_size: 10      # initial batch size
+  max_steps: 2000
+  # ...
+
+switch:
+  step: null          # step at which to switch (null = no switch)
+  batch_size: null    # batch size after switch
+```
 
 ### Comparative Config Structure
 
