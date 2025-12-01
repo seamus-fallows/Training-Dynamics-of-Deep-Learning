@@ -51,7 +51,7 @@ class ExperimentConfig:
     training: TrainingConfig
     max_steps: int
     evaluate_every: int
-    switch: SwitchConfig | None
+    switch: SwitchConfig | None = None
     metrics: list[str] = field(default_factory=list)
 
 

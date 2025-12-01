@@ -135,6 +135,16 @@ def smooth(values: List[float], window: int = 50) -> List[float]:
     return smoothed
 
 
+def smooth_centered(values: List[float], window: int = 50) -> List[float]:
+    smoothed = []
+    half = window // 2
+    for i in range(len(values)):
+        start = max(0, i - half)
+        end = min(len(values), i + half + 1)
+        smoothed.append(sum(values[start:end]) / (end - start))
+    return smoothed
+
+
 def plot_metrics(
     history: List[Dict[str, Any]],
     metrics: List[str],
