@@ -22,7 +22,7 @@ class DataConfig:
 
 
 @dataclass
-class ModelTrainingConfig:
+class TrainingConfig:
     """Per-model training parameters"""
 
     lr: float
@@ -31,14 +31,6 @@ class ModelTrainingConfig:
     optimizer_params: dict[str, Any] | None
     criterion: str
     model_seed: int
-
-
-@dataclass
-class TrainingConfig(ModelTrainingConfig):
-    """Full training config for single-model experiments."""
-
-    max_steps: int
-    evaluate_every: int
 
 
 @dataclass
@@ -60,6 +52,8 @@ class ExperimentConfig:
     model: ModelConfig
     data: DataConfig
     training: TrainingConfig
+    max_steps: int
+    evaluate_every: int
     metrics: list[str] | None = None
     switch: SwitchConfig | None = None
 
@@ -70,8 +64,8 @@ class ComparativeExperimentConfig:
     model_a: ModelConfig
     model_b: ModelConfig
     data: DataConfig
-    training_a: ModelTrainingConfig
-    training_b: ModelTrainingConfig
+    training_a: TrainingConfig
+    training_b: TrainingConfig
     max_steps: int
     evaluate_every: int
     model_metrics: list[str] = field(default_factory=list)

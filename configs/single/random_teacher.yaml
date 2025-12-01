@@ -29,11 +29,12 @@ training:
   optimizer_params: null
   criterion: "MSELoss"
   model_seed: 0
-  max_steps: 2000
-  evaluate_every: 1
+
+max_steps: 2000
+evaluate_every: 1
+metrics: []
 
 switch:
   step: null
   batch_size: null
   
-metrics: []

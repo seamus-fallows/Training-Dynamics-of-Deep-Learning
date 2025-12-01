@@ -1,6 +1,8 @@
 """Experiment Examples"""
 
 # %%
+import shutil
+from pathlib import Path
 from notebook_utils import (
     run_single,
     run_comparative,
@@ -145,4 +147,8 @@ plot_sweep(results, title="Snapping Experiment")
 
 # With smoothing (50-step moving average)
 plot_sweep(results, title="Snapping Experiment", smoothing=20)
+# %%
+# Run to delete outputs
+# shutil.rmtree(Path("outputs/notebook"), ignore_errors=True)
+
 # %%

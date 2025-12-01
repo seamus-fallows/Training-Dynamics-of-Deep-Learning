@@ -88,9 +88,11 @@ class Trainer:
 
     def train(
         self,
-        metrics: list[str] | None = None,
-        switch_step: int | None = None,
-        switch_batch_size: int | None = None,
+        max_steps: int,
+        evaluate_every: int,
+        metrics: list[str] | None,
+        switch_step: int | None,
+        switch_batch_size: int | None,
     ) -> list[dict[str, Any]]:
         self.model.train()
 
@@ -103,8 +105,8 @@ class Trainer:
             return {"test_loss": self.evaluate()}
 
         self.history = run_training_loop(
-            max_steps=self.config.max_steps,
-            evaluate_every=self.config.evaluate_every,
+            max_steps=max_steps,
+            evaluate_every=evaluate_every,
             step_fn=step_fn,
             eval_fn=eval_fn,
         )

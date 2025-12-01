@@ -34,6 +34,8 @@ def run_experiment(cfg: DictConfig, output_dir: Path | None = None) -> Path:
     )
 
     history = trainer.train(
+        max_steps=cfg.max_steps,
+        evaluate_every=cfg.evaluate_every,
         metrics=cfg.metrics,
         switch_step=cfg.switch.step,
         switch_batch_size=cfg.switch.batch_size,
