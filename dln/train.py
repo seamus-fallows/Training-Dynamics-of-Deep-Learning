@@ -14,27 +14,16 @@ def run_training_loop(
     step_fn: Callable[[int], dict[str, float]],
     eval_fn: Callable[[], dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """
-    Training loop with tqdm and logging.
-
-    Args:
-        step_fn: Function that performs one gradient step and returns dict of training metrics (e.g. loss).
-        eval_fn: Function that evaluates the model and returns dict of validation metrics.
-    """
     history = []
     progress_bar = tqdm(range(max_steps), desc="Training")
 
     for step in progress_bar:
         step_metrics = step_fn(step)
-
-        # Update progress bar
         first_key = next(iter(step_metrics))
         progress_bar.set_postfix({first_key: f"{step_metrics[first_key]:.4f}"})
 
         if step % evaluate_every == 0 or step == (max_steps - 1):
             eval_metrics = eval_fn()
-
-            # Combine all metrics
             record = {"step": step, **step_metrics, **eval_metrics}
             history.append(record)
 
@@ -42,9 +31,7 @@ def run_training_loop(
 
 
 class Trainer:
-    """
-    Minimal trainer for a single DeepLinearNetwork model.
-    """
+    """Handles model training, evaluation, and metric tracking."""
 
     def __init__(
         self,
@@ -66,17 +53,16 @@ class Trainer:
         optimizer_cls = get_optimizer_cls(config.optimizer)
         criterion_cls = get_criterion_cls(config.criterion)
 
-        opt_kwargs = {"lr": config.lr}
+        optimizer_kwargs = {"lr": config.lr}
         if config.optimizer_params:
-            opt_kwargs.update(config.optimizer_params)
+            optimizer_kwargs.update(config.optimizer_params)
 
-        self.optimizer = optimizer_cls(self.model.parameters(), **opt_kwargs)
+        self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
 
         self.history: list[dict[str, Any]] = []
 
     def _create_iterator(self) -> None:
-        """Create or recreate the batch iterator."""
         self.train_iterator = get_infinite_batches(
             self.train_data[0], self.train_data[1], self.batch_size
         )

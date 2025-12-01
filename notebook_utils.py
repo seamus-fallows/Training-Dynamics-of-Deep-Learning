@@ -54,8 +54,7 @@ def run_single(
     cfg = get_config("configs/single", config_name, overrides)
     output_dir = OUTPUT_ROOT / name
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_experiment(cfg, output_dir=output_dir)
-    return load_history(output_dir)
+    return run_experiment(cfg, output_dir=output_dir)
 
 
 def run_comparative(
@@ -67,8 +66,7 @@ def run_comparative(
     cfg = get_config("configs/comparative", config_name, overrides)
     output_dir = OUTPUT_ROOT / name
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_comparative_experiment(cfg, output_dir=output_dir)
-    return load_history(output_dir)
+    return run_comparative_experiment(cfg, output_dir=output_dir)
 
 
 def run_sweep(
@@ -86,8 +84,7 @@ def run_sweep(
         cfg = get_config("configs/single", config_name, sweep_overrides)
         output_dir = OUTPUT_ROOT / name / f"{param}_{val}"
         output_dir.mkdir(parents=True, exist_ok=True)
-        run_experiment(cfg, output_dir=output_dir)
-        results[f"{param}={val}"] = load_history(output_dir)
+        results[f"{param}={val}"] = run_experiment(cfg, output_dir=output_dir)
     return results
 
 
@@ -119,8 +116,7 @@ def run_grid_search(
         output_dir = OUTPUT_ROOT / name / dir_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        run_experiment(cfg, output_dir=output_dir)
-        results[label] = load_history(output_dir)
+        results[label] = run_experiment(cfg, output_dir=output_dir)
 
     return results
 

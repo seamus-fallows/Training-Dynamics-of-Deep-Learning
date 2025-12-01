@@ -13,7 +13,6 @@ class DeepLinearNetwork(nn.Module):
 
         self.config = config
 
-        # Build model
         sizes = (
             [config.in_dim]
             + [config.hidden_size] * config.num_hidden

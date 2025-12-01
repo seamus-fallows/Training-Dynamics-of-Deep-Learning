@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
@@ -9,7 +10,14 @@ from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
 
 
-def run_comparative_experiment(cfg: DictConfig, output_dir: Path | None = None) -> Path:
+def run_comparative_experiment(
+    cfg: DictConfig,
+    output_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Train two models in lockstep and save history.
+    """
+
     if output_dir is None:
         output_dir = Path(HydraConfig.get().runtime.output_dir)
 
@@ -23,28 +31,21 @@ def run_comparative_experiment(cfg: DictConfig, output_dir: Path | None = None) 
         out_dim=cfg.model_a.out_dim,
     )
 
-    # Move data
-    train_inputs, train_targets = to_device(train_set, device)
-    test_data = to_device(test_set, device) if test_set else None
+    train_data = to_device(train_set, device)
+    test_data = to_device(test_set, device)
 
-    # Initialize Trainers
-
-    # Model A
     trainer_a = create_trainer(
         model_cfg=cfg.model_a,
         training_cfg=cfg.training_a,
-        train_inputs=train_inputs,
-        train_targets=train_targets,
+        train_data=train_data,
         test_data=test_data,
         device=device,
     )
 
-    # Model B
     trainer_b = create_trainer(
         model_cfg=cfg.model_b,
         training_cfg=cfg.training_b,
-        train_inputs=train_inputs,
-        train_targets=train_targets,
+        train_data=train_data,
         test_data=test_data,
         device=device,
     )
@@ -61,14 +62,13 @@ def run_comparative_experiment(cfg: DictConfig, output_dir: Path | None = None) 
         comparative_metrics=cfg.comparative_metrics,
     )
 
-    # Save history
     history_path = output_dir / "history.jsonl"
     with history_path.open("w") as f:
         for record in history:
             json.dump(record, f)
             f.write("\n")
 
-    return output_dir
+    return history
 
 
 @hydra.main(

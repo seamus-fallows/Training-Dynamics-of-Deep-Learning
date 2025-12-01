@@ -1,11 +1,17 @@
-from typing import List, Dict, Any
+from typing import Any
 from .train import Trainer, run_training_loop
 from .metrics import compute_comparative_metrics
 
 
 class ComparativeTrainer:
     """
-    Trains two models in lockstep using the shared training loop.
+    Trains two models in lockstep on shared data.
+
+    Both models take gradient steps on the same batches, enabling controlled
+    comparison of different architectures, hyperparameters, or initializations.
+
+    Metrics are logged with '_a' and '_b' suffixes. Comparative metrics
+    (e.g., param_distance) measure relationships between the two models.
     """
 
     def __init__(
@@ -19,20 +25,23 @@ class ComparativeTrainer:
         self.trainer_b = trainer_b
         self.max_steps = max_steps
         self.evaluate_every = evaluate_every
-        self.history: List[Dict[str, Any]] = []
+        self.history: list[dict[str, Any]] = []
 
     def train(
         self,
         model_metrics: list[str] | None = None,
         comparative_metrics: list[str] | None = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         self.trainer_a.model.train()
         self.trainer_b.model.train()
 
-        def step_fn(step: int) -> Dict[str, float]:
+        def step_fn(
+            step: int,
+        ) -> dict[str, float]:  # step required by run_training_loop
             results_a = self.trainer_a.training_step(model_metrics)
             results_b = self.trainer_b.training_step(model_metrics)
 
+            # Suffix metrics with _a/_b to distinguish models in history
             results = {f"{k}_a": v for k, v in results_a.items()}
             results.update({f"{k}_b": v for k, v in results_b.items()})
 
@@ -45,7 +54,7 @@ class ComparativeTrainer:
 
             return results
 
-        def eval_fn() -> Dict[str, Any]:
+        def eval_fn() -> dict[str, Any]:
             test_loss_a = self.trainer_a.evaluate()
             test_loss_b = self.trainer_b.evaluate()
             return {

@@ -4,6 +4,12 @@ import einops
 from .config import DataConfig
 from typing import Callable
 
+"""
+Synthetic dataset generators.
+
+New datasets can be added with the @register_dataset decorator.
+"""
+
 # Mapping from dataset type -> generator function.
 DATASET_GENERATORS: dict[str, Callable] = {}
 
@@ -24,7 +30,7 @@ def generate_diagonal_teacher(
 ) -> tuple[Tensor, Tensor]:
     if out_dim != in_dim:
         raise ValueError(
-            f"Diagonal teacher currently assumes out_dim == in_dim, "
+            f"Diagonal teacher assumes out_dim == in_dim, "
             f"but got in_dim={in_dim}, out_dim={out_dim}."
         )
 
@@ -37,14 +43,14 @@ def generate_diagonal_teacher(
 
 
 @register_dataset("random_teacher")
-def generate_random_teacher_data(
+def generate_random_teacher(
     cfg: DataConfig,
     in_dim: int,
     out_dim: int,
 ) -> tuple[Tensor, Tensor]:
     if out_dim != in_dim:
         raise ValueError(
-            f"Random teacher currently assumes out_dim == in_dim, "
+            f"Random teacher assumes out_dim == in_dim, "
             f"but got in_dim={in_dim}, out_dim={out_dim}."
         )
 

@@ -1,5 +1,4 @@
-from typing import Tuple
-import torch
+import torch as t
 from torch import Tensor
 from omegaconf import DictConfig
 from dln.utils import seed_rng
@@ -10,24 +9,21 @@ from dln.train import Trainer
 def create_trainer(
     model_cfg: DictConfig,
     training_cfg: DictConfig,
-    train_inputs: Tensor,
-    train_targets: Tensor,
-    test_data: Tuple[Tensor, Tensor] | None,
-    device: torch.device,
+    train_data: tuple[Tensor, Tensor],
+    test_data: tuple[Tensor, Tensor] | None,
+    device: t.device,
 ) -> Trainer:
     """
-    Creates a Model and Trainer for a given configuration leg.
+    Creates a Model and Trainer from config.
     """
 
-    # Seed & Build Model
     seed_rng(training_cfg.model_seed)
     model = DeepLinearNetwork(model_cfg)
 
-    # Build Trainer
     trainer = Trainer(
         model=model,
         config=training_cfg,
-        train_data=(train_inputs, train_targets),
+        train_data=train_data,
         test_data=test_data,
         device=device,
     )

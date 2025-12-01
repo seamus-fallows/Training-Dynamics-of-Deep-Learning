@@ -5,9 +5,7 @@ defaults:
 experiment:
   name: "diagonal_teacher_comparative"
 
-# ==========================================
-# 1. SHARED VALUES
-# ==========================================
+# SHARED VALUES
 # Change these to update both models/trainers simultaneously.
 shared:
   model:
@@ -26,11 +24,9 @@ shared:
     criterion: "MSELoss"
     model_seed: 0
 
-# ==========================================
-# 2. MODEL CONFIGURATION
-# ==========================================
-# We explicitly list the keys so Hydra knows they exist.
-# We link values to 'shared' so they stay synced.
+
+# INDIVIDUAL MODEL CONFIGS
+# Hydra interpolation (${shared...}) keeps both models synced by default.
 
 model_a:
   in_dim: ${shared.model.in_dim}
@@ -48,9 +44,8 @@ model_b:
   gamma: ${shared.model.gamma}
   bias: ${shared.model.bias}
 
-# ==========================================
-# 3. TRAINING CONFIGURATION
-# ==========================================
+
+# INDIVIDUAL TRAINING CONFIGS
 
 training_a:
   lr: ${shared.training.lr}
@@ -68,9 +63,7 @@ training_b:
   criterion: ${shared.training.criterion}
   model_seed: ${shared.training.model_seed}
 
-# ==========================================
-# 4. DATA & METRICS
-# ==========================================
+
 data:
   type: "diagonal_teacher"
   num_samples: 100
@@ -81,6 +74,6 @@ data:
 
 max_steps: 2000
 evaluate_every: 1
-model_metrics: []        
+model_metrics: []
 comparative_metrics:        
   - "param_distance"

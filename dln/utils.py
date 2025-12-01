@@ -8,7 +8,6 @@ from torch import Tensor
 
 
 def seed_rng(seed: int) -> None:
-    """Seed all RNGs for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     t.manual_seed(seed)
@@ -40,19 +39,17 @@ def get_infinite_batches(
     """
     Yields batches endlessly.
     """
+    # Full-batch
     n_samples = len(x)
-
-    # If batch_size is None (full batch), just yield the whole thing forever
     if batch_size is None or batch_size >= n_samples:
         while True:
             yield x, y
 
-    # Mini-batch logic
+    # Mini-batch
     while True:
-        # 1. Shuffle indices (start of new epoch)
         indices = t.randperm(n_samples, device=x.device)
 
-        # 2. Yield chunks
+        # Yield chunks
         for start_idx in range(0, n_samples, batch_size):
             batch_idx = indices[start_idx : start_idx + batch_size]
             yield x[batch_idx], y[batch_idx]
@@ -63,9 +60,7 @@ def get_optimizer_cls(name: str) -> Type[Optimizer]:
     try:
         return getattr(t.optim, name)
     except AttributeError as e:
-        raise ValueError(
-            f"Unknown optimizer '{name}' in TrainingConfig.optimizer"
-        ) from e
+        raise ValueError(f"Unknown optimizer: '{name}'") from e
 
 
 def get_criterion_cls(name: str) -> Type[nn.Module]:
@@ -73,6 +68,4 @@ def get_criterion_cls(name: str) -> Type[nn.Module]:
     try:
         return getattr(nn, name)
     except AttributeError as e:
-        raise ValueError(
-            f"Unknown criterion '{name}' in TrainingConfig.criterion"
-        ) from e
+        raise ValueError(f"Unknown criterion: '{name}'") from e

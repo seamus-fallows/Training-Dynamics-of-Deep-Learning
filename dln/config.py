@@ -18,15 +18,14 @@ class DataConfig:
     num_samples: int
     test_split: float | None
     data_seed: int
-    params: dict[str, Any] | None  # Dictionary for dataset-specific parameters.
+    # Dictionary for dataset-specific parameters e.g. mean, std.
+    params: dict[str, Any] | None
 
 
 @dataclass
 class TrainingConfig:
-    """Per-model training parameters"""
-
     lr: float
-    batch_size: int
+    batch_size: int | None
     optimizer: str
     optimizer_params: dict[str, Any] | None
     criterion: str
@@ -40,8 +39,6 @@ class ExperimentMeta:
 
 @dataclass
 class SwitchConfig:
-    """Optional batch size switching during training."""
-
     step: int | None
     batch_size: int | None
 
@@ -54,8 +51,8 @@ class ExperimentConfig:
     training: TrainingConfig
     max_steps: int
     evaluate_every: int
-    metrics: list[str] | None = None
-    switch: SwitchConfig | None = None
+    switch: SwitchConfig | None
+    metrics: list[str] = field(default_factory=list)
 
 
 @dataclass

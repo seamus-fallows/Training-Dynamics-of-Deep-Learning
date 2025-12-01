@@ -149,6 +149,6 @@ plot_sweep(results, title="Snapping Experiment")
 plot_sweep(results, title="Snapping Experiment", smoothing=20)
 # %%
 # Run to delete outputs
-# shutil.rmtree(Path("outputs/notebook"), ignore_errors=True)
+shutil.rmtree(Path("outputs/notebook"), ignore_errors=True)
 
 # %%
