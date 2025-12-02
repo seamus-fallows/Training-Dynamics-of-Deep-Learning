@@ -114,10 +114,11 @@ plot_sweep(results)
 
 # %% Snapping Experiment
 common_overrides = [
-    "model.hidden_size=100",
-    "data.num_samples=4000",
+    "model.hidden_size=150",
+    "training.model_seed=2",
+    "data.num_samples=500",
     "max_steps=4000",
-    "training.lr=0.00022",
+    "training.lr=0.0006",
 ]
 
 # # High noise baseline
@@ -139,7 +140,7 @@ history_switch = run_single(
     overrides=common_overrides
     + [
         "training.batch_size=1",
-        "switch.step=2000",
+        "switch.step=1100",
         "switch.batch_size=null",
     ],
 )
@@ -152,10 +153,56 @@ results = {
 }
 # %%
 # Without smoothing
-plot_sweep(results, title="Snapping Experiment")
+plot_sweep(results, title="High to Low Noise")
 
 # With smoothing (50-step moving average)
-plot_sweep(results, title="Snapping Experiment", smoothing=20)
+plot_sweep(results, title="High to Low Noise (Smoothed)", smoothing=40)
+
+# %% Snapping Experiment low to high noise
+common_overrides = [
+    "model.hidden_size=150",
+    "training.model_seed=2",
+    "data.num_samples=500",
+    "max_steps=4000",
+    "training.lr=0.0006",
+]
+
+# # High noise baseline
+# history_high = run_single(
+#     "snap_high", "diagonal_teacher", overrides= common_overrides +["training.batch_size=1"]
+# )
+
+# Low noise baseline
+history_low = run_single(
+    "snap_low",
+    "diagonal_teacher",
+    overrides=common_overrides + ["training.batch_size=null"],
+)
+
+# Switch from low to high
+history_switch = run_single(
+    "snap_switch",
+    "diagonal_teacher",
+    overrides=common_overrides
+    + [
+        "training.batch_size=null",
+        "switch.step=1100",
+        "switch.batch_size=1",
+    ],
+)
+
+# Plot together
+results = {
+    # "high_noise": history_high,
+    "low_noise": history_low,
+    "switch": history_switch,
+}
+# %%
+# Without smoothing
+plot_sweep(results, title="Low to High Noise")
+
+# With smoothing (50-step moving average)
+plot_sweep(results, title="Low to High Noise (Smoothed)", smoothing=40)
 # %%
 # Run to delete outputs
 shutil.rmtree(Path("outputs/notebook"), ignore_errors=True)
