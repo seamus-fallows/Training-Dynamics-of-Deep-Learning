@@ -60,7 +60,7 @@ def create_linear_teacher_sampler(
         raise ValueError(f"Unknown matrix type: {matrix_type!r}")
 
     teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
-    noise_std = cfg.params["noise_std"]
+    noise_std = cfg.noise_std
 
     def sample(n: int) -> tuple[Tensor, Tensor]:
         inputs = t.randn(n, in_dim)

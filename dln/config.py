@@ -20,6 +20,7 @@ class DataConfig:
     data_seed: int
     # Dictionary for dataset-specific parameters e.g. mean, std.
     params: dict[str, Any] | None
+    noise_std: float = 0.0
     online: bool = False
 
 

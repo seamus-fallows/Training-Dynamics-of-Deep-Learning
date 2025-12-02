@@ -28,6 +28,7 @@ data:
   test_split: null
   data_seed: 0
   online: false
+  noise_std: 0.0
   params:
     matrix: "diagonal"
     scale: 10

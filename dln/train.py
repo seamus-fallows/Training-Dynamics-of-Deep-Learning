@@ -1,10 +1,11 @@
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from tqdm import tqdm
-from torch import Tensor
+from dln.data import Dataset
 import torch as t
+from torch import Tensor
 from .config import TrainingConfig
 from .model import DeepLinearNetwork
-from .utils import get_criterion_cls, get_optimizer_cls, get_infinite_batches
+from .utils import get_criterion_cls, get_optimizer_cls, get_infinite_batches, to_device
 from .metrics import compute_model_metrics
 
 
@@ -37,18 +38,23 @@ class Trainer:
         self,
         model: DeepLinearNetwork,
         config: TrainingConfig,
-        train_data: tuple[Tensor, Tensor],
-        test_data: tuple[Tensor, Tensor] | None,
+        dataset: Dataset,
         device: t.device,
     ):
         self.device = device
         self.model = model.to(device)
         self.config = config
 
-        self.train_data = train_data
+        self.dataset = dataset
         self.batch_size = config.batch_size
+
+        if dataset.online and self.batch_size is None:
+            raise ValueError("Online mode requires explicit batch_size")
+
+        self.test_data = to_device(dataset.test_data, device)
+        self.train_data = to_device(dataset.train_data, device)
+
         self._create_iterator()
-        self.test_data = test_data
 
         optimizer_cls = get_optimizer_cls(config.optimizer)
         criterion_cls = get_criterion_cls(config.criterion)
@@ -63,9 +69,17 @@ class Trainer:
         self.history: list[dict[str, Any]] = []
 
     def _create_iterator(self) -> None:
-        self.train_iterator = get_infinite_batches(
-            self.train_data[0], self.train_data[1], self.batch_size
-        )
+        if self.dataset.online:
+            self.train_iterator = self._online_iterator()
+        else:
+            self.train_iterator = get_infinite_batches(
+                self.train_data[0], self.train_data[1], self.batch_size
+            )
+
+    def _online_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
+        while True:
+            inputs, targets = self.dataset.sample(self.batch_size)
+            yield inputs.to(self.device), targets.to(self.device)
 
     def set_batch_size(self, batch_size: int | None) -> None:
         """Change batch size mid-training. Recreates the data iterator."""
