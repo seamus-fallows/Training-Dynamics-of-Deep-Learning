@@ -114,7 +114,7 @@ plot_sweep(results)
 
 # %% Snapping Experiment
 common_overrides = [
-    "model.hidden_size=100",
+    "model.hidden_dim=100",
     "data.num_samples=4000",
     "max_steps=4000",
     "training.lr=0.00022",

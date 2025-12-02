@@ -5,9 +5,9 @@ from typing import Any
 @dataclass
 class ModelConfig:
     in_dim: int
+    hidden_dim: int
     out_dim: int
     num_hidden: int
-    hidden_size: int
     gamma: float
     bias: bool = False
 
@@ -20,6 +20,7 @@ class DataConfig:
     data_seed: int
     # Dictionary for dataset-specific parameters e.g. mean, std.
     params: dict[str, Any] | None
+    online: bool = False
 
 
 @dataclass
