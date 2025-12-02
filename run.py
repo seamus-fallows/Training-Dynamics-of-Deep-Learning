@@ -4,8 +4,8 @@ from typing import Any
 import hydra
 from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
-from dln.utils import seed_rng, get_device, to_device
-from dln.data import create_dataset
+from dln.utils import seed_rng, get_device
+from dln.data import Dataset
 from dln.factory import create_trainer
 
 
@@ -22,18 +22,12 @@ def run_experiment(
     device = get_device()
 
     seed_rng(cfg.data.data_seed)
-    train_set, test_set = create_dataset(
-        cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim
-    )
-
-    train_data = to_device(train_set, device)
-    test_data = to_device(test_set, device)
+    dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
 
     trainer = create_trainer(
         model_cfg=cfg.model,
         training_cfg=cfg.training,
-        train_data=train_data,
-        test_data=test_data,
+        dataset=dataset,
         device=device,
     )
 

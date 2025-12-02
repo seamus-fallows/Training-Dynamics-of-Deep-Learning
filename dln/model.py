@@ -14,9 +14,7 @@ class DeepLinearNetwork(nn.Module):
         self.config = config
 
         sizes = (
-            [config.in_dim]
-            + [config.hidden_size] * config.num_hidden
-            + [config.out_dim]
+            [config.in_dim] + [config.hidden_dim] * config.num_hidden + [config.out_dim]
         )
         self.model = nn.Sequential(
             *[
@@ -25,7 +23,7 @@ class DeepLinearNetwork(nn.Module):
             ]
         )
         if config.gamma is not None:
-            std = config.hidden_size ** (-config.gamma / 2)
+            std = config.hidden_dim ** (-config.gamma / 2)
             self._init_weights(std)
 
     def _init_weights(self, std: float) -> None:

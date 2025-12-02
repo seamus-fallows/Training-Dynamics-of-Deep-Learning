@@ -1,96 +1,104 @@
 import torch as t
 from torch import Tensor
 import einops
-from .config import DataConfig
 from typing import Callable
+from .config import DataConfig
 
 """
-Synthetic dataset generators.
-
-New datasets can be added with the @register_dataset decorator.
+Dataset handling for training experiments.
+Supports offline (fixed data) and online (fresh samples) modes.
 """
 
-# Mapping from dataset type -> generator function.
-DATASET_GENERATORS: dict[str, Callable] = {}
+Sampler = Callable[[int], tuple[Tensor, Tensor]]
+
+SAMPLER_FACTORIES: dict[str, Callable[..., Sampler]] = {}
+MATRIX_FACTORIES: dict[str, Callable[..., Tensor]] = {}
 
 
-def register_dataset(name: str):
+def register_sampler(name: str):
     def decorator(fn):
-        DATASET_GENERATORS[name] = fn
+        SAMPLER_FACTORIES[name] = fn
         return fn
 
     return decorator
 
 
-@register_dataset("diagonal_teacher")
-def generate_diagonal_teacher(
-    cfg: DataConfig,
-    in_dim: int,
-    out_dim: int,
-) -> tuple[Tensor, Tensor]:
+def register_matrix(name: str):
+    def decorator(fn):
+        MATRIX_FACTORIES[name] = fn
+        return fn
+
+    return decorator
+
+
+@register_matrix("diagonal")
+def create_diagonal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     if out_dim != in_dim:
         raise ValueError(
-            f"Diagonal teacher assumes out_dim == in_dim, "
+            f"Diagonal matrix requires out_dim == in_dim, "
             f"but got in_dim={in_dim}, out_dim={out_dim}."
         )
-
-    scale = cfg.params["scale"]
-
-    teacher_matrix = scale * t.diag(t.arange(1, in_dim + 1).float())
-    inputs = t.randn(cfg.num_samples, in_dim)
-    targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
-    return inputs, targets
+    scale = params["scale"]
+    return scale * t.diag(t.arange(1, in_dim + 1).float())
 
 
-@register_dataset("random_teacher")
-def generate_random_teacher(
+@register_matrix("random_normal")
+def create_random_normal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
+    mean = params["mean"]
+    std = params["std"]
+    return t.normal(mean, std, size=(out_dim, in_dim))
+
+
+@register_sampler("linear_teacher")
+def create_linear_teacher_sampler(
     cfg: DataConfig,
     in_dim: int,
     out_dim: int,
-) -> tuple[Tensor, Tensor]:
-    if out_dim != in_dim:
-        raise ValueError(
-            f"Random teacher assumes out_dim == in_dim, "
-            f"but got in_dim={in_dim}, out_dim={out_dim}."
-        )
+) -> Sampler:
+    matrix_type = cfg.params["matrix"]
+    if matrix_type not in MATRIX_FACTORIES:
+        raise ValueError(f"Unknown matrix type: {matrix_type!r}")
 
-    mean = cfg.params["mean"]
-    std = cfg.params["std"]
+    teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
+    noise_std = cfg.noise_std
 
-    teacher_matrix = t.normal(
-        mean=mean,
-        std=std,
-        size=(in_dim, in_dim),
-    )
-    inputs = t.randn(cfg.num_samples, in_dim)
-    targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
-    return inputs, targets
+    def sample(n: int) -> tuple[Tensor, Tensor]:
+        inputs = t.randn(n, in_dim)
+        targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
+        if noise_std > 0:
+            targets += t.randn_like(targets) * noise_std
+        return inputs, targets
+
+    return sample
 
 
-def train_test_split(
-    inputs: Tensor,
-    targets: Tensor,
-    test_split: float | None,
-) -> tuple[tuple[Tensor, Tensor], tuple[Tensor, Tensor] | None]:
-    if test_split is None or test_split == 0:
-        return (inputs, targets), None
+class Dataset:
+    def __init__(
+        self,
+        cfg: DataConfig,
+        in_dim: int,
+        out_dim: int,
+    ):
+        if cfg.type not in SAMPLER_FACTORIES:
+            raise ValueError(f"Unknown dataset type: {cfg.type!r}")
 
-    num_samples = inputs.shape[0]
-    n_train = int((1 - test_split) * num_samples)
-    train_set = (inputs[:n_train], targets[:n_train])
-    test_set = (inputs[n_train:], targets[n_train:])
-    return train_set, test_set
+        self.cfg = cfg
+        self.online = cfg.online
+        self.sampler = SAMPLER_FACTORIES[cfg.type](cfg, in_dim, out_dim)
 
+        # Compute split sizes
+        if cfg.test_split and cfg.test_split > 0:
+            n_test = int(cfg.num_samples * cfg.test_split)
+            n_train = cfg.num_samples - n_test
+            self.test_data = self.sampler(n_test)
+        else:
+            n_train = cfg.num_samples
+            self.test_data = None
 
-def create_dataset(
-    cfg: DataConfig,
-    in_dim: int,
-    out_dim: int,
-) -> tuple[tuple[Tensor, Tensor], tuple[Tensor, Tensor] | None]:
-    if cfg.type not in DATASET_GENERATORS:
-        raise ValueError(f"Unknown dataset type: {cfg.type!r}")
+        if self.online:
+            self.train_data = None
+        else:
+            self.train_data = self.sampler(n_train)
 
-    generator = DATASET_GENERATORS[cfg.type]
-    inputs, targets = generator(cfg, in_dim=in_dim, out_dim=out_dim)
-    train_set, test_set = train_test_split(inputs, targets, cfg.test_split)
-    return train_set, test_set
+    def sample(self, n: int) -> tuple[Tensor, Tensor]:
+        return self.sampler(n)

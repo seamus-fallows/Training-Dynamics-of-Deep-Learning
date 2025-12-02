@@ -12,7 +12,7 @@ shared:
     in_dim: 5
     out_dim: 5
     num_hidden: 3
-    hidden_size: 10
+    hidden_dim: 10
     gamma: 1.5
     bias: false
   
@@ -32,7 +32,7 @@ model_a:
   in_dim: ${shared.model.in_dim}
   out_dim: ${shared.model.out_dim}
   num_hidden: ${shared.model.num_hidden}
-  hidden_size: ${shared.model.hidden_size}
+  hidden_dim: ${shared.model.hidden_dim}
   gamma: ${shared.model.gamma}
   bias: ${shared.model.bias}
 
@@ -40,7 +40,7 @@ model_b:
   in_dim: ${shared.model.in_dim}
   out_dim: ${shared.model.out_dim}
   num_hidden: ${shared.model.num_hidden}
-  hidden_size: ${shared.model.hidden_size}
+  hidden_dim: ${shared.model.hidden_dim}
   gamma: ${shared.model.gamma}
   bias: ${shared.model.bias}
 
@@ -65,11 +65,14 @@ training_b:
 
 
 data:
-  type: "diagonal_teacher"
+  type: "linear_teacher"
   num_samples: 100
   test_split: null
   data_seed: 0
+  online: false
+  noise_std: 0.0
   params:
+    matrix: "diagonal"
     scale: 10.0
 
 max_steps: 2000

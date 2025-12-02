@@ -4,8 +4,8 @@ from typing import Any
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
-from dln.utils import seed_rng, get_device, to_device
-from dln.data import create_dataset
+from dln.utils import seed_rng, get_device
+from dln.data import Dataset
 from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
 
@@ -25,28 +25,19 @@ def run_comparative_experiment(
 
     # Shared dataset
     seed_rng(cfg.data.data_seed)
-    train_set, test_set = create_dataset(
-        cfg.data,
-        in_dim=cfg.model_a.in_dim,
-        out_dim=cfg.model_a.out_dim,
-    )
-
-    train_data = to_device(train_set, device)
-    test_data = to_device(test_set, device)
+    dataset = Dataset(cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim)
 
     trainer_a = create_trainer(
         model_cfg=cfg.model_a,
         training_cfg=cfg.training_a,
-        train_data=train_data,
-        test_data=test_data,
+        dataset=dataset,
         device=device,
     )
 
     trainer_b = create_trainer(
         model_cfg=cfg.model_b,
         training_cfg=cfg.training_b,
-        train_data=train_data,
-        test_data=test_data,
+        dataset=dataset,
         device=device,
     )
 

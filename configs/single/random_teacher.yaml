@@ -9,18 +9,9 @@ model:
   in_dim: 5
   out_dim: 5
   num_hidden: 3
-  hidden_size: 10
+  hidden_dim: 10
   gamma: 1.5
   bias: false
-
-data:
-  type: "random_teacher"
-  num_samples: 100
-  test_split: null
-  data_seed: 0
-  params:
-    mean: 0.0
-    std: 1.0
 
 training:
   lr: 0.0005
@@ -29,6 +20,19 @@ training:
   optimizer_params: null
   criterion: "MSELoss"
   model_seed: 0
+
+data:
+  type: "linear_teacher"
+  num_samples: 100
+  test_split: null
+  data_seed: 0
+  online: false
+  noise_std: 0.0
+  params:
+    matrix: "random_normal"
+    mean: 0.0
+    std: 1.0
+
 
 max_steps: 2000
 evaluate_every: 1
