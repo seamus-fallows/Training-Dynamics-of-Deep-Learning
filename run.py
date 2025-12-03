@@ -13,10 +13,6 @@ def run_experiment(
     cfg: DictConfig,
     output_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Train a model and save history.
-    """
-
     if output_dir is None:
         output_dir = Path(HydraConfig.get().runtime.output_dir)
     device = get_device()

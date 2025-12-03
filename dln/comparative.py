@@ -48,7 +48,7 @@ class ComparativeTrainer:
             for callback in callbacks_b:
                 callback(step, self.trainer_b)
 
-            # Check batch sizes after callbacks (which may have changed them)
+            # Share exact batch when sizes match for controlled comparison
             inputs_a, targets_a = next(self.trainer_a.train_iterator)
             if self.trainer_a.batch_size == self.trainer_b.batch_size:
                 inputs_b, targets_b = inputs_a, targets_a

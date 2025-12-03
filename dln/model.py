@@ -23,6 +23,7 @@ class DeepLinearNetwork(nn.Module):
             ]
         )
         if config.gamma is not None:
+            # Scaling defined in https://arxiv.org/pdf/2106.15933
             std = config.hidden_dim ** (-config.gamma / 2)
             self._init_weights(std)
 

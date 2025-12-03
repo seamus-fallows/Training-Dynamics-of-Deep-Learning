@@ -84,6 +84,7 @@ class Trainer:
         loss = self.criterion(output, targets)
         loss.backward()
 
+        # Compute metrics before step so gradient_norm gets pre-update gradients
         results = {"train_loss": loss.item()}
         if metrics:
             results.update(compute_model_metrics(self.model, metrics))

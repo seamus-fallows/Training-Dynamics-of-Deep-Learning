@@ -1,15 +1,11 @@
-from typing import Iterator
+from typing import Iterator, Callable
 import torch as t
 from torch import Tensor
 import einops
 from .config import DataConfig
 
-"""
-Dataset handling for training experiments.
-Supports offline (fixed data) and online (fresh samples) modes.
-"""
 
-MATRIX_FACTORIES: dict[str, callable] = {}
+MATRIX_FACTORIES: dict[str, Callable] = {}
 
 
 def register_matrix(name: str):
@@ -43,7 +39,7 @@ class Dataset:
     Linear teacher dataset with online/offline modes.
 
     Offline: Pre-generates fixed training data.
-    Online: Samples fresh data each batch.
+    Online: Samples fresh data each batch (infinite data regime).
     """
 
     def __init__(self, cfg: DataConfig, in_dim: int, out_dim: int):
@@ -56,6 +52,7 @@ class Dataset:
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
 
+        # Note: test sampled first, so train data depends on test_split value
         if cfg.test_split and cfg.test_split > 0:
             n_test = int(cfg.num_samples * cfg.test_split)
             n_train = cfg.num_samples - n_test
@@ -64,7 +61,6 @@ class Dataset:
             n_train = cfg.num_samples
             self.test_data = None
 
-        # Pre-generate train data for offline mode
         if self.online:
             self._train_data = None
         else:

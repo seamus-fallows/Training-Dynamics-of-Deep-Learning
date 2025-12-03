@@ -14,10 +14,6 @@ def run_comparative_experiment(
     cfg: DictConfig,
     output_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Train two models in lockstep and save history.
-    """
-
     if output_dir is None:
         output_dir = Path(HydraConfig.get().runtime.output_dir)
 
