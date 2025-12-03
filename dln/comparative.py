@@ -28,7 +28,7 @@ class ComparativeTrainer:
         self.evaluate_every = evaluate_every
         self.history: list[dict[str, Any]] = []
 
-    def train(
+    def run(
         self,
         model_metrics: list[str] | None = None,
         comparative_metrics: list[str] | None = None,
@@ -48,8 +48,15 @@ class ComparativeTrainer:
             for callback in callbacks_b:
                 callback(step, self.trainer_b)
 
-            results_a = self.trainer_a.training_step(model_metrics)
-            results_b = self.trainer_b.training_step(model_metrics)
+            # Check batch sizes after callbacks (which may have changed them)
+            inputs_a, targets_a = next(self.trainer_a.train_iterator)
+            if self.trainer_a.batch_size == self.trainer_b.batch_size:
+                inputs_b, targets_b = inputs_a, targets_a
+            else:
+                inputs_b, targets_b = next(self.trainer_b.train_iterator)
+
+            results_a = self.trainer_a.training_step(inputs_a, targets_a, model_metrics)
+            results_b = self.trainer_b.training_step(inputs_b, targets_b, model_metrics)
 
             step_metrics = {f"{k}_a": v for k, v in results_a.items()}
             step_metrics.update({f"{k}_b": v for k, v in results_b.items()})

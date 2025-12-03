@@ -51,7 +51,7 @@ def run_comparative_experiment(
     callbacks_a = create_callbacks(cfg.callbacks_a)
     callbacks_b = create_callbacks(cfg.callbacks_b)
 
-    history = comparative_trainer.train(
+    history = comparative_trainer.run(
         model_metrics=cfg.model_metrics,
         comparative_metrics=cfg.comparative_metrics,
         callbacks_a=callbacks_a,

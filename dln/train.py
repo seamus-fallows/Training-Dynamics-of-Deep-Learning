@@ -2,6 +2,7 @@ from typing import Any, Callable
 from tqdm import tqdm
 from dln.data import Dataset
 import torch as t
+from torch import Tensor
 from .config import TrainingConfig
 from .model import DeepLinearNetwork
 from .utils import get_criterion_cls, get_optimizer_cls, to_device
@@ -44,7 +45,7 @@ class Trainer:
         self.batch_size = batch_size
         self.train_iterator = self.dataset.get_train_iterator(batch_size, self.device)
 
-    def train(
+    def run(
         self,
         max_steps: int,
         evaluate_every: int,
@@ -60,7 +61,8 @@ class Trainer:
             for callback in callbacks:
                 callback(step, self)
 
-            step_metrics = self.training_step(metrics)
+            inputs, targets = next(self.train_iterator)
+            step_metrics = self.training_step(inputs, targets, metrics)
             first_key = next(iter(step_metrics))
             progress_bar.set_postfix({first_key: f"{step_metrics[first_key]:.4f}"})
 
@@ -74,8 +76,9 @@ class Trainer:
 
         return self.history
 
-    def training_step(self, metrics: list[str] | None = None) -> dict[str, float]:
-        inputs, targets = next(self.train_iterator)
+    def training_step(
+        self, inputs: Tensor, targets: Tensor, metrics: list[str] | None = None
+    ) -> dict[str, float]:
         self.optimizer.zero_grad()
         output = self.model(inputs)
         loss = self.criterion(output, targets)

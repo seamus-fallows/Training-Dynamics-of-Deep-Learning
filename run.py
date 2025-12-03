@@ -33,7 +33,7 @@ def run_experiment(
 
     callbacks = create_callbacks(cfg.callbacks)
 
-    history = trainer.train(
+    history = trainer.run(
         max_steps=cfg.max_steps,
         evaluate_every=cfg.evaluate_every,
         metrics=cfg.metrics,
