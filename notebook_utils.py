@@ -2,15 +2,12 @@
 Notebook utilities for running and visualizing experiments.
 """
 
-import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-
 import matplotlib.pyplot as plt
 from hydra import compose, initialize
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig
-
 from run import run_experiment
 from run_comparative import run_comparative_experiment
 
@@ -28,16 +25,6 @@ def get_config(
     GlobalHydra.instance().clear()
     initialize(version_base=None, config_path=config_path)
     return compose(config_name=config_name, overrides=overrides or [])
-
-
-def load_history(output_dir: Path) -> List[Dict[str, Any]]:
-    """Loads training history from JSONL file."""
-    history_path = output_dir / "history.jsonl"
-    if not history_path.exists():
-        raise FileNotFoundError(f"No history found at {history_path}")
-
-    with history_path.open("r") as f:
-        return [json.loads(line) for line in f]
 
 
 # ============================================

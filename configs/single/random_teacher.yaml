@@ -38,7 +38,5 @@ max_steps: 2000
 evaluate_every: 1
 metrics: []
 
-switch:
-  step: null
-  batch_size: null
+callbacks: []
   

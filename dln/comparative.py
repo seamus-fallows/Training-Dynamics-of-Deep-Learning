@@ -1,5 +1,6 @@
-from typing import Any
-from .train import Trainer, run_training_loop
+from typing import Any, Callable
+from tqdm import tqdm
+from .train import Trainer
 from .metrics import compute_comparative_metrics
 
 
@@ -31,42 +32,48 @@ class ComparativeTrainer:
         self,
         model_metrics: list[str] | None = None,
         comparative_metrics: list[str] | None = None,
+        callbacks_a: list[Callable] | None = None,
+        callbacks_b: list[Callable] | None = None,
     ) -> list[dict[str, Any]]:
         self.trainer_a.model.train()
         self.trainer_b.model.train()
+        self.history = []
+        callbacks_a = callbacks_a or []
+        callbacks_b = callbacks_b or []
+        progress_bar = tqdm(range(self.max_steps), desc="Training")
 
-        def step_fn(
-            step: int,
-        ) -> dict[str, float]:  # step required by run_training_loop
+        for step in progress_bar:
+            for callback in callbacks_a:
+                callback(step, self.trainer_a)
+            for callback in callbacks_b:
+                callback(step, self.trainer_b)
+
             results_a = self.trainer_a.training_step(model_metrics)
             results_b = self.trainer_b.training_step(model_metrics)
 
-            # Suffix metrics with _a/_b to distinguish models in history
-            results = {f"{k}_a": v for k, v in results_a.items()}
-            results.update({f"{k}_b": v for k, v in results_b.items()})
+            step_metrics = {f"{k}_a": v for k, v in results_a.items()}
+            step_metrics.update({f"{k}_b": v for k, v in results_b.items()})
 
             if comparative_metrics:
-                results.update(
+                step_metrics.update(
                     compute_comparative_metrics(
                         self.trainer_a.model, self.trainer_b.model, comparative_metrics
                     )
                 )
 
-            return results
+            first_key = next(iter(step_metrics))
+            progress_bar.set_postfix({first_key: f"{step_metrics[first_key]:.4f}"})
 
-        def eval_fn() -> dict[str, Any]:
-            test_loss_a = self.trainer_a.evaluate()
-            test_loss_b = self.trainer_b.evaluate()
-            return {
-                "test_loss_a": test_loss_a,
-                "test_loss_b": test_loss_b,
-            }
+            if step % self.evaluate_every == 0 or step == (self.max_steps - 1):
+                eval_metrics = {}
+                test_loss_a = self.trainer_a.evaluate()
+                test_loss_b = self.trainer_b.evaluate()
+                if test_loss_a is not None:
+                    eval_metrics["test_loss_a"] = test_loss_a
+                if test_loss_b is not None:
+                    eval_metrics["test_loss_b"] = test_loss_b
 
-        self.history = run_training_loop(
-            max_steps=self.max_steps,
-            evaluate_every=self.evaluate_every,
-            step_fn=step_fn,
-            eval_fn=eval_fn,
-        )
+                record = {"step": step, **step_metrics, **eval_metrics}
+                self.history.append(record)
 
         return self.history

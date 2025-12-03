@@ -80,3 +80,6 @@ evaluate_every: 1
 model_metrics: []
 comparative_metrics:        
   - "param_distance"
+
+callbacks_a: []
+callbacks_b: []

@@ -6,13 +6,14 @@
 * **`run_comparative.py`**: Entry point for simultaneous training (Model A vs. Model B) to track comparative metrics e.g. L2 distance between weights of A and B.
 * **`dln/`**: Core library.
   * `model.py`: `DeepLinearNetwork` architecture (stacked linear layers with configurable depth, width, and initialization scaling via `gamma`).
-  * `data.py`: Synthetic data generators using teacher-student setups (`diagonal_teacher`, `random_teacher`).
-  * `train.py`: `Trainer` class and generic training loop. Supports mid-training batch size switching.
+  * `data.py`: Synthetic data generators (e.g., `linear_teacher` with `diagonal` or `random_normal` matrices).
+  * `train.py`: `Trainer` class and training loop.
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models on shared data.
+  * `callbacks.py`: Callback system for mid-training interventions (batch size switching, learning rate scheduling, etc.).
   * `metrics.py`: Model metrics (`weight_norm`, `gradient_norm`) and comparative metrics (`param_distance`, `param_cosine_sim`).
-  * `config.py`: Dataclass definitions (`ModelConfig`, `DataConfig`, `TrainingConfig`, `SwitchConfig`, etc.) that define the schema for experiment configurations.
+  * `config.py`: Dataclass definitions (`ModelConfig`, `DataConfig`, `TrainingConfig`, `CallbackConfig`, etc.) that define the schema for experiment configurations.
   * `factory.py`: Creates a Trainer from model and training configs, handling seeding.
-  * `utils.py`: Utilities (seeding, batching, device selection).
+  * `utils.py`: Utilities (seeding, batching, device selection, history saving/loading).
 * **`configs/`**: [Hydra](https://hydra.cc/) configuration files.
 * **`notebook_utils.py`**, **`experiment_examples.py`**: Quickly written (by Claude) utilities for demonstrating usage in a notebook environment. Not part of the core library.
 
@@ -38,7 +39,7 @@ python run.py
 python run.py -cn=diagonal_teacher
 
 # Override hyperparameters (see YAML config for options; use dot notation for nested keys)
-python run.py training.lr=0.01 model.hidden_size=20
+python run.py training.lr=0.01 model.hidden_dim=20
 
 # Modify data generation parameters
 python run.py data.params.scale=50.0
@@ -46,8 +47,8 @@ python run.py data.params.scale=50.0
 # Track metrics during training
 python run.py metrics=[weight_norm,gradient_norm]
 
-# Switch batch size mid-training
-python run.py training.batch_size=10 switch.step=1000 switch.batch_size=null
+# Switch batch size mid-training (using callbacks)
+python run.py training.batch_size=10 "callbacks=[{name: switch_batch_size, params: {step: 1000, batch_size: null}}]"
 ```
 
 ### 2. Comparative Experiments
@@ -102,18 +103,25 @@ Configuration files are located in `configs/`:
 
 ### Single Config Structure
 
-Single configs support an optional `switch` section for batch size switching experiments:
+Single configs support a `callbacks` list for mid-training interventions:
 
 ```yaml
 training:
   lr: 0.0005
-  batch_size: 10      # initial batch size
-  max_steps: 2000
+  batch_size: 10
   # ...
 
-switch:
-  step: null          # step at which to switch (null = no switch)
-  batch_size: null    # batch size after switch
+callbacks: []   # list of callbacks, empty by default
+```
+
+Example with a batch size switch at step 1000:
+
+```yaml
+callbacks:
+  - name: switch_batch_size
+    params:
+      step: 1000
+      batch_size: null
 ```
 
 ### Comparative Config Structure
@@ -155,6 +163,17 @@ training_b:
   batch_size: 10  # No longer references shared
 ```
 
+Comparative configs also support per-model callbacks via `callbacks_a` and `callbacks_b`:
+
+```yaml
+callbacks_a: []
+callbacks_b:
+  - name: switch_batch_size
+    params:
+      step: 1000
+      batch_size: 10
+```
+
 ## Outputs
 
 Each run creates a timestamped directory in `outputs/` containing:
@@ -185,14 +204,37 @@ For comparative experiments:
 * Use `model_metrics=[my_metric]` for per-model metrics (logged as `my_metric_a` and `my_metric_b` in history)
 * Use `comparative_metrics=[my_comparative_metric]` for metrics that take both models as input (e.g., distance between weights)
 
-### Adding New Dataset Types
+### Adding New Teacher Matrix Types
 
 Add a decorated function in `dln/data.py`:
 
 ```python
-@register_dataset("my_dataset")
-def generate_my_dataset(cfg: DataConfig, in_dim: int, out_dim: int) -> tuple[Tensor, Tensor]:
-    ...
+@register_matrix("my_matrix")
+def create_my_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
+    # Return a (out_dim, in_dim) tensor
+    return ...
 ```
 
-Then use via config or override: `data.type=my_dataset`
+Then use via config or override: `data.params.matrix=my_matrix`
+
+### Adding New Callbacks
+
+Add a decorated function in `dln/callbacks.py`:
+
+```python
+@register_callback("my_callback")
+def my_callback(param1: int, param2: float):
+    def callback(step: int, trainer: Trainer) -> None:
+        ...
+    return callback
+```
+
+Then use via config:
+
+```yaml
+callbacks:
+  - name: my_callback
+    params:
+      param1: 100
+      param2: 0.5
+```

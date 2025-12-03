@@ -1,7 +1,7 @@
+from typing import Iterator
 import torch as t
 from torch import Tensor
 import einops
-from typing import Callable
 from .config import DataConfig
 
 """
@@ -9,18 +9,7 @@ Dataset handling for training experiments.
 Supports offline (fixed data) and online (fresh samples) modes.
 """
 
-Sampler = Callable[[int], tuple[Tensor, Tensor]]
-
-SAMPLER_FACTORIES: dict[str, Callable[..., Sampler]] = {}
-MATRIX_FACTORIES: dict[str, Callable[..., Tensor]] = {}
-
-
-def register_sampler(name: str):
-    def decorator(fn):
-        SAMPLER_FACTORIES[name] = fn
-        return fn
-
-    return decorator
+MATRIX_FACTORIES: dict[str, callable] = {}
 
 
 def register_matrix(name: str):
@@ -49,56 +38,78 @@ def create_random_normal_matrix(in_dim: int, out_dim: int, params: dict) -> Tens
     return t.normal(mean, std, size=(out_dim, in_dim))
 
 
-@register_sampler("linear_teacher")
-def create_linear_teacher_sampler(
-    cfg: DataConfig,
-    in_dim: int,
-    out_dim: int,
-) -> Sampler:
-    matrix_type = cfg.params["matrix"]
-    if matrix_type not in MATRIX_FACTORIES:
-        raise ValueError(f"Unknown matrix type: {matrix_type!r}")
-
-    teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
-    noise_std = cfg.noise_std
-
-    def sample(n: int) -> tuple[Tensor, Tensor]:
-        inputs = t.randn(n, in_dim)
-        targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
-        if noise_std > 0:
-            targets += t.randn_like(targets) * noise_std
-        return inputs, targets
-
-    return sample
-
-
 class Dataset:
-    def __init__(
-        self,
-        cfg: DataConfig,
-        in_dim: int,
-        out_dim: int,
-    ):
-        if cfg.type not in SAMPLER_FACTORIES:
-            raise ValueError(f"Unknown dataset type: {cfg.type!r}")
+    """
+    Linear teacher dataset with online/offline modes.
 
+    Offline: Pre-generates fixed training data.
+    Online: Samples fresh data each batch.
+    """
+
+    def __init__(self, cfg: DataConfig, in_dim: int, out_dim: int):
         self.cfg = cfg
+        self.in_dim = in_dim
+        self.out_dim = out_dim
         self.online = cfg.online
-        self.sampler = SAMPLER_FACTORIES[cfg.type](cfg, in_dim, out_dim)
+        self.noise_std = cfg.noise_std
 
-        # Compute split sizes
+        matrix_type = cfg.params["matrix"]
+        self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
+
         if cfg.test_split and cfg.test_split > 0:
             n_test = int(cfg.num_samples * cfg.test_split)
             n_train = cfg.num_samples - n_test
-            self.test_data = self.sampler(n_test)
+            self.test_data = self._sample(n_test)
         else:
             n_train = cfg.num_samples
             self.test_data = None
 
+        # Pre-generate train data for offline mode
         if self.online:
-            self.train_data = None
+            self._train_data = None
         else:
-            self.train_data = self.sampler(n_train)
+            self._train_data = self._sample(n_train)
 
-    def sample(self, n: int) -> tuple[Tensor, Tensor]:
-        return self.sampler(n)
+    def _sample(self, n: int) -> tuple[Tensor, Tensor]:
+        """Generate n samples from the teacher matrix."""
+        inputs = t.randn(n, self.in_dim)
+        targets = einops.einsum(self.teacher_matrix, inputs, "h w, n w -> n h")
+        if self.noise_std > 0:
+            targets += t.randn_like(targets) * self.noise_std
+        return inputs, targets
+
+    def get_train_iterator(
+        self, batch_size: int | None, device: t.device
+    ) -> Iterator[tuple[Tensor, Tensor]]:
+        """Returns an infinite iterator over training batches."""
+        if self.online:
+            if batch_size is None:
+                raise ValueError("Online mode requires explicit batch_size")
+            return self._online_iterator(batch_size, device)
+        else:
+            return self._offline_iterator(batch_size, device)
+
+    def _online_iterator(
+        self, batch_size: int, device: t.device
+    ) -> Iterator[tuple[Tensor, Tensor]]:
+        while True:
+            inputs, targets = self._sample(batch_size)
+            yield inputs.to(device), targets.to(device)
+
+    def _offline_iterator(
+        self, batch_size: int | None, device: t.device
+    ) -> Iterator[tuple[Tensor, Tensor]]:
+        x, y = self._train_data[0].to(device), self._train_data[1].to(device)
+        n_samples = len(x)
+
+        # Full batch
+        if batch_size is None or batch_size >= n_samples:
+            while True:
+                yield x, y
+
+        # Mini-batch
+        while True:
+            indices = t.randperm(n_samples, device=device)
+            for start_idx in range(0, n_samples, batch_size):
+                batch_idx = indices[start_idx : start_idx + batch_size]
+                yield x[batch_idx], y[batch_idx]

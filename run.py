@@ -1,12 +1,12 @@
-import json
 from pathlib import Path
 from typing import Any
 import hydra
 from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
-from dln.utils import seed_rng, get_device
+from dln.utils import seed_rng, get_device, save_history
 from dln.data import Dataset
 from dln.factory import create_trainer
+from dln.callbacks import create_callbacks
 
 
 def run_experiment(
@@ -31,19 +31,16 @@ def run_experiment(
         device=device,
     )
 
+    callbacks = create_callbacks(cfg.callbacks)
+
     history = trainer.train(
         max_steps=cfg.max_steps,
         evaluate_every=cfg.evaluate_every,
         metrics=cfg.metrics,
-        switch_step=cfg.switch.step,
-        switch_batch_size=cfg.switch.batch_size,
+        callbacks=callbacks,
     )
 
-    history_path = output_dir / "history.jsonl"
-    with history_path.open("w") as f:
-        for record in history:
-            json.dump(record, f)
-            f.write("\n")
+    save_history(history, output_dir)
 
     return history
 

@@ -1,5 +1,7 @@
+import json
 import random
-from typing import Iterator, Type
+from pathlib import Path
+from typing import Any, Type
 from torch import nn
 import numpy as np
 import torch as t
@@ -33,28 +35,6 @@ def to_device(
     return inputs.to(device), targets.to(device)
 
 
-def get_infinite_batches(
-    x: Tensor, y: Tensor, batch_size: int | None
-) -> Iterator[tuple[Tensor, Tensor]]:
-    """
-    Yields batches endlessly.
-    """
-    # Full-batch
-    n_samples = len(x)
-    if batch_size is None or batch_size >= n_samples:
-        while True:
-            yield x, y
-
-    # Mini-batch
-    while True:
-        indices = t.randperm(n_samples, device=x.device)
-
-        # Yield chunks
-        for start_idx in range(0, n_samples, batch_size):
-            batch_idx = indices[start_idx : start_idx + batch_size]
-            yield x[batch_idx], y[batch_idx]
-
-
 def get_optimizer_cls(name: str) -> Type[Optimizer]:
     """Resolve optimizer class from torch.optim by name."""
     try:
@@ -69,3 +49,22 @@ def get_criterion_cls(name: str) -> Type[nn.Module]:
         return getattr(nn, name)
     except AttributeError as e:
         raise ValueError(f"Unknown criterion: '{name}'") from e
+
+
+def save_history(history: list[dict[str, Any]], output_dir: Path) -> None:
+    """Save training history to JSONL file."""
+    history_path = output_dir / "history.jsonl"
+    with history_path.open("w") as f:
+        for record in history:
+            json.dump(record, f)
+            f.write("\n")
+
+
+def load_history(output_dir: Path) -> list[dict[str, Any]]:
+    """Load training history from JSONL file."""
+    history_path = output_dir / "history.jsonl"
+    if not history_path.exists():
+        raise FileNotFoundError(f"No history found at {history_path}")
+
+    with history_path.open("r") as f:
+        return [json.loads(line) for line in f]

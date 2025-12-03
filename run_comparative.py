@@ -1,13 +1,13 @@
-import json
 from pathlib import Path
 from typing import Any
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
-from dln.utils import seed_rng, get_device
+from dln.utils import seed_rng, get_device, save_history
 from dln.data import Dataset
 from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
+from dln.callbacks import create_callbacks
 
 
 def run_comparative_experiment(
@@ -48,16 +48,17 @@ def run_comparative_experiment(
         evaluate_every=cfg.evaluate_every,
     )
 
+    callbacks_a = create_callbacks(cfg.callbacks_a)
+    callbacks_b = create_callbacks(cfg.callbacks_b)
+
     history = comparative_trainer.train(
         model_metrics=cfg.model_metrics,
         comparative_metrics=cfg.comparative_metrics,
+        callbacks_a=callbacks_a,
+        callbacks_b=callbacks_b,
     )
 
-    history_path = output_dir / "history.jsonl"
-    with history_path.open("w") as f:
-        for record in history:
-            json.dump(record, f)
-            f.write("\n")
+    save_history(history, output_dir)
 
     return history
 

@@ -56,23 +56,11 @@ history = run_comparative(
 )
 plot_comparative(history)
 
-# %% Example 7a: Different Dataset Type (using config)
+# %% Example 7: Different Dataset Type
 history = run_single(
     "example_7a",
     "random_teacher",
     overrides=["training.lr=0.04"],
-)
-plot_metrics(history, ["train_loss"])
-
-# %% Example 7b: Different Dataset Type (using override)
-history = run_single(
-    "example_7b",
-    "diagonal_teacher",
-    overrides=[
-        "data.type=random_teacher",
-        "++data.params={mean: 0.0, std: 1.0}",
-        "training.lr=0.04",
-    ],
 )
 plot_metrics(history, ["train_loss"])
 
@@ -114,7 +102,7 @@ plot_sweep(results)
 
 # %% Snapping Experiment
 common_overrides = [
-    "model.hidden_size=150",
+    "model.hidden_dim=150",
     "training.model_seed=2",
     "data.num_samples=500",
     "max_steps=4000",
@@ -140,8 +128,7 @@ history_switch = run_single(
     overrides=common_overrides
     + [
         "training.batch_size=1",
-        "switch.step=1100",
-        "switch.batch_size=null",
+        "callbacks=[{name: switch_batch_size, params: {step: 1100, batch_size: null}}]",
     ],
 )
 
@@ -160,7 +147,7 @@ plot_sweep(results, title="High to Low Noise (Smoothed)", smoothing=40)
 
 # %% Snapping Experiment low to high noise
 common_overrides = [
-    "model.hidden_size=150",
+    "model.hidden_dim=150",
     "training.model_seed=2",
     "data.num_samples=500",
     "max_steps=4000",
@@ -186,8 +173,7 @@ history_switch = run_single(
     overrides=common_overrides
     + [
         "training.batch_size=null",
-        "switch.step=1100",
-        "switch.batch_size=1",
+        "callbacks=[{name: switch_batch_size, params: {step: 1100, batch_size: 1}}]",
     ],
 )
 

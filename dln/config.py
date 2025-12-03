@@ -40,9 +40,9 @@ class ExperimentMeta:
 
 
 @dataclass
-class SwitchConfig:
-    step: int | None
-    batch_size: int | None
+class CallbackConfig:
+    name: str
+    params: dict[str, Any] | None = None
 
 
 @dataclass
@@ -53,8 +53,8 @@ class ExperimentConfig:
     training: TrainingConfig
     max_steps: int
     evaluate_every: int
-    switch: SwitchConfig | None = None
     metrics: list[str] = field(default_factory=list)
+    callbacks: list[CallbackConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -69,4 +69,6 @@ class ComparativeExperimentConfig:
     evaluate_every: int
     model_metrics: list[str] = field(default_factory=list)
     comparative_metrics: list[str] = field(default_factory=list)
+    callbacks_a: list[CallbackConfig] = field(default_factory=list)
+    callbacks_b: list[CallbackConfig] = field(default_factory=list)
     shared: dict[str, Any] = field(default_factory=dict)
