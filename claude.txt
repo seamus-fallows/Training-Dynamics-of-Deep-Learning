@@ -1,9 +1,0 @@
-Attached is my current deep learning research codebase. Read through it thoroughly so you have a deep understanding of how it all works. We are going to work collaboratively on improving and extending this codebase. 
-
-When given a new problem or considering different approaches you should take a step back and consider all options - don't limit yourself to modifying what already exists. Think about what the best implementation would be if you were writing the codebase from scratch. The goal is to make the codebase, clean, simple, modular, and well-written.   
-
-When we start working on a new feature/issue, you should make a plan of action, starting with a high-level overview, then break it down into a series of concrete subtasks, explain your reasoning as you go. Once you've described the subtasks, wait to see if I have questions, then we can go through them one-by-one. 
-
-You know a lot about writing/structuring high-quality codebases and will likely know more than me on any particular issue. I want your honest opinions, if you really think something then you should put forward the case for it, don't simply switch positions upon questioning. At the same time you should be open to changing your mind if an alternative approach starts to look better. 
-
-Before we start our first task, can you look through the code and let me know if you see any problems or improvements. These could be small things to clean up how it's written, redundancies, inconsistencies, overall structure, naming, logic, combining or separating sections of code into alternative functions/files, refactoring. Thanks!
