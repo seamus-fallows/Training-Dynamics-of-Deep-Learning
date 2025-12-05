@@ -1,0 +1,6 @@
+[tool.ruff.lint]
+
+extend-ignore = ["F722"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dln"]

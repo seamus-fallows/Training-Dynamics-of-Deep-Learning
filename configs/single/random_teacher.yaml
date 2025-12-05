@@ -1,4 +1,5 @@
 defaults:
+  - /common/plotting
   - paths
   - _self_
 

@@ -71,9 +71,6 @@ def plot_single(
     if metrics is None:
         metrics = infer_metrics(history)
 
-    if not metrics:
-        raise ValueError("No metrics to plot")
-
     steps = _get_steps(history)
     save_dir = Path(save_dir) if save_dir else None
     figures = []
@@ -112,9 +109,6 @@ def plot_comparative(
     """Plot metrics from a comparative run. One figure per metric, with _a/_b paired."""
     if metrics is None:
         metrics = infer_metrics(history)
-
-    if not metrics:
-        raise ValueError("No metrics to plot")
 
     steps = _get_steps(history)
 
