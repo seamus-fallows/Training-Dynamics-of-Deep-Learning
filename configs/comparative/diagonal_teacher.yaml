@@ -58,7 +58,6 @@ training_b:
   batch_seed: ${shared.training.batch_seed}
 
 data:
-  type: "linear_teacher"
   num_samples: 100
   test_split: null
   data_seed: 0

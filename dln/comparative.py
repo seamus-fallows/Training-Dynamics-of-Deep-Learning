@@ -43,10 +43,7 @@ class ComparativeTrainer:
                 callback(step, self.trainer_b)
 
             inputs_a, targets_a = next(self.trainer_a.train_iterator)
-            if self.trainer_a.batch_size == self.trainer_b.batch_size:
-                inputs_b, targets_b = inputs_a, targets_a
-            else:
-                inputs_b, targets_b = next(self.trainer_b.train_iterator)
+            inputs_b, targets_b = next(self.trainer_b.train_iterator)
 
             loss_a = self.trainer_a._training_step(inputs_a, targets_a)
             loss_b = self.trainer_b._training_step(inputs_b, targets_b)
@@ -68,7 +65,8 @@ class ComparativeTrainer:
                     record["test_loss_b"] = test_loss_b
 
                 if model_metrics:
-                    metric_inputs, metric_targets = self._metric_data
+                    # Some metrics (e.g. weight_norm) don't require data
+                    metric_inputs, metric_targets = self._metric_data or (None, None)
                     metrics_a = compute_metrics(
                         self.trainer_a.model,
                         model_metrics,

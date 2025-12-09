@@ -15,7 +15,6 @@ class ModelConfig:
 
 @dataclass
 class DataConfig:
-    type: str
     num_samples: int
     test_split: float | None
     # Dictionary for dataset-specific parameters e.g. mean, std.

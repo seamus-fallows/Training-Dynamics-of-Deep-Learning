@@ -13,7 +13,7 @@ class Trainer:
     def __init__(
         self,
         model: DeepLinearNetwork,
-        config: TrainingConfig,
+        cfg: TrainingConfig,
         dataset: Dataset,
         device: t.device,
         metric_data: tuple[Tensor, Tensor] | None = None,
@@ -21,22 +21,22 @@ class Trainer:
         self.device = device
         self.model = model.to(device)
         self.dataset = dataset
-        self.batch_size = config.batch_size
+        self.batch_size = cfg.batch_size
 
         self._batch_generator = t.Generator(device=device)
-        self._batch_generator.manual_seed(config.batch_seed)
+        self._batch_generator.manual_seed(cfg.batch_seed)
 
         self.test_data = to_device(dataset.test_data, device)
         self.train_iterator = dataset.get_train_iterator(
             self.batch_size, device, self._batch_generator
         )
 
-        optimizer_cls = get_optimizer_cls(config.optimizer)
-        criterion_cls = get_criterion_cls(config.criterion)
+        optimizer_cls = get_optimizer_cls(cfg.optimizer)
+        criterion_cls = get_criterion_cls(cfg.criterion)
 
-        optimizer_kwargs = {"lr": config.lr}
-        if config.optimizer_params:
-            optimizer_kwargs.update(config.optimizer_params)
+        optimizer_kwargs = {"lr": cfg.lr}
+        if cfg.optimizer_params:
+            optimizer_kwargs.update(cfg.optimizer_params)
 
         self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
@@ -77,7 +77,7 @@ class Trainer:
                     record["test_loss"] = test_loss
 
                 if metrics:
-                    metric_inputs, metric_targets = self._metric_data
+                    metric_inputs, metric_targets = self._metric_data or (None, None)
                     record.update(
                         compute_metrics(
                             self.model,

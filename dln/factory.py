@@ -19,7 +19,7 @@ def create_trainer(
 
     return Trainer(
         model=model,
-        config=training_cfg,
+        cfg=training_cfg,
         dataset=dataset,
         device=device,
         metric_data=metric_data,

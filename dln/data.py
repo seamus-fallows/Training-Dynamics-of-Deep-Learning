@@ -66,12 +66,14 @@ class Dataset:
         else:
             self._train_data = self.sample(n_train)
 
-    def sample(self, n: int) -> tuple[Tensor, Tensor]:
+    def sample(
+        self, n: int, generator: t.Generator | None = None
+    ) -> tuple[Tensor, Tensor]:
         """Generate n samples from the teacher matrix."""
-        inputs = t.randn(n, self.in_dim)
+        inputs = t.randn(n, self.in_dim, generator=generator)
         targets = einops.einsum(self.teacher_matrix, inputs, "h w, n w -> n h")
         if self.noise_std > 0:
-            targets += t.randn_like(targets) * self.noise_std
+            targets += t.randn_like(targets, generator=generator) * self.noise_std
         return inputs, targets
 
     def get_train_data(self) -> tuple[Tensor, Tensor]:
@@ -145,11 +147,14 @@ def get_metric_data(
     if config.mode == "estimator":
         if config.holdout_size is None:
             raise ValueError("Estimator mode requires holdout_size")
-        t.manual_seed(0)
+
+        generator = t.Generator().manual_seed(0)
+
         if dataset.online:
-            return dataset.sample(config.holdout_size)
+            return dataset.sample(config.holdout_size, generator=generator)
+
         x, y = dataset.get_train_data()
-        indices = t.randperm(len(x))[: config.holdout_size]
+        indices = t.randperm(len(x), generator=generator)[: config.holdout_size]
         return x[indices].clone(), y[indices].clone()
 
     raise ValueError(f"Unknown mode: {config.mode}")

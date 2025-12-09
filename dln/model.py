@@ -7,24 +7,20 @@ from .config import ModelConfig
 class DeepLinearNetwork(nn.Module):
     def __init__(
         self,
-        config: ModelConfig,
+        cfg: ModelConfig,
     ):
         super().__init__()
 
-        self.config = config
-
-        sizes = (
-            [config.in_dim] + [config.hidden_dim] * config.num_hidden + [config.out_dim]
-        )
+        sizes = [cfg.in_dim] + [cfg.hidden_dim] * cfg.num_hidden + [cfg.out_dim]
         self.model = nn.Sequential(
             *[
-                nn.Linear(sizes[i], sizes[i + 1], bias=config.bias)
+                nn.Linear(sizes[i], sizes[i + 1], bias=cfg.bias)
                 for i in range(len(sizes) - 1)
             ]
         )
-        if config.gamma is not None:
+        if cfg.gamma is not None:
             # Scaling defined in https://arxiv.org/pdf/2106.15933
-            std = config.hidden_dim ** (-config.gamma / 2)
+            std = cfg.hidden_dim ** (-cfg.gamma / 2)
             self._init_weights(std)
 
     def _init_weights(self, std: float) -> None:

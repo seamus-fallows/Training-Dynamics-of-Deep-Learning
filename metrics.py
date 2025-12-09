@@ -112,7 +112,8 @@ def _compute_batch_hvps(
 def weight_norm(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module
 ) -> float:  # Unused args for consistency with other mertics
-    return _flatten_params(model).norm().item()
+    with t.no_grad():
+        return _flatten_params(model).norm().item()
 
 
 @metric("grad_norm_squared")
@@ -164,16 +165,18 @@ def trace_hessian_covariance(
 
 @comparative_metric("param_distance")
 def param_distance(model_a: Module, model_b: Module) -> float:
-    flat_a = _flatten_params(model_a)
-    flat_b = _flatten_params(model_b)
-    return t.norm(flat_a - flat_b, p=2).item()
+    with t.no_grad():
+        flat_a = _flatten_params(model_a)
+        flat_b = _flatten_params(model_b)
+        return (flat_a - flat_b).norm().item()
 
 
 @comparative_metric("param_cosine_sim")
 def param_cosine_sim(model_a: Module, model_b: Module) -> float:
-    flat_a = _flatten_params(model_a)
-    flat_b = _flatten_params(model_b)
-    return F.cosine_similarity(flat_a, flat_b, dim=0).item()
+    with t.no_grad():
+        flat_a = _flatten_params(model_a)
+        flat_b = _flatten_params(model_b)
+        return F.cosine_similarity(flat_a, flat_b, dim=0).item()
 
 
 # Compute functions
