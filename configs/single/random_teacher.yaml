@@ -1,5 +1,4 @@
 defaults:
-  - /common/plotting
   - paths
   - _self_
 
@@ -13,6 +12,7 @@ model:
   hidden_dim: 10
   gamma: 1.5
   bias: false
+  seed: 0
 
 training:
   lr: 0.0005
@@ -20,7 +20,7 @@ training:
   optimizer: "SGD"
   optimizer_params: null
   criterion: "MSELoss"
-  model_seed: 0
+  batch_seed: 0
 
 data:
   type: "linear_teacher"
@@ -37,6 +37,5 @@ data:
 max_steps: 2000
 evaluate_every: 1
 metrics: []
+metric_data: null
 callbacks: []
-
-observables: null

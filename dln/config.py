@@ -10,6 +10,7 @@ class ModelConfig:
     num_hidden: int
     gamma: float
     bias: bool = False
+    seed: int = 0
 
 
 @dataclass
@@ -17,9 +18,9 @@ class DataConfig:
     type: str
     num_samples: int
     test_split: float | None
-    data_seed: int
     # Dictionary for dataset-specific parameters e.g. mean, std.
     params: dict[str, Any] | None
+    data_seed: int = 0
     noise_std: float = 0.0
     online: bool = False
 
@@ -31,7 +32,7 @@ class TrainingConfig:
     optimizer: str
     optimizer_params: dict[str, Any] | None
     criterion: str
-    model_seed: int
+    batch_seed: int = 0
 
 
 @dataclass
@@ -46,11 +47,9 @@ class CallbackConfig:
 
 
 @dataclass
-class ObservablesConfig:
-    names: list[str]
-    evaluate_every: int
+class MetricDataConfig:
     mode: Literal["population", "estimator"]
-    holdout_size: int | None  # Required if mode == "estimator"
+    holdout_size: int | None = None
 
 
 @dataclass
@@ -62,6 +61,7 @@ class ExperimentConfig:
     max_steps: int
     evaluate_every: int
     metrics: list[str] = field(default_factory=list)
+    metric_data: MetricDataConfig | None = None
     callbacks: list[CallbackConfig] = field(default_factory=list)
 
 
@@ -77,7 +77,7 @@ class ComparativeExperimentConfig:
     evaluate_every: int
     model_metrics: list[str] = field(default_factory=list)
     comparative_metrics: list[str] = field(default_factory=list)
+    metric_data: MetricDataConfig | None = None
     callbacks_a: list[CallbackConfig] = field(default_factory=list)
     callbacks_b: list[CallbackConfig] = field(default_factory=list)
     shared: dict[str, Any] = field(default_factory=dict)
-    observables: ObservablesConfig | None = None

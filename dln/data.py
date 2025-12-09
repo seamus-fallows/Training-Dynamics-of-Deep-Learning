@@ -2,7 +2,7 @@ from typing import Iterator, Callable
 import torch as t
 from torch import Tensor
 import einops
-from .config import DataConfig
+from .config import DataConfig, MetricDataConfig
 
 
 MATRIX_FACTORIES: dict[str, Callable] = {}
@@ -80,61 +80,76 @@ class Dataset:
         return self._train_data
 
     def get_train_iterator(
-        self, batch_size: int | None, device: t.device
+        self,
+        batch_size: int | None,
+        device: t.device,
+        generator: t.Generator | None = None,
     ) -> Iterator[tuple[Tensor, Tensor]]:
         """Returns an infinite iterator over training batches."""
         if self.online:
             if batch_size is None:
                 raise ValueError("Online mode requires explicit batch_size")
-            return self._online_iterator(batch_size, device)
+            return self._online_iterator(batch_size, device, generator)
         else:
-            return self._offline_iterator(batch_size, device)
+            return self._offline_iterator(batch_size, device, generator)
 
     def _online_iterator(
-        self, batch_size: int, device: t.device
+        self,
+        batch_size: int,
+        device: t.device,
+        generator: t.Generator | None = None,
     ) -> Iterator[tuple[Tensor, Tensor]]:
+        teacher_matrix = self.teacher_matrix.to(device)
         while True:
-            inputs, targets = self.sample(batch_size)
-            yield inputs.to(device), targets.to(device)
+            inputs = t.randn(
+                batch_size, self.in_dim, device=device, generator=generator
+            )
+            targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
+            if self.noise_std > 0:
+                targets += t.randn_like(targets, generator=generator) * self.noise_std
+            yield inputs, targets
 
     def _offline_iterator(
-        self, batch_size: int | None, device: t.device
+        self,
+        batch_size: int | None,
+        device: t.device,
+        generator: t.Generator | None = None,
     ) -> Iterator[tuple[Tensor, Tensor]]:
         x, y = self._train_data[0].to(device), self._train_data[1].to(device)
         n_samples = len(x)
 
-        # Full batch
         if batch_size is None or batch_size >= n_samples:
             while True:
                 yield x, y
 
-        # Mini-batch
         while True:
-            indices = t.randperm(n_samples, device=device)
+            indices = t.randperm(n_samples, device=device, generator=generator)
             for start_idx in range(0, n_samples, batch_size):
                 batch_idx = indices[start_idx : start_idx + batch_size]
                 yield x[batch_idx], y[batch_idx]
 
 
-def get_observable_data(
+def get_metric_data(
     dataset: Dataset,
-    mode: str,
-    holdout_size: int | None,
-) -> tuple[Tensor, Tensor]:
-    if mode == "population":  # Full training set
+    config: MetricDataConfig | None,
+) -> tuple[Tensor, Tensor] | None:
+    if config is None:
+        return None
+
+    if config.mode == "population":
         if dataset.online:
             raise ValueError("Population mode not available in online mode")
         x, y = dataset.get_train_data()
         return x.clone(), y.clone()
 
-    elif mode == "estimator":  # Fixed sample
-        if holdout_size is None:
+    if config.mode == "estimator":
+        if config.holdout_size is None:
             raise ValueError("Estimator mode requires holdout_size")
+        t.manual_seed(0)
         if dataset.online:
-            return dataset.sample(holdout_size)
-        else:
-            x, y = dataset.get_train_data()
-            indices = t.randperm(len(x))[:holdout_size]
-            return x[indices].clone(), y[indices].clone()
+            return dataset.sample(config.holdout_size)
+        x, y = dataset.get_train_data()
+        indices = t.randperm(len(x))[: config.holdout_size]
+        return x[indices].clone(), y[indices].clone()
 
-    raise ValueError(f"Unknown mode: {mode}")
+    raise ValueError(f"Unknown mode: {config.mode}")

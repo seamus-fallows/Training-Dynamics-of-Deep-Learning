@@ -4,7 +4,7 @@ import hydra
 from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
 from dln.utils import seed_rng, get_device, save_history
-from dln.data import Dataset, get_observable_data
+from dln.data import Dataset, get_metric_data
 from dln.factory import create_trainer
 from dln.callbacks import create_callbacks
 
@@ -20,19 +20,14 @@ def run_experiment(
     seed_rng(cfg.data.data_seed)
     dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
 
-    observable_data = None
-    if cfg.observables is not None:
-        observable_data = get_observable_data(
-            dataset, cfg.observables.mode, cfg.observables.holdout_size
-        )
+    metric_data = get_metric_data(dataset, cfg.metric_data)
 
     trainer = create_trainer(
         model_cfg=cfg.model,
         training_cfg=cfg.training,
         dataset=dataset,
         device=device,
-        observable_data=observable_data,
-        observables_config=cfg.observables,
+        metric_data=metric_data,
     )
 
     callbacks = create_callbacks(cfg.callbacks)

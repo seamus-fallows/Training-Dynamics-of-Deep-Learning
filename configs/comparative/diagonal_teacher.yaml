@@ -5,8 +5,6 @@ defaults:
 experiment:
   name: "diagonal_teacher_comparative"
 
-# SHARED VALUES
-# Change these to update both models/trainers simultaneously.
 shared:
   model:
     in_dim: 5
@@ -15,6 +13,7 @@ shared:
     hidden_dim: 10
     gamma: 1.5
     bias: false
+    seed: 0
   
   training:
     lr: 0.0005
@@ -22,11 +21,7 @@ shared:
     optimizer: "SGD"
     optimizer_params: null
     criterion: "MSELoss"
-    model_seed: 0
-
-
-# INDIVIDUAL MODEL CONFIGS
-# Hydra interpolation (${shared...}) keeps both models synced by default.
+    batch_seed: 0
 
 model_a:
   in_dim: ${shared.model.in_dim}
@@ -35,6 +30,7 @@ model_a:
   hidden_dim: ${shared.model.hidden_dim}
   gamma: ${shared.model.gamma}
   bias: ${shared.model.bias}
+  seed: ${shared.model.seed}
 
 model_b:
   in_dim: ${shared.model.in_dim}
@@ -43,9 +39,7 @@ model_b:
   hidden_dim: ${shared.model.hidden_dim}
   gamma: ${shared.model.gamma}
   bias: ${shared.model.bias}
-
-
-# INDIVIDUAL TRAINING CONFIGS
+  seed: ${shared.model.seed}
 
 training_a:
   lr: ${shared.training.lr}
@@ -53,7 +47,7 @@ training_a:
   optimizer: ${shared.training.optimizer}
   optimizer_params: ${shared.training.optimizer_params}
   criterion: ${shared.training.criterion}
-  model_seed: ${shared.training.model_seed}
+  batch_seed: ${shared.training.batch_seed}
 
 training_b:
   lr: ${shared.training.lr}
@@ -61,8 +55,7 @@ training_b:
   optimizer: ${shared.training.optimizer}
   optimizer_params: ${shared.training.optimizer_params}
   criterion: ${shared.training.criterion}
-  model_seed: ${shared.training.model_seed}
-
+  batch_seed: ${shared.training.batch_seed}
 
 data:
   type: "linear_teacher"
@@ -80,13 +73,9 @@ evaluate_every: 1
 model_metrics: []
 comparative_metrics:        
   - "param_distance"
+metric_data: null
+  # mode: "population"
+  # holdout_size: null
 
 callbacks_a: []
 callbacks_b: []
-
-
-observables: null
-  # names: ["golden_path_stats"]
-  # evaluate_every: 1
-  # mode: "population"
-  # holdout_size: null

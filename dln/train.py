@@ -1,13 +1,12 @@
 from typing import Any, Callable
 from tqdm import tqdm
-from dln.data import Dataset
 import torch as t
 from torch import Tensor
-from .config import TrainingConfig, ObservablesConfig
-from .model import DeepLinearNetwork
-from .utils import get_criterion_cls, get_optimizer_cls, to_device
-from .metrics import compute_model_metrics
-from sgd_observables.observables import compute_observables
+from dln.data import Dataset
+from dln.config import TrainingConfig
+from dln.model import DeepLinearNetwork
+from dln.utils import get_criterion_cls, get_optimizer_cls, to_device
+from metrics import compute_metrics
 
 
 class Trainer:
@@ -17,17 +16,20 @@ class Trainer:
         config: TrainingConfig,
         dataset: Dataset,
         device: t.device,
-        observable_data: tuple[Tensor, Tensor] | None = None,
-        observables_config: ObservablesConfig | None = None,
+        metric_data: tuple[Tensor, Tensor] | None = None,
     ):
         self.device = device
         self.model = model.to(device)
-        self.config = config
         self.dataset = dataset
         self.batch_size = config.batch_size
 
+        self._batch_generator = t.Generator(device=device)
+        self._batch_generator.manual_seed(config.batch_seed)
+
         self.test_data = to_device(dataset.test_data, device)
-        self.train_iterator = dataset.get_train_iterator(self.batch_size, device)
+        self.train_iterator = dataset.get_train_iterator(
+            self.batch_size, device, self._batch_generator
+        )
 
         optimizer_cls = get_optimizer_cls(config.optimizer)
         criterion_cls = get_criterion_cls(config.criterion)
@@ -38,16 +40,14 @@ class Trainer:
 
         self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
-
+        self._metric_data = to_device(metric_data, device)
         self.history: list[dict[str, Any]] = []
 
-        self._observable_data = to_device(observable_data, device)
-        self._observables_config = observables_config
-
     def set_batch_size(self, batch_size: int | None) -> None:
-        """Change batch size mid-training. Recreates the data iterator."""
         self.batch_size = batch_size
-        self.train_iterator = self.dataset.get_train_iterator(batch_size, self.device)
+        self.train_iterator = self.dataset.get_train_iterator(
+            batch_size, self.device, self._batch_generator
+        )
 
     def run(
         self,
@@ -66,33 +66,25 @@ class Trainer:
                 callback(step, self)
 
             inputs, targets = next(self.train_iterator)
-            step_metrics = self.training_step(inputs, targets, metrics)
-            first_key = next(iter(step_metrics))
-            progress_bar.set_postfix({first_key: f"{step_metrics[first_key]:.4f}"})
+            train_loss = self._training_step(inputs, targets)
+            progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
 
-            should_log_main = step % evaluate_every == 0 or step == (max_steps - 1)
-            should_log_obs = (
-                self._observables_config is not None
-                and step % self._observables_config.evaluate_every == 0
-            )
+            if step % evaluate_every == 0 or step == (max_steps - 1):
+                record = {"step": step, "train_loss": train_loss}
 
-            if should_log_main or should_log_obs:
-                record = {"step": step, **step_metrics}
+                test_loss = self.evaluate()
+                if test_loss is not None:
+                    record["test_loss"] = test_loss
 
-                if should_log_main:
-                    test_loss = self.evaluate()
-                    if test_loss is not None:
-                        record["test_loss"] = test_loss
-
-                if should_log_obs:
-                    inputs, targets = self._observable_data
+                if metrics:
+                    metric_inputs, metric_targets = self._metric_data
                     record.update(
-                        compute_observables(
+                        compute_metrics(
                             self.model,
-                            inputs,
-                            targets,
+                            metrics,
+                            metric_inputs,
+                            metric_targets,
                             self.criterion,
-                            self._observables_config.names,
                         )
                     )
 
@@ -100,32 +92,23 @@ class Trainer:
 
         return self.history
 
-    def training_step(
-        self, inputs: Tensor, targets: Tensor, metrics: list[str] | None = None
-    ) -> dict[str, float]:
+    def _training_step(self, inputs: Tensor, targets: Tensor) -> float:
         self.optimizer.zero_grad()
         output = self.model(inputs)
         loss = self.criterion(output, targets)
         loss.backward()
-
-        # Compute metrics before step so gradient_norm gets pre-update gradients
-        results = {"train_loss": loss.item()}
-        if metrics:
-            results.update(compute_model_metrics(self.model, metrics))
-
         self.optimizer.step()
-        return results
+        return loss.item()
 
     def evaluate(self) -> float | None:
         if self.test_data is None:
             return None
 
         inputs, targets = self.test_data
-
         with t.inference_mode():
             self.model.eval()
             output = self.model(inputs)
             loss = self.criterion(output, targets)
 
         self.model.train()
-        return float(loss.item())
+        return loss.item()
