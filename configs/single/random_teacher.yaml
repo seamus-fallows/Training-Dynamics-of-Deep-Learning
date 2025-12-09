@@ -34,10 +34,9 @@ data:
     mean: 0.0
     std: 1.0
 
-
 max_steps: 2000
 evaluate_every: 1
 metrics: []
-
 callbacks: []
-  
+
+observables: null

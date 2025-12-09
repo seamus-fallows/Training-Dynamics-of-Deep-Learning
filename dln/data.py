@@ -56,7 +56,7 @@ class Dataset:
         if cfg.test_split and cfg.test_split > 0:
             n_test = int(cfg.num_samples * cfg.test_split)
             n_train = cfg.num_samples - n_test
-            self.test_data = self._sample(n_test)
+            self.test_data = self.sample(n_test)
         else:
             n_train = cfg.num_samples
             self.test_data = None
@@ -64,15 +64,20 @@ class Dataset:
         if self.online:
             self._train_data = None
         else:
-            self._train_data = self._sample(n_train)
+            self._train_data = self.sample(n_train)
 
-    def _sample(self, n: int) -> tuple[Tensor, Tensor]:
+    def sample(self, n: int) -> tuple[Tensor, Tensor]:
         """Generate n samples from the teacher matrix."""
         inputs = t.randn(n, self.in_dim)
         targets = einops.einsum(self.teacher_matrix, inputs, "h w, n w -> n h")
         if self.noise_std > 0:
             targets += t.randn_like(targets) * self.noise_std
         return inputs, targets
+
+    def get_train_data(self) -> tuple[Tensor, Tensor]:
+        if self._train_data is None:
+            raise ValueError("No training data in online mode")
+        return self._train_data
 
     def get_train_iterator(
         self, batch_size: int | None, device: t.device
@@ -89,7 +94,7 @@ class Dataset:
         self, batch_size: int, device: t.device
     ) -> Iterator[tuple[Tensor, Tensor]]:
         while True:
-            inputs, targets = self._sample(batch_size)
+            inputs, targets = self.sample(batch_size)
             yield inputs.to(device), targets.to(device)
 
     def _offline_iterator(
@@ -109,3 +114,27 @@ class Dataset:
             for start_idx in range(0, n_samples, batch_size):
                 batch_idx = indices[start_idx : start_idx + batch_size]
                 yield x[batch_idx], y[batch_idx]
+
+
+def get_observable_data(
+    dataset: Dataset,
+    mode: str,
+    holdout_size: int | None,
+) -> tuple[Tensor, Tensor]:
+    if mode == "population":  # Full training set
+        if dataset.online:
+            raise ValueError("Population mode not available in online mode")
+        x, y = dataset.get_train_data()
+        return x.clone(), y.clone()
+
+    elif mode == "estimator":  # Fixed sample
+        if holdout_size is None:
+            raise ValueError("Estimator mode requires holdout_size")
+        if dataset.online:
+            return dataset.sample(holdout_size)
+        else:
+            x, y = dataset.get_train_data()
+            indices = t.randperm(len(x))[:holdout_size]
+            return x[indices].clone(), y[indices].clone()
+
+    raise ValueError(f"Unknown mode: {mode}")

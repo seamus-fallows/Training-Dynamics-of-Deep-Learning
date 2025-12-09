@@ -1,5 +1,4 @@
 defaults:
-  - /common/plotting
   - paths
   - _self_
 
@@ -84,3 +83,10 @@ comparative_metrics:
 
 callbacks_a: []
 callbacks_b: []
+
+
+observables: null
+  # names: ["golden_path_stats"]
+  # evaluate_every: 1
+  # mode: "population"
+  # holdout_size: null

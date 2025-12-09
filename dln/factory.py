@@ -4,6 +4,8 @@ from omegaconf import DictConfig
 from dln.utils import seed_rng
 from dln.model import DeepLinearNetwork
 from dln.train import Trainer
+from dln.config import ObservablesConfig
+from torch import Tensor
 
 
 def create_trainer(
@@ -11,11 +13,9 @@ def create_trainer(
     training_cfg: DictConfig,
     dataset: Dataset,
     device: t.device,
+    observable_data: tuple[Tensor, Tensor] | None = None,
+    observables_config: ObservablesConfig | None = None,
 ) -> Trainer:
-    """
-    Creates a Model and Trainer from config.
-    """
-
     seed_rng(training_cfg.model_seed)
     model = DeepLinearNetwork(model_cfg)
 
@@ -24,6 +24,8 @@ def create_trainer(
         config=training_cfg,
         dataset=dataset,
         device=device,
+        observable_data=observable_data,
+        observables_config=observables_config,
     )
 
     return trainer

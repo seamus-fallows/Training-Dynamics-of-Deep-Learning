@@ -1,7 +1,11 @@
 from typing import Any, Callable
 from tqdm import tqdm
+from torch import Tensor
 from .train import Trainer
 from .metrics import compute_comparative_metrics
+from .config import ObservablesConfig
+from .utils import to_device
+from sgd_observables.observables import compute_observables
 
 
 class ComparativeTrainer:
@@ -21,12 +25,19 @@ class ComparativeTrainer:
         trainer_b: Trainer,
         max_steps: int,
         evaluate_every: int = 1,
+        observable_data: tuple[Tensor, Tensor] | None = None,
+        observables_config: ObservablesConfig | None = None,
     ):
         self.trainer_a = trainer_a
         self.trainer_b = trainer_b
         self.max_steps = max_steps
         self.evaluate_every = evaluate_every
         self.history: list[dict[str, Any]] = []
+
+        # Shared observable data for both models
+        device = trainer_a.device
+        self._observable_data = to_device(observable_data, device)
+        self._observables_config = observables_config
 
     def run(
         self,
@@ -71,16 +82,44 @@ class ComparativeTrainer:
             first_key = next(iter(step_metrics))
             progress_bar.set_postfix({first_key: f"{step_metrics[first_key]:.4f}"})
 
-            if step % self.evaluate_every == 0 or step == (self.max_steps - 1):
-                eval_metrics = {}
-                test_loss_a = self.trainer_a.evaluate()
-                test_loss_b = self.trainer_b.evaluate()
-                if test_loss_a is not None:
-                    eval_metrics["test_loss_a"] = test_loss_a
-                if test_loss_b is not None:
-                    eval_metrics["test_loss_b"] = test_loss_b
+            should_log_main = step % self.evaluate_every == 0 or step == (
+                self.max_steps - 1
+            )
+            should_log_obs = (
+                self._observables_config is not None
+                and step % self._observables_config.evaluate_every == 0
+            )
 
-                record = {"step": step, **step_metrics, **eval_metrics}
+            if should_log_main or should_log_obs:
+                record = {"step": step, **step_metrics}
+
+                if should_log_main:
+                    test_loss_a = self.trainer_a.evaluate()
+                    test_loss_b = self.trainer_b.evaluate()
+                    if test_loss_a is not None:
+                        record["test_loss_a"] = test_loss_a
+                    if test_loss_b is not None:
+                        record["test_loss_b"] = test_loss_b
+
+            if should_log_obs:
+                inputs, targets = self._observable_data
+                obs_a = compute_observables(
+                    self.trainer_a.model,
+                    inputs,
+                    targets,
+                    self.trainer_a.criterion,
+                    self._observables_config.names,
+                )
+                obs_b = compute_observables(
+                    self.trainer_b.model,
+                    inputs,
+                    targets,
+                    self.trainer_b.criterion,
+                    self._observables_config.names,
+                )
+                record.update({f"{k}_a": v for k, v in obs_a.items()})
+                record.update({f"{k}_b": v for k, v in obs_b.items()})
+
                 self.history.append(record)
 
         return self.history

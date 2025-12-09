@@ -4,7 +4,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 from dln.utils import seed_rng, get_device, save_history
-from dln.data import Dataset
+from dln.data import Dataset, get_observable_data
 from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
 from dln.callbacks import create_callbacks
@@ -22,6 +22,13 @@ def run_comparative_experiment(
     # Shared dataset
     seed_rng(cfg.data.data_seed)
     dataset = Dataset(cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim)
+
+    # Resolve observable data
+    observable_data = None
+    if cfg.observables is not None:
+        observable_data = get_observable_data(
+            dataset, cfg.observables.mode, cfg.observables.holdout_size
+        )
 
     trainer_a = create_trainer(
         model_cfg=cfg.model_a,
@@ -42,6 +49,8 @@ def run_comparative_experiment(
         trainer_b,
         max_steps=cfg.max_steps,
         evaluate_every=cfg.evaluate_every,
+        observable_data=observable_data,
+        observables_config=cfg.observables,
     )
 
     callbacks_a = create_callbacks(cfg.callbacks_a)

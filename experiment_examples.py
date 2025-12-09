@@ -193,5 +193,4 @@ plot_sweep(results, title="Low to High Noise (Smoothed)", smoothing=40)
 # Run to delete outputs
 shutil.rmtree(Path("outputs/notebook"), ignore_errors=True)
 
-
 # %%

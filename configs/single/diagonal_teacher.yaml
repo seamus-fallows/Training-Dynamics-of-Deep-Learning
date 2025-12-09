@@ -1,5 +1,4 @@
 defaults:
-  - /common/plotting
   - paths
   - _self_
 
@@ -36,6 +35,10 @@ data:
 max_steps: 2500
 evaluate_every: 1
 metrics: []
-
 callbacks: []
-  
+
+observables: null
+  # names: ["golden_path_stat"]
+  # evaluate_every: 1
+  # mode: "population" # other option "estimator"
+  # holdout_size: null

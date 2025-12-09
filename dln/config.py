@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -46,6 +46,14 @@ class CallbackConfig:
 
 
 @dataclass
+class ObservablesConfig:
+    names: list[str]
+    evaluate_every: int
+    mode: Literal["population", "estimator"]
+    holdout_size: int | None  # Required if mode == "estimator"
+
+
+@dataclass
 class ExperimentConfig:
     experiment: ExperimentMeta
     model: ModelConfig
@@ -72,3 +80,4 @@ class ComparativeExperimentConfig:
     callbacks_a: list[CallbackConfig] = field(default_factory=list)
     callbacks_b: list[CallbackConfig] = field(default_factory=list)
     shared: dict[str, Any] = field(default_factory=dict)
+    observables: ObservablesConfig | None = None
