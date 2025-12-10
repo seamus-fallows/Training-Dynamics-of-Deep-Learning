@@ -77,6 +77,7 @@ class Trainer:
                     record["test_loss"] = test_loss
 
                 if metrics:
+                    # Some metrics (e.g. weight_norm) don't require data
                     metric_inputs, metric_targets = self._metric_data or (None, None)
                     record.update(
                         compute_metrics(
