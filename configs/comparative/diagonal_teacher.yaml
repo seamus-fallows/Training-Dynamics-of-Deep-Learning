@@ -5,6 +5,11 @@ defaults:
 experiment:
   name: "diagonal_teacher_comparative"
 
+plotting:
+  enabled: true
+  show: false
+  save: true
+
 shared:
   model:
     in_dim: 5

@@ -189,7 +189,17 @@ def compute_metrics(
     targets: Tensor,
     criterion: Module,
 ) -> dict[str, float]:
-    return {name: METRICS[name](model, inputs, targets, criterion) for name in names}
+    results = {}
+    for name in names:
+        try:
+            results[name] = METRICS[name](model, inputs, targets, criterion)
+        except TypeError as e:
+            if inputs is None:
+                raise ValueError(
+                    f"Metric '{name}' requires input data. Set metric_data.mode in config."
+                ) from e
+            raise
+    return results
 
 
 def compute_comparative_metrics(

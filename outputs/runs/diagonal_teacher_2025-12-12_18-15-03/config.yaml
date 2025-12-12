@@ -1,0 +1,39 @@
+experiment:
+  name: diagonal_teacher
+plotting:
+  enabled: true
+  show: true
+  save: true
+model:
+  in_dim: 5
+  out_dim: 5
+  num_hidden: 3
+  hidden_dim: 50
+  gamma: 1.5
+  bias: false
+  seed: 0
+training:
+  lr: 0.0005
+  batch_size: null
+  optimizer: SGD
+  optimizer_params: null
+  criterion: MSELoss
+  batch_seed: 0
+data:
+  num_samples: 100
+  test_split: null
+  data_seed: 0
+  online: false
+  noise_std: 0.0
+  params:
+    matrix: diagonal
+    scale: 10
+max_steps: 2500
+evaluate_every: 1
+metrics:
+- weight_norm
+- grad_norm_squared
+metric_data:
+  mode: population
+  holdout_size: null
+callbacks: []

@@ -2,7 +2,7 @@ from typing import Any, Callable
 from tqdm import tqdm
 from torch import Tensor
 from dln.train import Trainer
-from dln.utils import to_device
+from dln.utils import to_device, rows_to_columns
 from metrics import compute_metrics, compute_comparative_metrics
 
 
@@ -28,7 +28,7 @@ class ComparativeTrainer:
         comparative_metrics: list[str] | None = None,
         callbacks_a: list[Callable] | None = None,
         callbacks_b: list[Callable] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, list[Any]]:
         self.trainer_a.model.train()
         self.trainer_b.model.train()
         self.history = []
@@ -95,4 +95,4 @@ class ComparativeTrainer:
 
                 self.history.append(record)
 
-        return self.history
+        return rows_to_columns(self.history)

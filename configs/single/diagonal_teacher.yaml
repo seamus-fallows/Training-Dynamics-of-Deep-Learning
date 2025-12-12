@@ -5,6 +5,11 @@ defaults:
 experiment:
   name: "diagonal_teacher"
 
+plotting:
+  enabled: true
+  show: true
+  save: true
+
 model:
   in_dim: 5
   out_dim: 5
@@ -35,7 +40,7 @@ data:
 max_steps: 2500
 evaluate_every: 1
 metrics: []
-metric_data: null
-  # mode: "population"
-  # holdout_size: null
+metric_data:
+  mode: "population"
+  holdout_size: null
 callbacks: []

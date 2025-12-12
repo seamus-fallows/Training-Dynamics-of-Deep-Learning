@@ -110,9 +110,8 @@ class TestSeedIsolation:
         history_a = run_once()
         history_b = run_once()
 
-        for rec_a, rec_b in zip(history_a, history_b):
-            assert rec_a["step"] == rec_b["step"]
-            assert rec_a["train_loss"] == rec_b["train_loss"]
+        assert history_a["step"] == history_b["step"]
+        assert history_a["train_loss"] == history_b["train_loss"]
 
 
 # ============================================================================
@@ -199,9 +198,8 @@ class TestComparativeTrainer:
             comparative_metrics=["param_distance"],
         )
 
-        for record in history:
-            assert record["train_loss_a"] == record["train_loss_b"]
-            assert record["param_distance"] < 1e-6
+        assert history["train_loss_a"] == history["train_loss_b"]
+        assert all(d < 1e-6 for d in history["param_distance"])
 
 
 # ============================================================================

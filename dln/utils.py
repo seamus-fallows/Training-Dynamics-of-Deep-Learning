@@ -51,20 +51,24 @@ def get_criterion_cls(name: str) -> Type[nn.Module]:
         raise ValueError(f"Unknown criterion: '{name}'") from e
 
 
-def save_history(history: list[dict[str, Any]], output_dir: Path) -> None:
-    """Save training history to JSONL file."""
-    history_path = output_dir / "history.jsonl"
+def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
+    """Save training history to JSON file (columnar format)."""
+    history_path = output_dir / "history.json"
     with history_path.open("w") as f:
-        for record in history:
-            json.dump(record, f)
-            f.write("\n")
+        json.dump(history, f, indent=2)
 
 
-def load_history(output_dir: Path) -> list[dict[str, Any]]:
-    """Load training history from JSONL file."""
-    history_path = output_dir / "history.jsonl"
-    if not history_path.exists():
-        raise FileNotFoundError(f"No history found at {history_path}")
-
+def load_history(output_dir: Path) -> dict[str, list[Any]]:
+    """Load training history from JSON file (columnar format)."""
+    history_path = output_dir / "history.json"
     with history_path.open("r") as f:
-        return [json.loads(line) for line in f]
+        return json.load(f)
+
+
+def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    """Convert row-oriented history to columnar format."""
+    columns: dict[str, list[Any]] = {key: [] for key in rows[0].keys()}
+    for record in rows:
+        for key, value in record.items():
+            columns[key].append(value)
+    return columns

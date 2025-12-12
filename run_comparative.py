@@ -2,27 +2,30 @@ from pathlib import Path
 from typing import Any
 import hydra
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from dln.utils import seed_rng, get_device, save_history
 from dln.data import Dataset, get_metric_data
 from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
 from dln.callbacks import create_callbacks
+from dln.results import RunResult
+from plotting import auto_plot
 
 
 def run_comparative_experiment(
     cfg: DictConfig,
     output_dir: Path | None = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, list[Any]]:
     if output_dir is None:
         output_dir = Path(HydraConfig.get().runtime.output_dir)
-
+    OmegaConf.save(cfg, output_dir / "config.yaml")
     device = get_device()
 
     seed_rng(cfg.data.data_seed)
     dataset = Dataset(cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim)
-
     metric_data = get_metric_data(dataset, cfg.metric_data)
+    callbacks_a = create_callbacks(cfg.callbacks_a)
+    callbacks_b = create_callbacks(cfg.callbacks_b)
 
     trainer_a = create_trainer(
         model_cfg=cfg.model_a,
@@ -30,7 +33,6 @@ def run_comparative_experiment(
         dataset=dataset,
         device=device,
     )
-
     trainer_b = create_trainer(
         model_cfg=cfg.model_b,
         training_cfg=cfg.training_b,
@@ -44,9 +46,6 @@ def run_comparative_experiment(
         metric_data=metric_data,
     )
 
-    callbacks_a = create_callbacks(cfg.callbacks_a)
-    callbacks_b = create_callbacks(cfg.callbacks_b)
-
     history = comparative_trainer.run(
         max_steps=cfg.max_steps,
         evaluate_every=cfg.evaluate_every,
@@ -57,6 +56,17 @@ def run_comparative_experiment(
     )
 
     save_history(history, output_dir)
+    if cfg.plotting.enabled:
+        result = RunResult(
+            history=history,
+            config=cfg,
+            output_dir=output_dir,
+        )
+        auto_plot(
+            result,
+            show=cfg.plotting.show,
+            save=cfg.plotting.save,
+        )
 
     return history
 

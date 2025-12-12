@@ -1,0 +1,4 @@
+plotting:
+  enabled: true
+  show: true
+  save: true

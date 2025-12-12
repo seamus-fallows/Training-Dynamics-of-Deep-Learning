@@ -5,7 +5,7 @@ from torch import Tensor
 from dln.data import Dataset
 from dln.config import TrainingConfig
 from dln.model import DeepLinearNetwork
-from dln.utils import get_criterion_cls, get_optimizer_cls, to_device
+from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
 from metrics import compute_metrics
 
 
@@ -55,7 +55,7 @@ class Trainer:
         evaluate_every: int,
         metrics: list[str] | None = None,
         callbacks: list[Callable] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, list[Any]]:
         self.model.train()
         self.history = []
         callbacks = callbacks or []
@@ -91,7 +91,7 @@ class Trainer:
 
                 self.history.append(record)
 
-        return self.history
+        return rows_to_columns(self.history)
 
     def _training_step(self, inputs: Tensor, targets: Tensor) -> float:
         self.optimizer.zero_grad()
