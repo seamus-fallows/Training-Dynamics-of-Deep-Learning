@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from hydra import compose, initialize, initialize_config_dir
+from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 
@@ -44,7 +44,7 @@ def load_run(path: Path) -> RunResult:
 
 
 def load_hydra_sweep(path: Path, sweep_param: str) -> SweepResult:
-    runs: dict[str, list[RunResult]] = {}
+    runs: dict[str, RunResult] = {}
 
     for subdir in sorted(path.iterdir()):
         if not subdir.is_dir() or not (subdir / "history.json").exists():
@@ -52,10 +52,7 @@ def load_hydra_sweep(path: Path, sweep_param: str) -> SweepResult:
 
         result = load_run(subdir)
         param_value = str(OmegaConf.select(result.config, sweep_param))
-
-        if param_value not in runs:
-            runs[param_value] = []
-        runs[param_value].append(result)
+        runs[param_value] = result
 
     return SweepResult(runs=runs, sweep_param=sweep_param)
 
@@ -65,7 +62,11 @@ def run(
     overrides: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     output_root: Path = Path("outputs/runs"),
+    autoplot: bool = True,
 ) -> RunResult:
+    overrides = overrides or {}
+    if not autoplot:
+        overrides = {**overrides, "plotting.show": False}
     cfg = _load_config("single", config_name, overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
     history = run_experiment(cfg, output_dir=output_dir)
@@ -77,7 +78,11 @@ def run_comparative(
     overrides: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     output_root: Path = Path("outputs/runs"),
+    autoplot: bool = True,
 ) -> RunResult:
+    overrides = overrides or {}
+    if not autoplot:
+        overrides = {**overrides, "plotting.show": False}
     cfg = _load_config("comparative", config_name, overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
     history = run_comparative_experiment(cfg, output_dir=output_dir)
@@ -88,42 +93,53 @@ def run_sweep(
     config_name: str,
     param: str,
     values: list[Any],
-    n_seeds: int = 1,
-    seed_param: str = "model.seed",
     overrides: dict[str, Any] | None = None,
     output_root: Path = Path("outputs/sweeps"),
+    autoplot: bool = False,
 ) -> SweepResult:
-    runs: dict[str, list[RunResult]] = {}
+    runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
     sweep_dir = _make_output_dir(sweep_name, output_root)
 
     for value in values:
         param_value = str(value)
-        runs[param_value] = []
+        run_overrides = {**(overrides or {}), param: value}
+        output_dir = sweep_dir / param_value
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        for seed in range(n_seeds):
-            run_overrides = {**(overrides or {}), param: value, seed_param: seed}
-            output_dir = sweep_dir / f"{param_value}_seed{seed}"
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            result = run(config_name, overrides=run_overrides, output_dir=output_dir)
-            runs[param_value].append(result)
+        runs[param_value] = run(
+            config_name,
+            overrides=run_overrides,
+            output_dir=output_dir,
+            autoplot=autoplot,
+        )
 
     return SweepResult(runs=runs, sweep_param=param)
 
 
-def run_seeds(
+def run_comparative_sweep(
     config_name: str,
-    n_seeds: int,
-    seed_param: str = "model.seed",
+    param: str,
+    values: list[Any],
     overrides: dict[str, Any] | None = None,
-    output_root: Path = Path("outputs/runs"),
-) -> list[RunResult]:
-    results = []
+    output_root: Path = Path("outputs/sweeps"),
+    autoplot: bool = False,
+) -> SweepResult:
+    runs: dict[str, RunResult] = {}
+    sweep_name = f"{config_name}_{param.split('.')[-1]}"
+    sweep_dir = _make_output_dir(sweep_name, output_root)
 
-    for seed in range(n_seeds):
-        run_overrides = {**(overrides or {}), seed_param: seed}
-        result = run(config_name, overrides=run_overrides, output_root=output_root)
-        results.append(result)
+    for value in values:
+        param_value = str(value)
+        run_overrides = {**(overrides or {}), param: value}
+        output_dir = sweep_dir / param_value
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    return results
+        runs[param_value] = run_comparative(
+            config_name,
+            overrides=run_overrides,
+            output_dir=output_dir,
+            autoplot=autoplot,
+        )
+
+    return SweepResult(runs=runs, sweep_param=param)

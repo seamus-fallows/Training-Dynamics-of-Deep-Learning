@@ -8,7 +8,7 @@ experiment:
 plotting:
   enabled: true
   show: true
-  save: true
+  save: False
 
 model:
   in_dim: 5

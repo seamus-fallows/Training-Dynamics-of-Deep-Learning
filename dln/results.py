@@ -31,16 +31,11 @@ class RunResult:
 class SweepResult:
     """Result from a parameter sweep."""
 
-    runs: dict[str, list[RunResult]]
+    runs: dict[str, RunResult]
     sweep_param: str
 
-    def param_values(self) -> list[str]:
-        return list(self.runs.keys())
-
-    def flatten(self) -> dict[str, RunResult]:
-        """Flatten to individual runs for plotting."""
-        return {
-            f"{param}_{i}": run
-            for param, runs in self.runs.items()
-            for i, run in enumerate(runs)
-        }
+    def to_average(self, label: str | None = None) -> dict[str, list[RunResult]]:
+        """All runs grouped for averaging into one curve with CI."""
+        if label is None:
+            label = f"{self.sweep_param.split('.')[-1]} (averaged)"
+        return {label: list(self.runs.values())}
