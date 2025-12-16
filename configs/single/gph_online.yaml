@@ -1,0 +1,49 @@
+defaults:
+  - gph_paths
+  - _self_
+
+experiment:
+  name: "gph_online"
+
+plotting:
+  enabled: false
+  show: false
+  save: false
+
+model:
+  in_dim: 5
+  out_dim: 5
+  num_hidden: 3
+  hidden_dim: 128
+  gamma: 1.0
+  bias: false
+  seed: 0
+
+training:
+  lr: 0.0001
+  batch_size: 10
+  optimizer: "SGD"
+  optimizer_params: null
+  criterion: "MSELoss"
+  batch_seed: 0
+
+data:
+  num_samples: 500
+  test_split: 0.1
+  data_seed: 0
+  online: true
+  noise_std: 0.0
+  params:
+    matrix: "diagonal"
+    scale: 10.0
+
+max_steps: 10000
+evaluate_every: 10
+metrics:
+  - "grad_norm_squared"
+  - "trace_gradient_covariance"
+  - "trace_hessian_covariance"
+metric_data:
+  mode: "estimator"
+  holdout_size: 100
+callbacks: []

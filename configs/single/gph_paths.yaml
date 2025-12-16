@@ -1,0 +1,6 @@
+hydra:
+  run:
+    dir: outputs/gph/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: outputs/gph/${experiment.name}
+    subdir: w${model.hidden_dim}_g${model.gamma}_b${training.batch_size}_s${training.batch_seed}
