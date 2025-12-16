@@ -19,15 +19,19 @@ python run_comparative.py training_b.batch_size=10
 
 ## Project Structure
 
-* **`run.py`**: Entry point for training a single model.
-* **`run_comparative.py`**: Entry point for simultaneous training (Model A vs. Model B).
+* **`runner.py`**: Programmatic API for running experiments.
+* **`plotting.py`**: Visualization functions.
+* **`run.py`**: CLI entry point for training a single model.
+* **`run_comparative.py`**: CLI entry point for simultaneous training (Model A vs. Model B).
 * **`metrics.py`**: Model and comparative metrics.
+* **`experiment_examples.py`**: Usage examples.
 * **`dln/`**: Core library.
   * `model.py`: `DeepLinearNetwork` architecture.
   * `data.py`: Synthetic data generators.
   * `train.py`: `Trainer` class and training loop.
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models.
   * `callbacks.py`: Callback system for mid-training interventions.
+  * `results.py`: `RunResult` and `SweepResult` dataclasses.
   * `config.py`: Dataclass definitions for experiment configurations.
   * `factory.py`: Creates a Trainer from configs.
   * `utils.py`: Utilities (seeding, device selection, history saving/loading).
@@ -41,9 +45,33 @@ pip install -r requirements.txt
 
 ## Usage
 
-This project uses **Hydra** for configuration. Override values from existing configs or create new YAML configs.
+### Programmatic API
 
-### Single Model Experiments
+```python
+from runner import run, run_comparative, run_sweep
+from plotting import plot, plot_comparative
+
+# Single run
+result = run("diagonal_teacher")
+result = run("diagonal_teacher", overrides={"training.lr": 0.01, "max_steps": 5000})
+
+# Comparative run
+result = run_comparative("diagonal_teacher", overrides={"training_b.batch_size": 10})
+
+# Parameter sweep
+sweep = run_sweep("diagonal_teacher", param="training.lr", values=[0.0005, 0.001])
+plot(sweep, legend_title="lr")
+
+# Average over seeds with confidence intervals
+sweep = run_sweep("diagonal_teacher", param="training.batch_seed", values=range(5))
+plot(sweep.to_average("SGD"))
+```
+
+See `experiment_examples.py` for comprehensive examples.
+
+### Command Line (Hydra)
+
+#### Single Model Experiments
 
 ```bash
 python run.py                                    # default config
@@ -52,7 +80,7 @@ python run.py training.lr=0.01 model.hidden_dim=20
 python run.py training.batch_seed=42             # control batch ordering
 ```
 
-### Comparative Experiments
+#### Comparative Experiments
 
 ```bash
 python run_comparative.py
@@ -61,33 +89,12 @@ python run_comparative.py training_b.batch_size=10          # change one
 python run_comparative.py model_a.seed=0 model_b.seed=1     # different inits
 ```
 
-### Parameter Sweeps
+#### Parameter Sweeps
 
 ```bash
 python run.py -m training.lr=0.0005,0.001,0.002
 python run.py -m training.lr=0.001,0.01 model.num_hidden=2,3,4
 ```
-
-### Notebook Usage
-
-```python
-from pathlib import Path
-from notebook_utils import load_config
-from run import run_experiment
-
-# Load existing config
-cfg = load_config("configs/single/diagonal_teacher.yaml")
-history = run_experiment(cfg, output_dir=Path("my_output"))
-
-# Load with overrides
-cfg = load_config(
-    "configs/single/diagonal_teacher.yaml",
-    overrides=["training.lr=0.01", "max_steps=5000"]
-)
-history = run_experiment(cfg, output_dir=Path("my_output"))
-```
-
-See `experiment_examples.py` for more examples.
 
 ## Configuration
 
@@ -210,8 +217,9 @@ Override individual values: `model_b.seed=999`
 
 Each run creates a timestamped directory in `outputs/` containing:
 
-* `history.jsonl`: Training metrics logged at each `evaluate_every` step
-* `.hydra/`: Resolved config and Hydra metadata
+* `history.json`: Training metrics (columnar format)
+* `config.yaml`: Resolved configuration
+* `plots.png`: Auto-generated plots (if enabled)
 
 ## Extending the Codebase
 

@@ -37,5 +37,5 @@ class SweepResult:
     def to_average(self, label: str | None = None) -> dict[str, list[RunResult]]:
         """All runs grouped for averaging into one curve with CI."""
         if label is None:
-            label = f"{self.sweep_param.split('.')[-1]} (averaged)"
+            label = "averaged"
         return {label: list(self.runs.values())}

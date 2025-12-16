@@ -15,6 +15,7 @@ from plotting import plot, plot_run, plot_comparative
 # In yaml we have show plotting enabled by default, so this will plot automatically
 result = run("diagonal_teacher")
 
+
 # =============================================================================
 # Example 2: Run with Metrics
 # =============================================================================
@@ -237,6 +238,7 @@ sweep = run_sweep(
     "diagonal_teacher",
     param="training.batch_seed",
     values=range(5),
+    max_workers=5,
     overrides={
         **common,
         "callbacks": [
