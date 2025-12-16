@@ -146,8 +146,9 @@ def plot_comparative(
                 values_a = smooth(values_a, smoothing)
                 values_b = smooth(values_b, smoothing)
 
-            ax.plot(steps, values_a, label=f"{prefix}{suffixes[0]}")
+            # B first (underneath), A second (on top)
             ax.plot(steps, values_b, label=f"{prefix}{suffixes[1]}")
+            ax.plot(steps, values_a, label=f"{prefix}{suffixes[0]}")
 
         else:
             steps = np.asarray(data[0]["step"])
@@ -155,11 +156,15 @@ def plot_comparative(
             if len(data) == 1:
                 values_a = np.asarray(data[0][f"{metric}_a"])
                 values_b = np.asarray(data[0][f"{metric}_b"])
+
                 if smoothing:
                     values_a = smooth(values_a, smoothing)
                     values_b = smooth(values_b, smoothing)
-                ax.plot(steps, values_a, label=f"{prefix}{suffixes[0]}")
+
+                # B first (underneath), A second (on top)
                 ax.plot(steps, values_b, label=f"{prefix}{suffixes[1]}")
+                ax.plot(steps, values_a, label=f"{prefix}{suffixes[0]}")
+
             else:
                 curves_a = [r[f"{metric}_a"] for r in data]
                 curves_b = [r[f"{metric}_b"] for r in data]
@@ -174,14 +179,15 @@ def plot_comparative(
                     mean_b = smooth(mean_b, smoothing)
                     lower_b = smooth(lower_b, smoothing)
                     upper_b = smooth(upper_b, smoothing)
+                # B first (underneath), A second (on top)
 
-                (line_a,) = ax.plot(steps, mean_a, label=f"{prefix}{suffixes[0]}")
-                ax.fill_between(
-                    steps, lower_a, upper_a, alpha=0.2, color=line_a.get_color()
-                )
                 (line_b,) = ax.plot(steps, mean_b, label=f"{prefix}{suffixes[1]}")
                 ax.fill_between(
                     steps, lower_b, upper_b, alpha=0.2, color=line_b.get_color()
+                )
+                (line_a,) = ax.plot(steps, mean_a, label=f"{prefix}{suffixes[0]}")
+                ax.fill_between(
+                    steps, lower_a, upper_a, alpha=0.2, color=line_a.get_color()
                 )
 
     if log_scale:

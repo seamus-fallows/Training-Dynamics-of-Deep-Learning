@@ -12,24 +12,21 @@ from plotting import plot, plot_run, plot_comparative
 # Example 1: Basic Single Run
 # =============================================================================
 # %%
-
-run("diagonal_teacher")
+# In yaml we have show plotting enabled by default, so this will plot automatically
+result = run("diagonal_teacher")
 
 # =============================================================================
 # Example 2: Run with Metrics
 # =============================================================================
 # %%
-# If autoplot is False, the result can be captured and plotted later
+
 result = run(
     "diagonal_teacher",
     overrides={
         "metrics": ["weight_norm", "grad_norm_squared"],
         "metric_data.mode": "population",
     },
-    autoplot=False,
 )
-plot_run(result)
-
 # =============================================================================
 # Example 3: Sweep over Learning Rate
 # =============================================================================
@@ -46,8 +43,8 @@ plot(sweep, legend_title="lr")
 # Example 4: Batch Seed Sweep (Averaged) + Full-Batch Baseline
 # =============================================================================
 # %%
-sweep_overrides = {
-    "training.batch_size": 20,
+overrides = {
+    "training.batch_size": 50,
     "training.lr": 0.0002,
     "max_steps": 5000,
 }
@@ -55,16 +52,18 @@ sweep_overrides = {
 sweep = run_sweep(
     "diagonal_teacher",
     param="training.batch_seed",
-    values=range(20),
-    overrides=sweep_overrides,
+    values=range(5),
+    overrides=overrides,
 )
-baseline = run("diagonal_teacher", autoplot=False)
+# %%
+baseline = run(
+    "diagonal_teacher",
+    autoplot=False,
+    overrides={**overrides, "training.batch_size": None},
+)
 
-# Averaged with CI (noisy first, baseline on top)
+# Averaged with CI
 plot({**sweep.to_average("SGD (batch=20)"), "GD (full batch)": baseline})
-
-# Individual runs
-plot({**sweep.runs, "GD (full batch)": baseline})
 
 # =============================================================================
 # Example 5: Comparative Run (Different Batch Sizes)
@@ -87,6 +86,7 @@ plot(result, metric="param_distance", log_scale=False)
 # =============================================================================
 # %%
 
+# model_a is considered the baseline and will be plotted second so it appears on top
 sweep = run_comparative_sweep(
     "diagonal_teacher",
     param="shared.training.batch_seed",
@@ -129,11 +129,11 @@ sweep = run_comparative_sweep(
     "diagonal_teacher",
     param="shared.training.lr",
     values=[0.0005, 0.001],
-    overrides={"training_b.batch_size": 10},
+    overrides={"training_b.batch_size": 20, "max_steps": 3000},
 )
 
 for lr, result in sweep.runs.items():
-    plot_comparative(result, suffixes=("Full batch", "Batch=10"), title=f"lr={lr}")
+    plot_comparative(result, suffixes=("Full batch", "Batch=20"), title=f"lr={lr}")
 
 # =============================================================================
 # Example 9: Different Config File
@@ -147,9 +147,14 @@ run("random_teacher", overrides={"training.lr": 0.04})
 # =============================================================================
 # %%
 
-run_comparative(
+results = run_comparative(
     "diagonal_teacher",
-    overrides={"training_a.optimizer": "SGD", "training_b.optimizer": "Adam"},
+    overrides={
+        "training_a.optimizer": "SGD",
+        "training_b.optimizer": "Adam",
+        "max_steps": 2000,
+        "shared.training.lr": 0.001,
+    },
 )
 
 # =============================================================================
@@ -157,43 +162,28 @@ run_comparative(
 # =============================================================================
 # %%
 
-run("diagonal_teacher", overrides={"data.test_split": 0.2, "data.num_samples": 100})
-
-# =============================================================================
-# Example 12: Mixing Single Run and Averaged Runs
-# =============================================================================
-# %%
-
-sweep = run_sweep(
-    "diagonal_teacher",
-    param="training.batch_seed",
-    values=range(5),
-    overrides={"training.batch_size": 10},
-)
-baseline = run(
-    "diagonal_teacher", overrides={"training.batch_size": None}, autoplot=False
+results = run(
+    "diagonal_teacher", overrides={"data.test_split": 0.2, "data.num_samples": 125}
 )
 
-plot({**sweep.to_average("SGD (batch=10)"), "GD (full batch)": baseline})
-
 # =============================================================================
-# Example 13: Batch Size Switching (Snapping)
+# Example 12: Batch Size Switching (Snapping)
 # =============================================================================
 # %%
 
 common = {
-    "model.hidden_dim": 150,
+    "model.hidden_dim": 50,
     "model.seed": 2,
-    "data.num_samples": 500,
-    "max_steps": 4000,
-    "training.lr": 0.0006,
+    "data.num_samples": 200,
+    "max_steps": 5000,
+    "training.lr": 0.0005,
 }
 
 high_to_low = run(
     "diagonal_teacher",
     overrides={
         **common,
-        "training.batch_size": 1,
+        "training.batch_size": 5,
         "callbacks": [
             {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": None}}
         ],
@@ -208,7 +198,7 @@ baseline = run(
 
 plot(
     {"high_to_low": high_to_low, "baseline": baseline},
-    smoothing=40,
+    smoothing=0,
     title="High to Low",
 )
 
@@ -218,7 +208,7 @@ low_to_high = run(
         **common,
         "training.batch_size": None,
         "callbacks": [
-            {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": 1}}
+            {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": 5}}
         ],
     },
     autoplot=False,
@@ -226,7 +216,7 @@ low_to_high = run(
 
 plot(
     {"low_to_high": low_to_high, "baseline": baseline},
-    smoothing=40,
+    smoothing=0,
     title="Low to High",
 )
 
@@ -236,11 +226,11 @@ plot(
 # %%
 
 common = {
-    "model.hidden_dim": 150,
+    "model.hidden_dim": 50,
     "model.seed": 2,
-    "data.num_samples": 500,
-    "max_steps": 4000,
-    "training.lr": 0.0006,
+    "data.num_samples": 100,
+    "max_steps": 5000,
+    "training.lr": 0.0002,
 }
 
 sweep = run_sweep(
@@ -249,9 +239,8 @@ sweep = run_sweep(
     values=range(5),
     overrides={
         **common,
-        "training.batch_size": 1,
         "callbacks": [
-            {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": None}}
+            {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": 20}}
         ],
     },
 )
@@ -263,7 +252,6 @@ baseline = run(
 
 plot(
     {**sweep.to_average("high_to_low"), "baseline": baseline},
-    smoothing=40,
     title="High to Low (Averaged)",
 )
 
