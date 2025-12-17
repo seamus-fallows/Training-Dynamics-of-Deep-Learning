@@ -21,12 +21,12 @@ def seed_rng(seed: int) -> None:
 def get_device() -> t.device:
     if t.cuda.is_available():
         n_gpus = t.cuda.device_count()
-        if n_gpus > 1:
+        if n_gpus > 1 and HydraConfig.initialized():
             try:
                 job_num = HydraConfig.get().job.num
                 gpu_id = job_num % n_gpus
                 return t.device(f"cuda:{gpu_id}")
-            except ValueError:
+            except:
                 pass
         return t.device("cuda")
     if t.backends.mps.is_available():
