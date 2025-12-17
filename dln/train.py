@@ -55,6 +55,7 @@ class Trainer:
         evaluate_every: int,
         metrics: list[str] | None = None,
         callbacks: list[Callable] | None = None,
+        stop_threshold: float | None = None,
     ) -> dict[str, list[Any]]:
         self.model.train()
         self.history = []
@@ -77,7 +78,6 @@ class Trainer:
                     record["test_loss"] = test_loss
 
                 if metrics:
-                    # Some metrics (e.g. weight_norm) don't require data
                     metric_inputs, metric_targets = self._metric_data or (None, None)
                     record.update(
                         compute_metrics(
@@ -90,6 +90,9 @@ class Trainer:
                     )
 
                 self.history.append(record)
+
+            if stop_threshold is not None and train_loss < stop_threshold:
+                break
 
         return rows_to_columns(self.history)
 

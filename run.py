@@ -37,6 +37,7 @@ def run_experiment(
         evaluate_every=cfg.evaluate_every,
         metrics=cfg.metrics,
         callbacks=callbacks,
+        stop_threshold=cfg.stop_threshold,
     )
 
     save_history(history, output_dir)

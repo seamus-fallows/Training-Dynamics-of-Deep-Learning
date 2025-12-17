@@ -53,6 +53,7 @@ def run_comparative_experiment(
         comparative_metrics=cfg.comparative_metrics,
         callbacks_a=callbacks_a,
         callbacks_b=callbacks_b,
+        stop_threshold=cfg.stop_threshold,
     )
 
     save_history(history, output_dir)

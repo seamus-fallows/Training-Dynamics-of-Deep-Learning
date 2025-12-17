@@ -38,6 +38,7 @@ data:
     scale: 10
 
 max_steps: 2500
+stop_threshold: null
 evaluate_every: 1
 metrics: []
 metric_data:

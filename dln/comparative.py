@@ -28,6 +28,7 @@ class ComparativeTrainer:
         comparative_metrics: list[str] | None = None,
         callbacks_a: list[Callable] | None = None,
         callbacks_b: list[Callable] | None = None,
+        stop_threshold: float | None = None,
     ) -> dict[str, list[Any]]:
         self.trainer_a.model.train()
         self.trainer_b.model.train()
@@ -65,7 +66,6 @@ class ComparativeTrainer:
                     record["test_loss_b"] = test_loss_b
 
                 if model_metrics:
-                    # Some metrics (e.g. weight_norm) don't require data
                     metric_inputs, metric_targets = self._metric_data or (None, None)
                     metrics_a = compute_metrics(
                         self.trainer_a.model,
@@ -94,5 +94,12 @@ class ComparativeTrainer:
                     )
 
                 self.history.append(record)
+
+            if (
+                stop_threshold is not None
+                and loss_a < stop_threshold
+                and loss_b < stop_threshold
+            ):
+                break
 
         return rows_to_columns(self.history)
