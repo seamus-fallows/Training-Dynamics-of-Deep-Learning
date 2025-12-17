@@ -7,6 +7,7 @@ import numpy as np
 import torch as t
 from torch.optim import Optimizer
 from torch import Tensor
+from hydra.core.hydra_config import HydraConfig
 
 
 def seed_rng(seed: int) -> None:
@@ -19,11 +20,18 @@ def seed_rng(seed: int) -> None:
 
 def get_device() -> t.device:
     if t.cuda.is_available():
+        n_gpus = t.cuda.device_count()
+        if n_gpus > 1:
+            try:
+                job_num = HydraConfig.get().job.num
+                gpu_id = job_num % n_gpus
+                return t.device(f"cuda:{gpu_id}")
+            except ValueError:
+                pass
         return t.device("cuda")
-    elif t.backends.mps.is_available():
+    if t.backends.mps.is_available():
         return t.device("mps")
-    else:
-        return t.device("cpu")
+    return t.device("cpu")
 
 
 def to_device(
