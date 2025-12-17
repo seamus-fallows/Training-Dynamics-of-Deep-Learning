@@ -73,7 +73,8 @@ class Dataset:
         inputs = t.randn(n, self.in_dim, generator=generator)
         targets = einops.einsum(self.teacher_matrix, inputs, "h w, n w -> n h")
         if self.noise_std > 0:
-            targets += t.randn_like(targets, generator=generator) * self.noise_std
+            noise = t.randn(targets.shape, generator=generator)
+            targets = targets + noise * self.noise_std
         return inputs, targets
 
     def get_train_data(self) -> tuple[Tensor, Tensor]:
@@ -108,7 +109,8 @@ class Dataset:
             )
             targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
             if self.noise_std > 0:
-                targets += t.randn_like(targets, generator=generator) * self.noise_std
+                noise = t.randn(targets.shape, device=device, generator=generator)
+                targets = targets + noise * self.noise_std
             yield inputs, targets
 
     def _offline_iterator(

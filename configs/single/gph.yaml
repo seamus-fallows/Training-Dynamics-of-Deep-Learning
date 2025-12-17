@@ -6,9 +6,9 @@ experiment:
   name: "gph"
 
 plotting:
-  enabled: false
+  enabled: true
   show: false
-  save: false
+  save: true
 
 model:
   in_dim: 5
@@ -28,7 +28,7 @@ training:
   batch_seed: 0
 
 data:
-  num_samples: 1000
+  num_samples: 500
   test_split: 0.1
   data_seed: 0
   online: false
@@ -37,8 +37,8 @@ data:
     matrix: "diagonal"
     scale: 10.0
 
-max_steps: 12000
-evaluate_every: 10
+max_steps: 20000
+evaluate_every: 20
 metrics:
   - "grad_norm_squared"
   - "trace_gradient_covariance"
@@ -47,4 +47,4 @@ metric_data:
   mode: "population"
   holdout_size: null
 callbacks: []
-stop_threshold: null
+stop_threshold: 10e-9

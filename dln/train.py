@@ -67,11 +67,12 @@ class Trainer:
                 callback(step, self)
 
             inputs, targets = next(self.train_iterator)
-            train_loss = self._training_step(inputs, targets)
-            progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
+            self._training_step(inputs, targets)
 
             if step % evaluate_every == 0 or step == (max_steps - 1):
+                train_loss = self._evaluate_train()
                 record = {"step": step, "train_loss": train_loss}
+                progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
 
                 test_loss = self.evaluate()
                 if test_loss is not None:
@@ -104,7 +105,19 @@ class Trainer:
         self.optimizer.step()
         return loss.item()
 
+    def _evaluate_train(self) -> float:
+        """Evaluate loss on full training set."""
+        inputs, targets = self.dataset.get_train_data()
+        inputs, targets = inputs.to(self.device), targets.to(self.device)
+        with t.inference_mode():
+            self.model.eval()
+            output = self.model(inputs)
+            loss = self.criterion(output, targets)
+        self.model.train()
+        return loss.item()
+
     def evaluate(self) -> float | None:
+        """Evaluate loss on test set."""
         if self.test_data is None:
             return None
 

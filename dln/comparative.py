@@ -46,17 +46,19 @@ class ComparativeTrainer:
             inputs_a, targets_a = next(self.trainer_a.train_iterator)
             inputs_b, targets_b = next(self.trainer_b.train_iterator)
 
-            loss_a = self.trainer_a._training_step(inputs_a, targets_a)
-            loss_b = self.trainer_b._training_step(inputs_b, targets_b)
-
-            progress_bar.set_postfix({"loss_a": f"{loss_a:.4f}"})
+            self.trainer_a._training_step(inputs_a, targets_a)
+            self.trainer_b._training_step(inputs_b, targets_b)
 
             if step % evaluate_every == 0 or step == (max_steps - 1):
+                train_loss_a = self.trainer_a._evaluate_train()
+                train_loss_b = self.trainer_b._evaluate_train()
+                
                 record = {
                     "step": step,
-                    "train_loss_a": loss_a,
-                    "train_loss_b": loss_b,
+                    "train_loss_a": train_loss_a,
+                    "train_loss_b": train_loss_b,
                 }
+                progress_bar.set_postfix({"loss_a": f"{train_loss_a:.4f}"})
 
                 test_loss_a = self.trainer_a.evaluate()
                 test_loss_b = self.trainer_b.evaluate()
@@ -95,11 +97,7 @@ class ComparativeTrainer:
 
                 self.history.append(record)
 
-            if (
-                stop_threshold is not None
-                and loss_a < stop_threshold
-                and loss_b < stop_threshold
-            ):
+            if stop_threshold is not None and train_loss_a < stop_threshold and train_loss_b < stop_threshold:
                 break
 
         return rows_to_columns(self.history)
