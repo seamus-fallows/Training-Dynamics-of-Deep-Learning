@@ -1,0 +1,7 @@
+- model.gamma=1.5
+- model.hidden_dim=10
+- model.seed=0
+- data.noise_std=0.1
+- max_steps=25000
+- metrics=[]
+- training.batch_size=null

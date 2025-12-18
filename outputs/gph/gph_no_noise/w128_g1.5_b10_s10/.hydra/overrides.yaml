@@ -1,4 +1,0 @@
-- model.gamma=1.5
-- model.hidden_dim=128
-- training.batch_size=10
-- training.batch_seed=10

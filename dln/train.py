@@ -71,12 +71,15 @@ class Trainer:
                 callback(step, self)
 
             inputs, targets = next(self.train_iterator)
-            self._training_step(inputs, targets)
 
+            # Record BEFORE step (both train and test at same weights)
             if step % evaluate_every == 0 or step == (max_steps - 1):
-                train_loss = self._evaluate_train()
-                record = {"step": step, "train_loss": train_loss}
-                progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
+                with t.inference_mode():
+                    self.model.eval()
+                    batch_loss = self.criterion(self.model(inputs), targets).item()
+                    self.model.train()
+
+                record = {"step": step, "train_loss": batch_loss}
 
                 test_loss = self.evaluate()
                 if test_loss is not None:
@@ -95,6 +98,10 @@ class Trainer:
                     )
 
                 self.history.append(record)
+
+            # Step AFTER recording
+            train_loss = self._training_step(inputs, targets)
+            progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
 
             if stop_threshold is not None and train_loss < stop_threshold:
                 break

@@ -1,76 +1,44 @@
 #!/bin/bash
 set -e
 
-echo "=== Offline, No Noise ==="
+run_group() {
+  gamma=$1
+  width=$2
+  config=$3
+  
+  # Set max_steps based on gamma
+  case $gamma in
+    0.75) max_steps=10000 ;;
+    1.0)  max_steps=12000 ;;
+    1.5)  max_steps=20000 ;;
+  esac
+  
+  # GD
+  python run.py -cn=$config \
+    model.gamma=$gamma \
+    model.hidden_dim=$width \
+    max_steps=$max_steps \
+    training.batch_size=null
 
-python run.py -cn=gph_no_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=null \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
+  # SGD B=1
+  python run.py -cn=$config -m \
+    model.gamma=$gamma \
+    model.hidden_dim=$width \
+    max_steps=$max_steps \
+    training.batch_size=1 \
+    'training.batch_seed=range(20)' \
+    hydra/launcher=joblib hydra.launcher.n_jobs=4 hydra.launcher.verbose=10
 
-python run.py -cn=gph_no_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=10 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
+  # SGD B=10
+  python run.py -cn=$config -m \
+    model.gamma=$gamma \
+    model.hidden_dim=$width \
+    max_steps=$max_steps \
+    training.batch_size=10 \
+    'training.batch_seed=range(20)' \
+    hydra/launcher=joblib hydra.launcher.n_jobs=4 hydra.launcher.verbose=10
+}
+export -f run_group
 
-echo "=== Offline, With Noise ==="
-
-python run.py -cn=gph_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=null \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-python run.py -cn=gph_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=10 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-echo "=== Online, No Noise ==="
-
-python run.py -cn=gph_no_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=1000 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=1000 \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-python run.py -cn=gph_no_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=1000 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=10 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-echo "=== Online, With Noise ==="
-
-python run.py -cn=gph_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=1000 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=450 \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-python run.py -cn=gph_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=1000 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=32,128,256 \
-  training.batch_size=10 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-echo "=== Done ==="
+# Run 2 groups at a time (4 GPUs, n_jobs=4 each = ~2 per GPU)
+parallel -j 2 run_group ::: 0.75 1.0 1.5 ::: 10 100 ::: gph_no_noise gph_noise
