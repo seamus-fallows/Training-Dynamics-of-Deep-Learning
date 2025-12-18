@@ -63,8 +63,8 @@ training_b:
   batch_seed: ${shared.training.batch_seed}
 
 data:
-  num_samples: 100
-  test_split: null
+  train_samples: 100
+  test_samples: null
   data_seed: 0
   online: false
   noise_std: 0.0

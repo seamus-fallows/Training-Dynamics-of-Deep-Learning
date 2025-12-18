@@ -52,19 +52,15 @@ class Dataset:
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
 
-        # Note: test sampled first, so train data depends on test_split value
-        if cfg.test_split and cfg.test_split > 0:
-            n_test = int(cfg.num_samples * cfg.test_split)
-            n_train = cfg.num_samples - n_test
-            self.test_data = self.sample(n_test)
+        if cfg.test_samples and cfg.test_samples > 0:
+            self.test_data = self.sample(cfg.test_samples)
         else:
-            n_train = cfg.num_samples
             self.test_data = None
 
         if self.online:
             self._train_data = None
         else:
-            self._train_data = self.sample(n_train)
+            self._train_data = self.sample(cfg.train_samples)
 
     def sample(
         self, n: int, generator: t.Generator | None = None

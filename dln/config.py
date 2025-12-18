@@ -15,8 +15,8 @@ class ModelConfig:
 
 @dataclass
 class DataConfig:
-    num_samples: int
-    test_split: float | None
+    train_samples: int
+    test_samples: int | None
     # Dictionary for dataset-specific parameters e.g. mean, std.
     params: dict[str, Any] | None
     data_seed: int = 0

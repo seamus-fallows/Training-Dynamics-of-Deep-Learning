@@ -29,13 +29,16 @@ class ComparativeTrainer:
         callbacks_a: list[Callable] | None = None,
         callbacks_b: list[Callable] | None = None,
         stop_threshold: float | None = None,
+        show_progress: bool = True,
     ) -> dict[str, list[Any]]:
         self.trainer_a.model.train()
         self.trainer_b.model.train()
         self.history = []
         callbacks_a = callbacks_a or []
         callbacks_b = callbacks_b or []
-        progress_bar = tqdm(range(max_steps), desc="Training")
+        progress_bar = tqdm(
+            range(max_steps), desc="Training", disable=not show_progress
+        )
 
         for step in progress_bar:
             for callback in callbacks_a:
@@ -52,7 +55,7 @@ class ComparativeTrainer:
             if step % evaluate_every == 0 or step == (max_steps - 1):
                 train_loss_a = self.trainer_a._evaluate_train()
                 train_loss_b = self.trainer_b._evaluate_train()
-                
+
                 record = {
                     "step": step,
                     "train_loss_a": train_loss_a,
@@ -97,7 +100,11 @@ class ComparativeTrainer:
 
                 self.history.append(record)
 
-            if stop_threshold is not None and train_loss_a < stop_threshold and train_loss_b < stop_threshold:
+            if (
+                stop_threshold is not None
+                and train_loss_a < stop_threshold
+                and train_loss_b < stop_threshold
+            ):
                 break
 
         return rows_to_columns(self.history)

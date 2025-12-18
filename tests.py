@@ -32,8 +32,8 @@ def make_model_config(**overrides) -> ModelConfig:
 
 def make_data_config(**overrides) -> DataConfig:
     defaults = dict(
-        num_samples=50,
-        test_split=0.2,
+        train_samples=40,
+        test_samples=10,
         data_seed=0,
         online=False,
         noise_std=0.0,
@@ -160,6 +160,61 @@ class TestMetrics:
         result = metrics.trace_gradient_covariance(model, inputs, targets, criterion)
         assert abs(result - expected) < 1e-5
 
+    def test_combined_trace_metrics_matches_individual(self):
+        """Verify combined computation gives same results as individual."""
+        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        inputs = t.randn(20, 5)
+        targets = t.randn(20, 5)
+        criterion = nn.MSELoss()
+
+        # Individual computation
+        model_copy = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        trace_grad_individual = metrics.trace_gradient_covariance(
+            model_copy, inputs, targets, criterion
+        )
+
+        model_copy = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        trace_hess_individual = metrics.trace_hessian_covariance(
+            model_copy, inputs, targets, criterion
+        )
+
+        # Combined computation
+        trace_grad_combined, trace_hess_combined = metrics._compute_trace_metrics(
+            model, inputs, targets, criterion
+        )
+
+        assert abs(trace_grad_combined - trace_grad_individual) < 1e-5
+        assert abs(trace_hess_combined - trace_hess_individual) < 1e-5
+
+    def test_compute_metrics_uses_combined_when_both_requested(self):
+        """Verify compute_metrics returns correct values for both trace metrics."""
+        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        inputs = t.randn(20, 5)
+        targets = t.randn(20, 5)
+        criterion = nn.MSELoss()
+
+        results = metrics.compute_metrics(
+            model,
+            ["trace_gradient_covariance", "trace_hessian_covariance"],
+            inputs,
+            targets,
+            criterion,
+        )
+
+        # Compute individually for comparison
+        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        expected_grad = metrics.trace_gradient_covariance(
+            model, inputs, targets, criterion
+        )
+
+        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        expected_hess = metrics.trace_hessian_covariance(
+            model, inputs, targets, criterion
+        )
+
+        assert abs(results["trace_gradient_covariance"] - expected_grad) < 1e-5
+        assert abs(results["trace_hessian_covariance"] - expected_hess) < 1e-5
+
 
 # ============================================================================
 # Comparative Trainer Tests
@@ -213,7 +268,7 @@ class TestCallbacks:
         device = t.device("cpu")
         seed_rng(0)
         dataset = Dataset(
-            make_data_config(data_seed=0, num_samples=50), in_dim=5, out_dim=5
+            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
 
         seed_rng(42)
@@ -242,7 +297,7 @@ class TestBatchIterator:
     def test_full_batch_yields_all_samples(self):
         seed_rng(0)
         dataset = Dataset(
-            make_data_config(num_samples=50, test_split=0.0), in_dim=5, out_dim=5
+            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
         iterator = dataset.get_train_iterator(batch_size=None, device=t.device("cpu"))
 
@@ -252,7 +307,7 @@ class TestBatchIterator:
     def test_offline_iterator_same_seed_same_sequence(self):
         seed_rng(0)
         dataset = Dataset(
-            make_data_config(num_samples=50, test_split=0.0), in_dim=5, out_dim=5
+            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
 
         gen_a = t.Generator().manual_seed(42)

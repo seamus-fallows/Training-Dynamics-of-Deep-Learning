@@ -3,7 +3,7 @@ from typing import Any
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
-from dln.utils import seed_rng, get_device, save_history
+from dln.utils import seed_rng, get_device, save_history, is_multirun
 from dln.data import Dataset, get_metric_data
 from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
@@ -54,6 +54,7 @@ def run_comparative_experiment(
         callbacks_a=callbacks_a,
         callbacks_b=callbacks_b,
         stop_threshold=cfg.stop_threshold,
+        show_progress=not is_multirun(),
     )
 
     save_history(history, output_dir)

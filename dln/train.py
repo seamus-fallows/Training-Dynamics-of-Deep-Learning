@@ -7,6 +7,7 @@ from dln.config import TrainingConfig
 from dln.model import DeepLinearNetwork
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
 from metrics import compute_metrics
+from hydra.core.hydra_config import HydraConfig
 
 
 class Trainer:
@@ -56,11 +57,14 @@ class Trainer:
         metrics: list[str] | None = None,
         callbacks: list[Callable] | None = None,
         stop_threshold: float | None = None,
+        show_progress: bool = True,
     ) -> dict[str, list[Any]]:
         self.model.train()
         self.history = []
         callbacks = callbacks or []
-        progress_bar = tqdm(range(max_steps), desc="Training")
+        progress_bar = tqdm(
+            range(max_steps), desc="Training", disable=not show_progress
+        )
 
         for step in progress_bar:
             for callback in callbacks:

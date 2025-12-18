@@ -1,5 +1,5 @@
 """
-Model metrics: fn(model, inputs, targets, criterion) -> float
+Model metrics: fn(model, inputs, targets, criterion) -> float | dict[str, float]
 Comparative metrics: fn(model_a, model_b) -> float
 """
 
@@ -111,7 +111,7 @@ def _compute_batch_hvps(
 @metric("weight_norm")
 def weight_norm(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module
-) -> float:  # Unused args for consistency with other mertics
+) -> float:
     with t.no_grad():
         return _flatten_params(model).norm().item()
 
@@ -160,6 +160,31 @@ def trace_hessian_covariance(
     return (noise_vectors * hvps).sum(dim=1).mean().item()
 
 
+@metric("trace_covariances")
+def trace_covariances(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module
+) -> dict[str, float]:
+    """Combined computation of trace_gradient_covariance and trace_hessian_covariance."""
+    params, buffers = _to_functional(model)
+    per_sample_grads = _compute_per_sample_grads(
+        model, params, buffers, inputs, targets, criterion
+    ).detach()
+    mean_grad = per_sample_grads.mean(dim=0)
+    noise_vectors = per_sample_grads - mean_grad
+
+    trace_grad = (noise_vectors**2).sum(dim=1).mean().item()
+
+    hvps = _compute_batch_hvps(
+        model, params, buffers, inputs, targets, criterion, noise_vectors
+    )
+    trace_hess = (noise_vectors * hvps).sum(dim=1).mean().item()
+
+    return {
+        "trace_gradient_covariance": trace_grad,
+        "trace_hessian_covariance": trace_hess,
+    }
+
+
 # Comparative metrics
 
 
@@ -192,13 +217,21 @@ def compute_metrics(
     results = {}
     for name in names:
         try:
-            results[name] = METRICS[name](model, inputs, targets, criterion)
+            value = METRICS[name](model, inputs, targets, criterion)
+            if isinstance(value, dict):
+                results.update(value)
+            else:
+                results[name] = value
         except TypeError as e:
             if inputs is None:
                 raise ValueError(
                     f"Metric '{name}' requires input data. Set metric_data.mode in config."
                 ) from e
             raise
+
+    if t.cuda.is_available():
+        t.cuda.empty_cache()
+
     return results
 
 

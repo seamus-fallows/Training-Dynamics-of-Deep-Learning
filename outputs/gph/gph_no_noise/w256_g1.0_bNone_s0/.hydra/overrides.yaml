@@ -1,0 +1,3 @@
+- model.gamma=1.0
+- model.hidden_dim=256
+- training.batch_size=null

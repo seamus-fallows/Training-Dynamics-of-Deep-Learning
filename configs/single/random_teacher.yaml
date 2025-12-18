@@ -28,8 +28,8 @@ training:
   batch_seed: 0
 
 data:
-  num_samples: 100
-  test_split: null
+  train_samples: 100
+  test_samples: null
   data_seed: 0
   online: false
   noise_std: 0.0

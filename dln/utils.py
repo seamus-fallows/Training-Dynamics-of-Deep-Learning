@@ -26,12 +26,19 @@ def get_device() -> t.device:
                 job_num = HydraConfig.get().job.num
                 gpu_id = job_num % n_gpus
                 return t.device(f"cuda:{gpu_id}")
-            except:
+            except Exception:
                 pass
         return t.device("cuda")
     if t.backends.mps.is_available():
         return t.device("mps")
     return t.device("cpu")
+
+
+def is_multirun() -> bool:
+    """Check if running in Hydra multirun mode."""
+    if not HydraConfig.initialized():
+        return False
+    return HydraConfig.get().mode.name == "MULTIRUN"
 
 
 def to_device(
