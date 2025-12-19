@@ -1,38 +1,52 @@
+defaults:
+  - gph_paths
+  - mode: offline
+  - _self_
+
 experiment:
-  name: gph_no_noise
+  name: "gph"
+
 plotting:
   enabled: true
   show: false
   save: true
+  show_test: false
+
 model:
   in_dim: 5
   out_dim: 5
   num_hidden: 3
   hidden_dim: 10
-  gamma: 1.5
+  gamma: 1.0
   bias: false
   seed: 0
+
 training:
   lr: 0.0001
   batch_size: null
-  optimizer: SGD
+  optimizer: "SGD"
   optimizer_params: null
-  criterion: MSELoss
+  criterion: "MSELoss"
   batch_seed: 0
+
 data:
   train_samples: 500
   test_samples: 100
   data_seed: 0
-  online: false
   noise_std: 0.0
   params:
-    matrix: diagonal
+    matrix: "diagonal"
     scale: 10.0
-max_steps: 25000
+
+max_steps: ${max_steps_for_gamma:${model.gamma}}
 evaluate_every: 20
-metrics: []
-metric_data:
-  mode: population
-  holdout_size: null
+metrics:
+  - "grad_norm_squared"
+  - "trace_covariances"
+
+# metric_data:
+#   mode: "population"
+#   holdout_size: null
+
 callbacks: []
 stop_threshold: null

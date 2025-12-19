@@ -9,6 +9,7 @@ plotting:
   enabled: true
   show: false
   save: true
+  show_test: false
 
 model:
   in_dim: 5

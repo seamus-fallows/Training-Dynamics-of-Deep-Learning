@@ -5,8 +5,6 @@ from scipy import stats
 
 from dln.results import RunResult, SweepResult
 
-plt.style.use("seaborn-v0_8-whitegrid")
-
 
 def compute_ci(
     curves: list[list[float]], ci: float = 0.95
@@ -201,7 +199,9 @@ def plot_comparative(
     return ax
 
 
-def plot_run(result: RunResult, metrics: list[str] | None = None) -> None:
+def plot_run(
+    result: RunResult, metrics: list[str] | None = None, show_test: bool = True
+) -> None:
     """Quick visualization of a single run: loss + all tracked metrics.
 
     Creates a multi-panel figure with one subplot per metric.
@@ -209,7 +209,7 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> None:
     if metrics is None:
         metrics = [m for m in result.metrics() if m not in ("train_loss", "test_loss")]
 
-    has_test = result.has("test_loss")
+    has_test = show_test and result.has("test_loss")
     n_panels = 1 + len(metrics)
     n_cols = min(n_panels, 2)
     n_rows = (n_panels + n_cols - 1) // n_cols
@@ -240,7 +240,9 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> None:
     fig.tight_layout()
 
 
-def auto_plot(result: RunResult, show: bool = True, save: bool = True) -> None:
+def auto_plot(
+    result: RunResult, show: bool = True, save: bool = True, show_test: bool = True
+) -> None:
     """Auto-generate plots for a run. Called by run.py after training."""
     is_comparative = result.has("train_loss_a")
 
@@ -248,7 +250,7 @@ def auto_plot(result: RunResult, show: bool = True, save: bool = True) -> None:
         fig, ax = plt.subplots()
         plot_comparative(result, ax=ax)
     else:
-        plot_run(result)
+        plot_run(result, show_test=show_test)
         fig = plt.gcf()
 
     if save and result.output_dir:

@@ -7,8 +7,9 @@ experiment:
 
 plotting:
   enabled: true
-  show: true
-  save: False
+  show: false
+  save: true
+  show_test: false
 
 shared:
   model:

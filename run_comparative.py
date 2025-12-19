@@ -68,6 +68,7 @@ def run_comparative_experiment(
             result,
             show=cfg.plotting.show,
             save=cfg.plotting.save,
+            show_test=cfg.plotting.show_test,
         )
 
     return history
