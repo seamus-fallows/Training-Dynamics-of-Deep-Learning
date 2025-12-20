@@ -154,9 +154,33 @@ def trace_covariances(
         num_chunks: Split computation into chunks to reduce VRAM usage.
             Higher values use less memory but may be slower.
     """
+    params, buffers = _to_functional(model)
+
+    if num_chunks == 1:
+        per_sample_grads = _compute_per_sample_grads(
+            model, params, buffers, inputs, targets, criterion
+        ).detach()
+        mean_grad = per_sample_grads.mean(dim=0)
+        noise = per_sample_grads - mean_grad
+
+        trace_grad = (noise**2).sum(dim=1).mean().item()
+
+        hvps = _compute_batch_hvps(
+            model, params, buffers, inputs, targets, criterion, noise
+        )
+        trace_hess = (noise * hvps).sum(dim=1).mean().item()
+
+        if t.cuda.is_available():
+            t.cuda.empty_cache()
+
+        return {
+            "trace_gradient_covariance": trace_grad,
+            "trace_hessian_covariance": trace_hess,
+        }
+
+    # Chunked path for num_chunks > 1
     n_samples = len(inputs)
     chunk_size = (n_samples + num_chunks - 1) // num_chunks
-    params, buffers = _to_functional(model)
 
     # Pass 1: Compute mean gradient
     grad_sum = None
