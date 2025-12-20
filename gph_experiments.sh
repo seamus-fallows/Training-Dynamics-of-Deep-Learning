@@ -2,7 +2,7 @@
 set -e
 
 NUM_GPUS=10  # Update to your actual GPU count
-JOBS_PER_GPU=25
+JOBS_PER_GPU=8
 METRIC_CHUNKS=1
 
 SWEEP="model.hidden_dim=100,10 model.gamma=1.5,1.0,0.75 mode=offline,online data.noise_std=0.0,0.2"
