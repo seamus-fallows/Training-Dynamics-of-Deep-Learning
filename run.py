@@ -13,6 +13,15 @@ from dln.resolvers import register
 register()
 
 
+def is_first_job() -> bool:
+    if not HydraConfig.initialized():
+        return True
+    try:
+        return HydraConfig.get().job.num == 0
+    except Exception:
+        return True
+
+
 def run_experiment(
     cfg: DictConfig,
     output_dir: Path | None = None,
@@ -40,7 +49,7 @@ def run_experiment(
         metrics=cfg.metrics,
         callbacks=callbacks,
         stop_threshold=cfg.stop_threshold,
-        show_progress=not is_multirun(),
+        show_progress=is_first_job(),
         metric_chunks=cfg.metric_chunks,
     )
 

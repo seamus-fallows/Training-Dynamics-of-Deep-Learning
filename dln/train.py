@@ -112,9 +112,9 @@ class Trainer:
 
         result = rows_to_columns(self.history)
 
-        if t.cuda.is_available():
-            result["peak_vram_allocated_gb"] = t.cuda.max_memory_allocated() / 1024**3
-            result["peak_vram_reserved_gb"] = t.cuda.max_memory_reserved() / 1024**3
+        # if t.cuda.is_available():
+        #     result["peak_vram_allocated_gb"] = t.cuda.max_memory_allocated() / 1024**3
+        #     result["peak_vram_reserved_gb"] = t.cuda.max_memory_reserved() / 1024**3
 
         return result
 

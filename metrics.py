@@ -146,15 +146,11 @@ def trace_covariances(
 
     Returns:
         trace_gradient_covariance: Tr(Σ) = E[||n_i||²]
-            Measures gradient noise magnitude.
         trace_hessian_covariance: Tr(HΣ) = E[n_i @ H @ n_i]
-            Measures gradient noise projected onto loss curvature.
-
-    Args:
-        num_chunks: Split computation into chunks to reduce VRAM usage.
-            Higher values use less memory but may be slower.
     """
     params, buffers = _to_functional(model)
+    n_samples = len(inputs)
+    chunk_size = (n_samples + num_chunks - 1) // num_chunks
 
     if num_chunks == 1:
         per_sample_grads = _compute_per_sample_grads(
@@ -170,17 +166,12 @@ def trace_covariances(
         )
         trace_hess = (noise * hvps).sum(dim=1).mean().item()
 
-        if t.cuda.is_available():
-            t.cuda.empty_cache()
-
         return {
             "trace_gradient_covariance": trace_grad,
             "trace_hessian_covariance": trace_hess,
         }
 
-    # Chunked path for num_chunks > 1
-    n_samples = len(inputs)
-    chunk_size = (n_samples + num_chunks - 1) // num_chunks
+    # Chunked path: two passes
 
     # Pass 1: Compute mean gradient
     grad_sum = None
@@ -194,15 +185,12 @@ def trace_covariances(
             criterion,
         ).detach()
 
-        grad_sum = (
-            chunk_grads.sum(dim=0)
-            if grad_sum is None
-            else grad_sum + chunk_grads.sum(dim=0)
-        )
+        if grad_sum is None:
+            grad_sum = chunk_grads.sum(dim=0)
+        else:
+            grad_sum += chunk_grads.sum(dim=0)
 
         del chunk_grads
-        if t.cuda.is_available():
-            t.cuda.empty_cache()
 
     mean_grad = grad_sum / n_samples
     del grad_sum
@@ -230,8 +218,6 @@ def trace_covariances(
         trace_hess_sum += (noise * hvps).sum().item()
 
         del chunk_grads, noise, hvps
-        if t.cuda.is_available():
-            t.cuda.empty_cache()
 
     return {
         "trace_gradient_covariance": trace_grad_sum / n_samples,
