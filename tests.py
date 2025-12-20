@@ -230,6 +230,7 @@ class TestMetrics:
             criterion,
         )
 
+        assert "grad_norm_squared" in results
         assert "trace_gradient_covariance" in results
         assert "trace_hessian_covariance" in results
         assert results["trace_gradient_covariance"] > 0

@@ -116,21 +116,6 @@ def weight_norm(
         return _flatten_params(model).norm().item()
 
 
-@metric("grad_norm_squared")
-def grad_norm_squared(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module
-) -> float:
-    params, buffers = _to_functional(model)
-
-    def compute_loss(params: dict[str, Tensor]) -> Tensor:
-        output = functional_call(model, (params, buffers), (inputs,))
-        return criterion(output, targets)
-
-    grad_dict = grad(compute_loss)(params)
-    flat_grad = _flatten_grad_dict(grad_dict)
-    return (flat_grad**2).sum().item()
-
-
 @metric("trace_covariances")
 def trace_covariances(
     model: Module,
@@ -140,15 +125,14 @@ def trace_covariances(
     num_chunks: int = 1,
 ) -> dict[str, float]:
     """
-    Compute traces of gradient noise covariance matrices.
+    Compute gradient norm and traces of gradient noise covariance matrices.
 
     For per-sample gradients g_i and mean gradient g_bar, noise vectors are n_i = g_i - g_bar.
 
     Returns:
+        grad_norm_squared: ||∇L||², squared norm of mean gradient.
         trace_gradient_covariance: Tr(Σ) = E[||n_i||²]
-            Measures gradient noise magnitude.
         trace_hessian_covariance: Tr(HΣ) = E[n_i @ H @ n_i]
-            Measures gradient noise projected onto loss curvature.
 
     Args:
         num_chunks: Split computation into chunks to reduce VRAM usage.
@@ -163,19 +147,18 @@ def trace_covariances(
         mean_grad = per_sample_grads.mean(dim=0)
         noise = per_sample_grads - mean_grad
 
-        trace_grad = (noise**2).sum(dim=1).mean().item()
+        grad_norm_sq = (mean_grad**2).sum()
+        trace_grad = (noise**2).sum(dim=1).mean()
 
         hvps = _compute_batch_hvps(
             model, params, buffers, inputs, targets, criterion, noise
         )
-        trace_hess = (noise * hvps).sum(dim=1).mean().item()
-
-        if t.cuda.is_available():
-            t.cuda.empty_cache()
+        trace_hess = (noise * hvps).sum(dim=1).mean()
 
         return {
-            "trace_gradient_covariance": trace_grad,
-            "trace_hessian_covariance": trace_hess,
+            "grad_norm_squared": grad_norm_sq.item(),
+            "trace_gradient_covariance": trace_grad.item(),
+            "trace_hessian_covariance": trace_hess.item(),
         }
 
     # Chunked path for num_chunks > 1
@@ -201,10 +184,9 @@ def trace_covariances(
         )
 
         del chunk_grads
-        if t.cuda.is_available():
-            t.cuda.empty_cache()
 
     mean_grad = grad_sum / n_samples
+    grad_norm_sq = (mean_grad**2).sum().item()
     del grad_sum
 
     # Pass 2: Compute traces
@@ -230,10 +212,9 @@ def trace_covariances(
         trace_hess_sum += (noise * hvps).sum().item()
 
         del chunk_grads, noise, hvps
-        if t.cuda.is_available():
-            t.cuda.empty_cache()
 
     return {
+        "grad_norm_squared": grad_norm_sq,
         "trace_gradient_covariance": trace_grad_sum / n_samples,
         "trace_hessian_covariance": trace_hess_sum / n_samples,
     }
@@ -290,9 +271,6 @@ def compute_metrics(
                     f"Metric '{name}' requires input data. Set metric_data.mode in config."
                 ) from e
             raise
-
-    if t.cuda.is_available():
-        t.cuda.empty_cache()
 
     return results
 

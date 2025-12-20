@@ -41,7 +41,6 @@ data:
 max_steps: ${max_steps_for_gamma:${model.gamma}}
 evaluate_every: 20
 metrics:
-  - "grad_norm_squared"
   - "trace_covariances"
 metric_chunks: 1
   

@@ -2,7 +2,7 @@
 set -e
 
 NUM_GPUS=16
-JOBS_PER_GPU=3
+JOBS_PER_GPU=12
 
 # Order matters: leftmost varies slowest, so put slow jobs first
 SWEEP="model.hidden_dim=100,10 model.gamma=1.5,1.0,0.75 mode=offline,online data.noise_std=0.0,0.2"
