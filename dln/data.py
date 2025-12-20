@@ -1,7 +1,6 @@
 from typing import Iterator, Callable
 import torch as t
 from torch import Tensor
-import einops
 from .config import DataConfig, MetricDataConfig
 
 
@@ -67,7 +66,7 @@ class Dataset:
     ) -> tuple[Tensor, Tensor]:
         """Generate n samples from the teacher matrix."""
         inputs = t.randn(n, self.in_dim, generator=generator)
-        targets = einops.einsum(self.teacher_matrix, inputs, "h w, n w -> n h")
+        targets = inputs @ self.teacher_matrix.T
         if self.noise_std > 0:
             noise = t.randn(targets.shape, generator=generator)
             targets = targets + noise * self.noise_std
@@ -103,7 +102,7 @@ class Dataset:
             inputs = t.randn(
                 batch_size, self.in_dim, device=device, generator=generator
             )
-            targets = einops.einsum(teacher_matrix, inputs, "h w, n w -> n h")
+            targets = inputs @ teacher_matrix.T
             if self.noise_std > 0:
                 noise = t.randn(targets.shape, device=device, generator=generator)
                 targets = targets + noise * self.noise_std

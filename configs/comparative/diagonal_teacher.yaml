@@ -82,6 +82,7 @@ comparative_metrics:
 metric_data: null
   # mode: "population"
   # holdout_size: null
+metric_chunks: 1
 
 callbacks_a: []
 callbacks_b: []

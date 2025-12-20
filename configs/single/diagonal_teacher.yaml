@@ -45,4 +45,5 @@ metrics: []
 metric_data:
   mode: "population"
   holdout_size: null
+metric_chunks: 1
 callbacks: []

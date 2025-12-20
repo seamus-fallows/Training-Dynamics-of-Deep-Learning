@@ -7,7 +7,7 @@ from dln.config import TrainingConfig
 from dln.model import DeepLinearNetwork
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
 from metrics import compute_metrics
-from hydra.core.hydra_config import HydraConfig
+import time
 
 
 class Trainer:
@@ -58,6 +58,7 @@ class Trainer:
         callbacks: list[Callable] | None = None,
         stop_threshold: float | None = None,
         show_progress: bool = True,
+        metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
         self.model.train()
         self.history = []
@@ -72,14 +73,17 @@ class Trainer:
 
             inputs, targets = next(self.train_iterator)
 
-            # Record BEFORE step (both train and test at same weights)
             if step % evaluate_every == 0 or step == (max_steps - 1):
                 with t.inference_mode():
                     self.model.eval()
                     batch_loss = self.criterion(self.model(inputs), targets).item()
                     self.model.train()
 
-                record = {"step": step, "train_loss": batch_loss}
+                record = {
+                    "step": step,
+                    "train_loss": batch_loss,
+                    "timestamp": time.time(),
+                }
 
                 test_loss = self.evaluate()
                 if test_loss is not None:
@@ -94,19 +98,24 @@ class Trainer:
                             metric_inputs,
                             metric_targets,
                             self.criterion,
+                            num_chunks=metric_chunks,
                         )
                     )
 
                 self.history.append(record)
 
-            # Step AFTER recording
             train_loss = self._training_step(inputs, targets)
             progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
 
             if stop_threshold is not None and train_loss < stop_threshold:
                 break
 
-        return rows_to_columns(self.history)
+        result = rows_to_columns(self.history)
+
+        if t.cuda.is_available():
+            result["peak_vram_gb"] = t.cuda.max_memory_allocated() / 1024**3
+
+        return result
 
     def _training_step(self, inputs: Tensor, targets: Tensor) -> float:
         self.optimizer.zero_grad()
@@ -117,7 +126,6 @@ class Trainer:
         return loss.item()
 
     def _evaluate_train(self) -> float:
-        """Evaluate loss on full training set."""
         inputs, targets = self.dataset.get_train_data()
         inputs, targets = inputs.to(self.device), targets.to(self.device)
         with t.inference_mode():
@@ -128,7 +136,6 @@ class Trainer:
         return loss.item()
 
     def evaluate(self) -> float | None:
-        """Evaluate loss on test set."""
         if self.test_data is None:
             return None
 

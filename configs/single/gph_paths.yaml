@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: outputs/gph/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
+    dir: outputs/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
   sweep:
-    dir: outputs/gph/${experiment.name}
-    subdir: w${model.hidden_dim}_g${model.gamma}_b${training.batch_size}_s${training.batch_seed}
+    dir: outputs/${experiment.name}
+    subdir: h${model.hidden_dim}_g${model.gamma}_b${training.batch_size}_s${training.batch_seed}_online${data.online}_noise${data.noise_std}

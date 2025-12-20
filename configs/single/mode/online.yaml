@@ -1,0 +1,10 @@
+# @package _global_
+data:
+  online: true
+
+training:
+  batch_size: 500
+
+metric_data:
+  mode: estimator
+  holdout_size: 500

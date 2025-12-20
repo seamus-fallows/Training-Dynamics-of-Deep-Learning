@@ -55,6 +55,7 @@ def run_comparative_experiment(
         callbacks_b=callbacks_b,
         stop_threshold=cfg.stop_threshold,
         show_progress=not is_multirun(),
+        metric_chunks=cfg.metric_chunks,
     )
 
     save_history(history, output_dir)

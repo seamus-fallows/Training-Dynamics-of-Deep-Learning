@@ -1,7 +1,7 @@
 defaults:
   - gph_paths
-  - mode: offline
   - _self_
+  - mode: offline
 
 experiment:
   name: "gph"
@@ -43,10 +43,7 @@ evaluate_every: 20
 metrics:
   - "grad_norm_squared"
   - "trace_covariances"
-
-# metric_data:
-#   mode: "population"
-#   holdout_size: null
-
+metric_chunks: 1
+  
 callbacks: []
 stop_threshold: null

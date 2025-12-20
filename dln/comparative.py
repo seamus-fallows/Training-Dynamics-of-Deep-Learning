@@ -4,6 +4,7 @@ from torch import Tensor
 from dln.train import Trainer
 from dln.utils import to_device, rows_to_columns
 from metrics import compute_metrics, compute_comparative_metrics
+import torch as t
 
 
 class ComparativeTrainer:
@@ -30,6 +31,7 @@ class ComparativeTrainer:
         callbacks_b: list[Callable] | None = None,
         stop_threshold: float | None = None,
         show_progress: bool = True,
+        metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
         self.trainer_a.model.train()
         self.trainer_b.model.train()
@@ -84,6 +86,7 @@ class ComparativeTrainer:
                         metric_inputs,
                         metric_targets,
                         self.trainer_a.criterion,
+                        num_chunks=metric_chunks,
                     )
                     metrics_b = compute_metrics(
                         self.trainer_b.model,
@@ -91,6 +94,7 @@ class ComparativeTrainer:
                         metric_inputs,
                         metric_targets,
                         self.trainer_b.criterion,
+                        num_chunks=metric_chunks,
                     )
                     record.update({f"{k}_a": v for k, v in metrics_a.items()})
                     record.update({f"{k}_b": v for k, v in metrics_b.items()})

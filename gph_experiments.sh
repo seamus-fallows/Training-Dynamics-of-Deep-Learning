@@ -1,76 +1,17 @@
 #!/bin/bash
 set -e
 
-echo "=== Offline, No Noise ==="
+NUM_GPUS=16
+JOBS_PER_GPU=3
 
-python run.py -cn=gph_no_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=null \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
+# Order matters: leftmost varies slowest, so put slow jobs first
+SWEEP="model.hidden_dim=100,10 model.gamma=1.5,1.0,0.75 mode=offline,online data.noise_std=0.0,0.2"
+LAUNCHER="hydra/launcher=joblib hydra.launcher.n_jobs=$((NUM_GPUS * JOBS_PER_GPU)) hydra.launcher.verbose=10"
 
-python run.py -cn=gph_no_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=5 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
+echo "=== Full Batch ==="
+python run.py -cn=gph -m $SWEEP $LAUNCHER
 
-echo "=== Offline, With Noise ==="
-
-python run.py -cn=gph_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=null \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-python run.py -cn=gph_noise -m \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=5 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-echo "=== Online, No Noise ==="
-
-python run.py -cn=gph_no_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=500 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=500 \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-python run.py -cn=gph_no_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=500 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=5 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-echo "=== Online, With Noise ==="
-
-python run.py -cn=gph_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=500 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=500 \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
-
-python run.py -cn=gph_noise -m \
-  data.online=true \
-  metric_data.mode=estimator \
-  metric_data.holdout_size=500 \
-  model.gamma=0.75,1.0,1.5 \
-  model.hidden_dim=10,100 \
-  training.batch_size=5 \
-  'training.batch_seed=range(20)' \
-  hydra/launcher=joblib hydra.launcher.n_jobs=8 hydra.launcher.verbose=10
+echo "=== Mini Batch ==="
+python run.py -cn=gph -m $SWEEP training.batch_size=5 'training.batch_seed=range(20)' $LAUNCHER
 
 echo "=== Done ==="

@@ -8,6 +8,7 @@ import torch as t
 from torch.optim import Optimizer
 from torch import Tensor
 from hydra.core.hydra_config import HydraConfig
+import os
 
 
 def seed_rng(seed: int) -> None:
@@ -25,7 +26,8 @@ def get_device() -> t.device:
             try:
                 job_num = HydraConfig.get().job.num
                 gpu_id = job_num % n_gpus
-                return t.device(f"cuda:{gpu_id}")
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+                return t.device("cuda")
             except Exception:
                 pass
         return t.device("cuda")

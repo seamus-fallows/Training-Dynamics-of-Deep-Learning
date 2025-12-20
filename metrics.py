@@ -73,11 +73,11 @@ def _compute_per_sample_grads(
         output = functional_call(model, (params, buffers), (input.unsqueeze(0),))
         return criterion(output, target.unsqueeze(0))
 
-    grad_fn = grad(compute_loss)
-    per_sample_grad_fn = vmap(grad_fn, in_dims=(None, 0, 0))
+    per_sample_grad_fn = vmap(grad(compute_loss), in_dims=(None, 0, 0))
     per_sample_grads_dict = per_sample_grad_fn(params, inputs, targets)
-    grads_list = [g.flatten(start_dim=1) for g in per_sample_grads_dict.values()]
-    return t.cat(grads_list, dim=1)
+    return t.cat(
+        [g.flatten(start_dim=1) for g in per_sample_grads_dict.values()], dim=1
+    )
 
 
 def _compute_batch_hvps(
@@ -131,57 +131,87 @@ def grad_norm_squared(
     return (flat_grad**2).sum().item()
 
 
-@metric("trace_gradient_covariance")
-def trace_gradient_covariance(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module
-) -> float:
-    params, buffers = _to_functional(model)
-    per_sample_grads = _compute_per_sample_grads(
-        model, params, buffers, inputs, targets, criterion
-    ).detach()
-    mean_grad = per_sample_grads.mean(dim=0)
-    noise_vectors = per_sample_grads - mean_grad
-    return (noise_vectors**2).sum(dim=1).mean().item()
-
-
-@metric("trace_hessian_covariance")
-def trace_hessian_covariance(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module
-) -> float:
-    params, buffers = _to_functional(model)
-    per_sample_grads = _compute_per_sample_grads(
-        model, params, buffers, inputs, targets, criterion
-    ).detach()
-    mean_grad = per_sample_grads.mean(dim=0)
-    noise_vectors = per_sample_grads - mean_grad
-    hvps = _compute_batch_hvps(
-        model, params, buffers, inputs, targets, criterion, noise_vectors
-    )
-    return (noise_vectors * hvps).sum(dim=1).mean().item()
-
-
 @metric("trace_covariances")
 def trace_covariances(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    num_chunks: int = 1,
 ) -> dict[str, float]:
-    """Combined computation of trace_gradient_covariance and trace_hessian_covariance."""
+    """
+    Compute traces of gradient noise covariance matrices.
+
+    For per-sample gradients g_i and mean gradient g_bar, noise vectors are n_i = g_i - g_bar.
+
+    Returns:
+        trace_gradient_covariance: Tr(Σ) = E[||n_i||²]
+            Measures gradient noise magnitude.
+        trace_hessian_covariance: Tr(HΣ) = E[n_i @ H @ n_i]
+            Measures gradient noise projected onto loss curvature.
+
+    Args:
+        num_chunks: Split computation into chunks to reduce VRAM usage.
+            Higher values use less memory but may be slower.
+    """
+    n_samples = len(inputs)
+    chunk_size = (n_samples + num_chunks - 1) // num_chunks
     params, buffers = _to_functional(model)
-    per_sample_grads = _compute_per_sample_grads(
-        model, params, buffers, inputs, targets, criterion
-    ).detach()
-    mean_grad = per_sample_grads.mean(dim=0)
-    noise_vectors = per_sample_grads - mean_grad
 
-    trace_grad = (noise_vectors**2).sum(dim=1).mean().item()
+    # Pass 1: Compute mean gradient
+    grad_sum = None
+    for i in range(0, n_samples, chunk_size):
+        chunk_grads = _compute_per_sample_grads(
+            model,
+            params,
+            buffers,
+            inputs[i : i + chunk_size],
+            targets[i : i + chunk_size],
+            criterion,
+        ).detach()
 
-    hvps = _compute_batch_hvps(
-        model, params, buffers, inputs, targets, criterion, noise_vectors
-    )
-    trace_hess = (noise_vectors * hvps).sum(dim=1).mean().item()
+        grad_sum = (
+            chunk_grads.sum(dim=0)
+            if grad_sum is None
+            else grad_sum + chunk_grads.sum(dim=0)
+        )
+
+        del chunk_grads
+        if t.cuda.is_available():
+            t.cuda.empty_cache()
+
+    mean_grad = grad_sum / n_samples
+    del grad_sum
+
+    # Pass 2: Compute traces
+    trace_grad_sum = 0.0
+    trace_hess_sum = 0.0
+
+    for i in range(0, n_samples, chunk_size):
+        chunk_grads = _compute_per_sample_grads(
+            model,
+            params,
+            buffers,
+            inputs[i : i + chunk_size],
+            targets[i : i + chunk_size],
+            criterion,
+        ).detach()
+
+        noise = chunk_grads - mean_grad
+        trace_grad_sum += (noise**2).sum().item()
+
+        hvps = _compute_batch_hvps(
+            model, params, buffers, inputs, targets, criterion, noise
+        )
+        trace_hess_sum += (noise * hvps).sum().item()
+
+        del chunk_grads, noise, hvps
+        if t.cuda.is_available():
+            t.cuda.empty_cache()
 
     return {
-        "trace_gradient_covariance": trace_grad,
-        "trace_hessian_covariance": trace_hess,
+        "trace_gradient_covariance": trace_grad_sum / n_samples,
+        "trace_hessian_covariance": trace_hess_sum / n_samples,
     }
 
 
@@ -213,11 +243,19 @@ def compute_metrics(
     inputs: Tensor,
     targets: Tensor,
     criterion: Module,
+    num_chunks: int = 1,
 ) -> dict[str, float]:
     results = {}
     for name in names:
         try:
-            value = METRICS[name](model, inputs, targets, criterion)
+            metric_fn = METRICS[name]
+            if name == "trace_covariances":
+                value = metric_fn(
+                    model, inputs, targets, criterion, num_chunks=num_chunks
+                )
+            else:
+                value = metric_fn(model, inputs, targets, criterion)
+
             if isinstance(value, dict):
                 results.update(value)
             else:

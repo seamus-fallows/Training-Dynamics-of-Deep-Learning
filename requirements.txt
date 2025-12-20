@@ -4,6 +4,5 @@ torch
 numpy
 tqdm
 matplotlib
-einops
 scipy
 hydra-joblib-launcher

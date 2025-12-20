@@ -121,6 +121,7 @@ class TestSeedIsolation:
 
 class TestMetrics:
     def test_grad_norm_squared_vs_manual(self):
+        # This one is unchanged
         model = create_model(seed=0)
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
@@ -143,6 +144,7 @@ class TestMetrics:
         targets = t.randn(2, 5)
         criterion = nn.MSELoss()
 
+        # Manual computation
         grads = []
         for i in range(2):
             model.zero_grad()
@@ -156,38 +158,47 @@ class TestMetrics:
         noise = grads - mean_grad
         expected = (noise**2).sum(dim=1).mean().item()
 
+        # Using trace_covariances
         model = create_model(seed=0, num_hidden=1, hidden_dim=4)
-        result = metrics.trace_gradient_covariance(model, inputs, targets, criterion)
-        assert abs(result - expected) < 1e-5
+        result = metrics.trace_covariances(model, inputs, targets, criterion)
 
-    def test_combined_trace_metrics_matches_individual(self):
-        """Verify combined computation gives same results as individual."""
+        assert abs(result["trace_gradient_covariance"] - expected) < 1e-5
+
+    def test_trace_covariances_chunking_correctness(self):
+        """Verify chunked computation matches non-chunked."""
         model = create_model(seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(20, 5)
         targets = t.randn(20, 5)
         criterion = nn.MSELoss()
 
-        # Individual computation
-        model_copy = create_model(seed=0, num_hidden=2, hidden_dim=8)
-        trace_grad_individual = metrics.trace_gradient_covariance(
-            model_copy, inputs, targets, criterion
+        # No chunking
+        result_single = metrics.trace_covariances(
+            model, inputs, targets, criterion, num_chunks=1
         )
 
-        model_copy = create_model(seed=0, num_hidden=2, hidden_dim=8)
-        trace_hess_individual = metrics.trace_hessian_covariance(
-            model_copy, inputs, targets, criterion
+        # With chunking
+        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        result_chunked = metrics.trace_covariances(
+            model, inputs, targets, criterion, num_chunks=4
         )
 
-        # Combined computation
-        trace_grad_combined, trace_hess_combined = metrics._compute_trace_metrics(
-            model, inputs, targets, criterion
+        assert (
+            abs(
+                result_single["trace_gradient_covariance"]
+                - result_chunked["trace_gradient_covariance"]
+            )
+            < 1e-5
+        )
+        assert (
+            abs(
+                result_single["trace_hessian_covariance"]
+                - result_chunked["trace_hessian_covariance"]
+            )
+            < 1e-5
         )
 
-        assert abs(trace_grad_combined - trace_grad_individual) < 1e-5
-        assert abs(trace_hess_combined - trace_hess_individual) < 1e-5
-
-    def test_compute_metrics_uses_combined_when_both_requested(self):
-        """Verify compute_metrics returns correct values for both trace metrics."""
+    def test_compute_metrics_returns_both_traces(self):
+        """Verify compute_metrics returns both trace metrics."""
         model = create_model(seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(20, 5)
         targets = t.randn(20, 5)
@@ -195,25 +206,18 @@ class TestMetrics:
 
         results = metrics.compute_metrics(
             model,
-            ["trace_gradient_covariance", "trace_hessian_covariance"],
+            ["trace_covariances"],
             inputs,
             targets,
             criterion,
         )
 
-        # Compute individually for comparison
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
-        expected_grad = metrics.trace_gradient_covariance(
-            model, inputs, targets, criterion
-        )
+        assert "trace_gradient_covariance" in results
+        assert "trace_hessian_covariance" in results
 
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
-        expected_hess = metrics.trace_hessian_covariance(
-            model, inputs, targets, criterion
-        )
-
-        assert abs(results["trace_gradient_covariance"] - expected_grad) < 1e-5
-        assert abs(results["trace_hessian_covariance"] - expected_hess) < 1e-5
+        # Sanity check: values should be positive
+        assert results["trace_gradient_covariance"] > 0
+        assert results["trace_hessian_covariance"] != 0  # Can be negative
 
 
 # ============================================================================

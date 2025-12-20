@@ -8,7 +8,9 @@ from dln.data import Dataset, get_metric_data
 from dln.factory import create_trainer
 from dln.callbacks import create_callbacks
 from dln.results import RunResult
-from plotting import auto_plot
+from dln.resolvers import register
+
+register()
 
 
 def run_experiment(
@@ -39,10 +41,13 @@ def run_experiment(
         callbacks=callbacks,
         stop_threshold=cfg.stop_threshold,
         show_progress=not is_multirun(),
+        metric_chunks=cfg.metric_chunks,
     )
 
     save_history(history, output_dir)
     if cfg.plotting.enabled:
+        from plotting import auto_plot
+
         result = RunResult(
             history=history,
             config=cfg,
@@ -55,13 +60,6 @@ def run_experiment(
             show_test=cfg.plotting.show_test,
         )
     return history
-
-
-GAMMA_MAX_STEPS = {0.75: 5000, 1.0: 10000, 1.5: 27000}
-
-OmegaConf.register_new_resolver(
-    "max_steps_for_gamma", lambda g: GAMMA_MAX_STEPS[float(g)], replace=True
-)
 
 
 @hydra.main(
