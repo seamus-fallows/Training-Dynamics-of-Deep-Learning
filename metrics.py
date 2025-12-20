@@ -139,6 +139,8 @@ def trace_covariances(
             Higher values use less memory but may be slower.
     """
     params, buffers = _to_functional(model)
+    n_samples = len(inputs)
+    chunk_size = (n_samples + num_chunks - 1) // num_chunks
 
     if num_chunks == 1:
         per_sample_grads = _compute_per_sample_grads(
@@ -161,9 +163,7 @@ def trace_covariances(
             "trace_hessian_covariance": trace_hess.item(),
         }
 
-    # Chunked path for num_chunks > 1
-    n_samples = len(inputs)
-    chunk_size = (n_samples + num_chunks - 1) // num_chunks
+    # Chunked path: two passes
 
     # Pass 1: Compute mean gradient
     grad_sum = None
@@ -177,11 +177,10 @@ def trace_covariances(
             criterion,
         ).detach()
 
-        grad_sum = (
-            chunk_grads.sum(dim=0)
-            if grad_sum is None
-            else grad_sum + chunk_grads.sum(dim=0)
-        )
+        if grad_sum is None:
+            grad_sum = chunk_grads.sum(dim=0)
+        else:
+            grad_sum += chunk_grads.sum(dim=0)
 
         del chunk_grads
 

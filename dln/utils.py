@@ -26,8 +26,7 @@ def get_device() -> t.device:
             try:
                 job_num = HydraConfig.get().job.num
                 gpu_id = job_num % n_gpus
-                os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-                return t.device("cuda")
+                return t.device(f"cuda:{gpu_id}")
             except Exception:
                 pass
         return t.device("cuda")
