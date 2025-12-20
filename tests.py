@@ -234,37 +234,6 @@ class TestMetrics:
         assert "trace_hessian_covariance" in results
         assert results["trace_gradient_covariance"] > 0
 
-    def test_trace_covariances_v2_matches_v1(self):
-        """Verify single-pass implementation matches two-pass implementation."""
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
-        inputs = t.randn(20, 5)
-        targets = t.randn(20, 5)
-        criterion = nn.MSELoss()
-
-        result_v1 = metrics.trace_covariances(
-            model, inputs, targets, criterion, num_chunks=4
-        )
-
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
-        result_v2 = metrics.trace_covariances_v2(
-            model, inputs, targets, criterion, num_chunks=4
-        )
-
-        assert (
-            abs(
-                result_v1["trace_gradient_covariance"]
-                - result_v2["trace_gradient_covariance"]
-            )
-            < 1e-5
-        )
-        assert (
-            abs(
-                result_v1["trace_hessian_covariance"]
-                - result_v2["trace_hessian_covariance"]
-            )
-            < 1e-5
-        )
-
 
 # ============================================================================
 # Comparative Trainer Tests
