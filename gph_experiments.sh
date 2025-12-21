@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-NUM_GPUS=10  # Update to your actual GPU count
+NUM_GPUS=16
 JOBS_PER_GPU=8
 METRIC_CHUNKS=1
 

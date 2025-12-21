@@ -7,7 +7,6 @@ from dln.config import TrainingConfig
 from dln.model import DeepLinearNetwork
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
 from metrics import compute_metrics
-import time
 
 
 class Trainer:
@@ -82,7 +81,6 @@ class Trainer:
                 record = {
                     "step": step,
                     "train_loss": batch_loss,
-                    "timestamp": time.time(),
                 }
 
                 test_loss = self.evaluate()
@@ -111,10 +109,6 @@ class Trainer:
                 break
 
         result = rows_to_columns(self.history)
-
-        # if t.cuda.is_available():
-        #     result["peak_vram_allocated_gb"] = t.cuda.max_memory_allocated() / 1024**3
-        #     result["peak_vram_reserved_gb"] = t.cuda.max_memory_reserved() / 1024**3
 
         return result
 
