@@ -72,73 +72,57 @@ class Trainer:
 
             inputs, targets = next(self.train_iterator)
 
-            if step % evaluate_every == 0 or step == (max_steps - 1):
-                with t.inference_mode():
-                    self.model.eval()
-                    batch_loss = self.criterion(self.model(inputs), targets).item()
-                    self.model.train()
+            should_evaluate = step % evaluate_every == 0 or step == max_steps - 1
 
-                record = {
-                    "step": step,
-                    "train_loss": batch_loss,
-                }
-
-                test_loss = self.evaluate()
-                if test_loss is not None:
-                    record["test_loss"] = test_loss
-
-                if metrics:
-                    metric_inputs, metric_targets = self._metric_data or (None, None)
-                    record.update(
-                        compute_metrics(
-                            self.model,
-                            metrics,
-                            metric_inputs,
-                            metric_targets,
-                            self.criterion,
-                            num_chunks=metric_chunks,
-                        )
-                    )
-
+            if should_evaluate:
+                record = self._evaluate(step, metrics, metric_chunks)
                 self.history.append(record)
 
-            train_loss = self._training_step(inputs, targets)
-            progress_bar.set_postfix({"train_loss": f"{train_loss:.4f}"})
+            loss = self._training_step(inputs, targets)
 
-            if stop_threshold is not None and train_loss < stop_threshold:
-                break
+            if should_evaluate:
+                train_loss = loss.item()
+                self.history[-1]["train_loss"] = train_loss
+                progress_bar.set_postfix({"loss": f"{train_loss:.4f}"})
 
-        result = rows_to_columns(self.history)
+                if stop_threshold is not None and train_loss < stop_threshold:
+                    break
 
-        return result
+        return rows_to_columns(self.history)
 
-    def _training_step(self, inputs: Tensor, targets: Tensor) -> float:
-        self.optimizer.zero_grad()
+    def _training_step(self, inputs: Tensor, targets: Tensor) -> Tensor:
+        self.optimizer.zero_grad(set_to_none=True)
         output = self.model(inputs)
         loss = self.criterion(output, targets)
         loss.backward()
         self.optimizer.step()
-        return loss.item()
+        return loss
 
-    def _evaluate_train(self) -> float:
-        inputs, targets = self.dataset.get_train_data()
-        inputs, targets = inputs.to(self.device), targets.to(self.device)
-        with t.inference_mode():
-            self.model.eval()
-            output = self.model(inputs)
-            loss = self.criterion(output, targets)
-        self.model.train()
-        return loss.item()
+    def _evaluate(
+        self,
+        step: int,
+        metrics: list[str] | None,
+        metric_chunks: int,
+    ) -> dict[str, Any]:
+        record = {"step": step}
 
-    def evaluate(self) -> float | None:
-        if self.test_data is None:
-            return None
+        if self.test_data is not None:
+            test_inputs, test_targets = self.test_data
+            with t.inference_mode():
+                test_loss = self.criterion(self.model(test_inputs), test_targets).item()
+            record["test_loss"] = test_loss
 
-        inputs, targets = self.test_data
-        with t.inference_mode():
-            self.model.eval()
-            output = self.model(inputs)
-            loss = self.criterion(output, targets)
+        if metrics:
+            metric_inputs, metric_targets = self._metric_data or (None, None)
+            record.update(
+                compute_metrics(
+                    self.model,
+                    metrics,
+                    metric_inputs,
+                    metric_targets,
+                    self.criterion,
+                    num_chunks=metric_chunks,
+                )
+            )
 
-        self.model.train()
-        return loss.item()
+        return record

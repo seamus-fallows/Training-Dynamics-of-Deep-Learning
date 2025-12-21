@@ -110,7 +110,7 @@ def _compute_batch_hvps(
 
 @metric("weight_norm")
 def weight_norm(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
     with t.no_grad():
         return _flatten_params(model).norm().item()
@@ -253,12 +253,7 @@ def compute_metrics(
     for name in names:
         try:
             metric_fn = METRICS[name]
-            if name == "trace_covariances":
-                value = metric_fn(
-                    model, inputs, targets, criterion, num_chunks=num_chunks
-                )
-            else:
-                value = metric_fn(model, inputs, targets, criterion)
+            value = metric_fn(model, inputs, targets, criterion, num_chunks=num_chunks)
 
             if isinstance(value, dict):
                 results.update(value)
