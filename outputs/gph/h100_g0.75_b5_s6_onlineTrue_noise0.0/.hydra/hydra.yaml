@@ -6,7 +6,7 @@ hydra:
     subdir: h${model.hidden_dim}_g${model.gamma}_b${training.batch_size}_s${training.batch_seed}_online${data.online}_noise${data.noise_std}
   launcher:
     _target_: hydra_plugins.hydra_joblib_launcher.joblib_launcher.JoblibLauncher
-    n_jobs: 128
+    n_jobs: 120
     backend: null
     prefer: processes
     require: null
@@ -122,7 +122,7 @@ hydra:
   overrides:
     hydra:
     - hydra/launcher=joblib
-    - hydra.launcher.n_jobs=128
+    - hydra.launcher.n_jobs=120
     - hydra.launcher.verbose=10
     - hydra.mode=MULTIRUN
     task:
@@ -132,11 +132,11 @@ hydra:
     - data.noise_std=0.0
     - training.batch_size=5
     - training.batch_seed=6
-    - metric_chunks=1
+    - metric_chunks=2
   job:
     name: run
     chdir: null
-    override_dirname: data.noise_std=0.0,metric_chunks=1,mode=online,model.gamma=0.75,model.hidden_dim=100,training.batch_seed=6,training.batch_size=5
+    override_dirname: data.noise_std=0.0,metric_chunks=2,mode=online,model.gamma=0.75,model.hidden_dim=100,training.batch_seed=6,training.batch_size=5
     id: run_206
     num: 206
     config_name: gph

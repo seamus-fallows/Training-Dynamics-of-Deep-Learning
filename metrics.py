@@ -154,7 +154,7 @@ def trace_covariances(
 
         hvps = _compute_batch_hvps(
             model, params, buffers, inputs, targets, criterion, noise
-        )
+        ).detach()
         trace_hess = (noise * hvps).sum(dim=1).mean()
 
         return {
@@ -207,7 +207,7 @@ def trace_covariances(
 
         hvps = _compute_batch_hvps(
             model, params, buffers, inputs, targets, criterion, noise
-        )
+        ).detach()
         trace_hess_sum += (noise * hvps).sum().item()
 
         del chunk_grads, noise, hvps

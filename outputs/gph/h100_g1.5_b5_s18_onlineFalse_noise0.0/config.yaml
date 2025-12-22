@@ -33,7 +33,7 @@ max_steps: ${max_steps_for_gamma:${model.gamma}}
 evaluate_every: 20
 metrics:
 - trace_covariances
-metric_chunks: 1
+metric_chunks: 2
 callbacks: []
 stop_threshold: null
 metric_data:

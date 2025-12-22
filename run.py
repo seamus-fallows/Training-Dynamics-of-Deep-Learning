@@ -9,6 +9,8 @@ from dln.factory import create_trainer
 from dln.callbacks import create_callbacks
 from dln.results import RunResult
 from dln.resolvers import register
+import torch as t
+import gc
 
 register()
 
@@ -68,6 +70,12 @@ def run_experiment(
             save=cfg.plotting.save,
             show_test=cfg.plotting.show_test,
         )
+
+    del trainer, dataset, metric_data
+    if device.type == "cuda":
+        gc.collect()
+        t.cuda.empty_cache()
+
     return history
 
 
