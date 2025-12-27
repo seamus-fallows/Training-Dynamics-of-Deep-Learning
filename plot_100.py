@@ -3,21 +3,18 @@ Plot GD vs averaged SGD for width experiments.
 """
 
 # %%
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
 from runner import load_run
-from plotting import plot, compute_ci
-
-plt.style.use("seaborn-v0_8-whitegrid")
 
 # %%
 BASE_PATH = Path("outputs/gph_w100")
 FIGURES_PATH = Path("figures/gph_w100")
 FIGURES_PATH.mkdir(parents=True, exist_ok=True)
 
-N_SEEDS = 100
 BATCH_SIZE = 5
 
 WIDTHS = [10, 100]
@@ -34,26 +31,28 @@ MIN_REGION_STEPS = 500
 # =============================================================================
 
 
-def get_path(
-    width: int, gamma: float, batch: int | None, seed: int, online: bool, noise: float
-) -> Path:
-    b_str = "None" if batch is None else str(batch)
-    return BASE_PATH / f"h{width}_g{gamma}_b{b_str}_s{seed}_online{online}_noise{noise}"
+def get_gd_path(width: int, gamma: float, online: bool, noise: float) -> Path:
+    b_str = "500" if online else "None"
+    return BASE_PATH / f"h{width}_g{gamma}_b{b_str}_s0_online{online}_noise{noise}"
+
+
+def get_avg_path(width: int, gamma: float, online: bool, noise: float) -> Path:
+    return (
+        BASE_PATH / f"h{width}_g{gamma}_b{BATCH_SIZE}_avg_online{online}_noise{noise}"
+    )
 
 
 def load_gd(width: int, gamma: float, online: bool, noise: float):
-    batch = 500 if online else None
-    path = get_path(width, gamma, batch, 0, online, noise)
+    path = get_gd_path(width, gamma, online, noise)
     return load_run(path) if path.exists() else None
 
 
-def load_sgd(width: int, gamma: float, online: bool, noise: float):
-    runs = []
-    for seed in range(N_SEEDS):
-        path = get_path(width, gamma, BATCH_SIZE, seed, online, noise)
-        if path.exists() and (path / "history.json").exists():
-            runs.append(load_run(path))
-    return runs
+def load_sgd_avg(width: int, gamma: float, online: bool, noise: float) -> dict | None:
+    path = get_avg_path(width, gamma, online, noise)
+    if not path.exists():
+        return None
+    with open(path / "history.json") as f:
+        return json.load(f)
 
 
 # %%
@@ -89,15 +88,14 @@ def shade_regions(ax, regions, color, alpha=0.15):
 
 def get_regions(width: int, gamma: float, online: bool, noise: float):
     gd = load_gd(width, gamma, online, noise)
-    sgd_runs = load_sgd(width, gamma, online, noise)
+    sgd_avg = load_sgd_avg(width, gamma, online, noise)
 
-    if not gd or not sgd_runs:
+    if not gd or not sgd_avg:
         return []
 
     steps = np.array(gd["step"])
     gd_loss = np.array(gd["train_loss"])
-    sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
-    sgd_mean, _, _ = compute_ci(sgd_losses)
+    sgd_mean = np.array(sgd_avg["train_loss_mean"])
 
     return find_gph_holds_regions(gd_loss, sgd_mean, steps, MIN_REGION_STEPS)
 
@@ -129,32 +127,40 @@ def iter_configs():
 for online, noise, gamma, name, title in iter_configs():
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    data = {}
     has_data = False
 
     for width in WIDTHS:
         gd = load_gd(width, gamma, online, noise)
-        sgd_runs = load_sgd(width, gamma, online, noise)
+        sgd_avg = load_sgd_avg(width, gamma, online, noise)
 
-        if not gd or not sgd_runs:
+        if not gd or not sgd_avg:
             print(f"Missing data: w={width}, {name}")
             continue
 
         has_data = True
-        print(f"Plotting: w={width}, {name} ({len(sgd_runs)} SGD runs)")
+        n_runs = sgd_avg["n_runs"]
+        print(f"Plotting: w={width}, {name} (n={n_runs})")
 
+        steps = np.array(gd["step"])
+        gd_loss = np.array(gd["train_loss"])
+        sgd_mean = np.array(sgd_avg["train_loss_mean"])
+
+        # Shade GPH regions
         regions = get_regions(width, gamma, online, noise)
         shade_regions(ax, regions, color=WIDTH_COLORS[width])
 
-        data[f"w={width} GD"] = gd
-        data[f"w={width} SGD (n={len(sgd_runs)})"] = sgd_runs
+        # Plot GD and SGD
+        ax.plot(steps, gd_loss, label=f"w={width} GD")
+        ax.plot(steps, sgd_mean, label=f"w={width} SGD (n={n_runs})")
 
     if not has_data:
         plt.close(fig)
         continue
 
-    plot(data, metric="train_loss", log_scale=True, ax=ax)
+    ax.set_yscale("log")
+    ax.set_xlabel("Step")
     ax.set_ylabel("Train Loss")
+    ax.legend()
     ax.set_title(f"{title}\n(Shaded: GPH holds, blue=w10, green=w100)")
 
     fig.tight_layout()
