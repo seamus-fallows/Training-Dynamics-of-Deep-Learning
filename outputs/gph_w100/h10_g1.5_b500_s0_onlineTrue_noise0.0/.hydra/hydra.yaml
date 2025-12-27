@@ -5,18 +5,7 @@ hydra:
     dir: outputs/gph_w100
     subdir: h${model.hidden_dim}_g${model.gamma}_b${training.batch_size}_s${training.batch_seed}_online${data.online}_noise${data.noise_std}
   launcher:
-    _target_: hydra_plugins.hydra_joblib_launcher.joblib_launcher.JoblibLauncher
-    n_jobs: 240
-    backend: null
-    prefer: processes
-    require: null
-    verbose: 10
-    timeout: null
-    pre_dispatch: 2*n_jobs
-    batch_size: auto
-    temp_folder: null
-    max_nbytes: null
-    mmap_mode: r
+    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
   sweeper:
     _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
     max_batch_size: null
@@ -122,24 +111,19 @@ hydra:
   overrides:
     hydra:
     - hydra.sweep.dir=outputs/gph_w100
-    - hydra/launcher=joblib
-    - hydra.launcher.n_jobs=240
-    - hydra.launcher.verbose=10
     - hydra.mode=MULTIRUN
     task:
     - model.hidden_dim=10
-    - model.gamma=1.5,1.0,0.75
-    - mode=offline,online
-    - data.noise_std=0.0,0.2
+    - model.gamma=1.5
+    - mode=online
+    - data.noise_std=0.0
     - metrics=[]
-    - training.batch_size=5
-    - training.batch_seed=range(100)
   job:
     name: run
     chdir: null
-    override_dirname: data.noise_std=0.0,0.2,metrics=[],mode=offline,online,model.gamma=1.5,1.0,0.75,model.hidden_dim=10,training.batch_seed=range(100),training.batch_size=5
-    id: ???
-    num: ???
+    override_dirname: data.noise_std=0.0,metrics=[],mode=online,model.gamma=1.5,model.hidden_dim=10
+    id: '2'
+    num: 2
     config_name: gph
     env_set: {}
     env_copy: []
@@ -162,9 +146,9 @@ hydra:
     - path: ''
       schema: structured
       provider: schema
-    output_dir: ???
+    output_dir: /workspace/Training-Dynamics-of-Deep-Learning/outputs/gph_w100/h10_g1.5_b500_s0_onlineTrue_noise0.0
     choices:
-      mode: offline
+      mode: online
       hydra/env: default
       hydra/callbacks: null
       hydra/job_logging: default
@@ -172,46 +156,6 @@ hydra:
       hydra/hydra_help: default
       hydra/help: default
       hydra/sweeper: basic
-      hydra/launcher: joblib
+      hydra/launcher: basic
       hydra/output: default
   verbose: false
-experiment:
-  name: gph
-plotting:
-  enabled: true
-  show: false
-  save: true
-  show_test: false
-model:
-  in_dim: 5
-  out_dim: 5
-  num_hidden: 3
-  hidden_dim: 10
-  gamma: 1.0
-  bias: false
-  seed: 0
-training:
-  lr: 0.0001
-  batch_size: 5
-  optimizer: SGD
-  optimizer_params: null
-  criterion: MSELoss
-  batch_seed: 0
-data:
-  train_samples: 500
-  test_samples: 100
-  data_seed: 0
-  noise_std: 0.0
-  params:
-    matrix: diagonal
-    scale: 10.0
-  online: false
-max_steps: ${max_steps_for_gamma:${model.gamma}}
-evaluate_every: 20
-metrics: []
-metric_chunks: 1
-callbacks: []
-stop_threshold: null
-metric_data:
-  mode: population
-  holdout_size: null

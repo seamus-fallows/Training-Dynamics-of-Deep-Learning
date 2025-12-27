@@ -122,8 +122,8 @@ hydra:
     name: run
     chdir: null
     override_dirname: data.noise_std=0.0,metrics=[],mode=offline,model.gamma=1.5,model.hidden_dim=100
-    id: '0'
-    num: 0
+    id: '8'
+    num: 8
     config_name: gph
     env_set: {}
     env_copy: []
