@@ -11,7 +11,6 @@ from runner import load_run
 from plotting import plot, subtract_baseline
 from dln.results import RunResult
 
-plt.style.use("seaborn-v0_8-whitegrid")
 
 # %%
 # =============================================================================
@@ -124,6 +123,17 @@ def iter_by_width():
 # =============================================================================
 # Plot Helpers
 # =============================================================================
+def signed_log(x):
+    """sign(x) * log10(|x| + 1)"""
+    return np.sign(x) * np.log10(np.abs(x) + 1)
+
+
+def signed_log_ticks(ax):
+    """Add readable tick labels for signed log scale."""
+    ticks = [-1000, -100, -10, -1, 0, 1, 10, 100, 1000]
+    tick_positions = [signed_log(t) for t in ticks]
+    ax.set_yticks(tick_positions)
+    ax.set_yticklabels([str(t) for t in ticks])
 
 
 def save(fig: plt.Figure, name: str) -> None:
@@ -218,6 +228,7 @@ for online, noise, gamma, name, title in iter_by_gamma():
         hline=0,
         log_scale=False,
     )
+    ax.set_ylim(-10, 10)
     ax.set_title(f"{title} — (GPH holds if ≤ 0)")
     save(fig, f"loss_diff_{name}")
 
