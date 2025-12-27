@@ -168,3 +168,5 @@ for online, noise, gamma, name, title in iter_configs():
     plt.close(fig)
 
 print(f"\nDone. Figures saved to: {FIGURES_PATH}")
+
+# %%
