@@ -7,9 +7,9 @@ experiment:
 
 plotting:
   enabled: true
-  show: false
+  show: true
   save: true
-  show_test: false
+  show_test: true
 
 model:
   in_dim: 5
@@ -21,15 +21,15 @@ model:
   seed: 0
 
 training:
-  lr: 0.0005
-  batch_size: null 
+  lr: 0.0001
+  batch_size: 5
   optimizer: "SGD"
   optimizer_params: null
   criterion: "MSELoss"
   batch_seed: 0
 
 data:
-  train_samples: 100
+  train_samples: 500
   test_samples: null
   data_seed: 0
   online: false
@@ -38,9 +38,9 @@ data:
     matrix: "diagonal"
     scale: 10
 
-max_steps: 2500
+max_steps: 20000
 stop_threshold: null
-evaluate_every: 1
+evaluate_every: 20
 metrics: []
 metric_data:
   mode: "population"

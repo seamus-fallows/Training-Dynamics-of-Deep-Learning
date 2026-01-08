@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from runner import load_run
-from plotting import plot, subtract_baseline
+from plotting import plot, subtract_baseline, compute_ci
 from dln.results import RunResult
 
 
@@ -24,6 +24,7 @@ FIGURES_PATH.mkdir(parents=True, exist_ok=True)
 LR = 0.0001
 BATCH_SIZE = 5
 N_SEEDS = 20
+MIN_REGION_STEPS = 500
 
 WIDTHS = [10, 100]
 GAMMAS = [0.75, 1.0, 1.5]
@@ -123,6 +124,8 @@ def iter_by_width():
 # =============================================================================
 # Plot Helpers
 # =============================================================================
+
+
 def signed_log(x):
     """sign(x) * log10(|x| + 1)"""
     return np.sign(x) * np.log10(np.abs(x) + 1)
@@ -134,6 +137,49 @@ def signed_log_ticks(ax):
     tick_positions = [signed_log(t) for t in ticks]
     ax.set_yticks(tick_positions)
     ax.set_yticklabels([str(t) for t in ticks])
+
+
+def find_sgd_worse_regions(gd_loss, sgd_mean, steps, min_steps):
+    """Find contiguous regions where SGD > GD for at least min_steps."""
+    sgd_worse = sgd_mean > gd_loss
+    regions = []
+
+    start_idx = None
+    for i, worse in enumerate(sgd_worse):
+        if worse and start_idx is None:
+            start_idx = i
+        elif not worse and start_idx is not None:
+            if steps[i - 1] - steps[start_idx] >= min_steps:
+                regions.append((steps[start_idx], steps[i - 1]))
+            start_idx = None
+
+    # Handle region extending to end
+    if start_idx is not None and steps[-1] - steps[start_idx] >= min_steps:
+        regions.append((steps[start_idx], steps[-1]))
+
+    return regions
+
+
+def shade_regions(ax, regions, color="red", alpha=0.15):
+    """Shade regions on axis."""
+    for start, end in regions:
+        ax.axvspan(start, end, color=color, alpha=alpha)
+
+
+def get_regions_for_width(width: int, gamma: float, online: bool, noise: float):
+    """Compute shading regions for a given configuration."""
+    gd = load_gd(width, gamma, online, noise)
+    sgd_runs = load_sgd(width, gamma, online, noise)
+
+    if not gd or not sgd_runs:
+        return []
+
+    steps = np.array(gd["step"])
+    gd_loss = np.array(gd["train_loss"])
+    sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
+    sgd_mean, _, _ = compute_ci(sgd_losses)
+
+    return find_sgd_worse_regions(gd_loss, sgd_mean, steps, MIN_REGION_STEPS)
 
 
 def save(fig: plt.Figure, name: str) -> None:
@@ -160,12 +206,20 @@ def plot_widths(
     derive=None,
     ylabel: str | None = None,
     hline: float | None = None,
+    shade: bool = False,
     **plot_kwargs,
 ) -> None:
     """Plot data for all widths on one axes.
 
     Use metric= for recorded data, derive= for computed quantities.
+    Use shade=True to shade regions where SGD > GD.
     """
+    # Shade regions first (so they appear behind lines)
+    if shade:
+        for width in WIDTHS:
+            regions = get_regions_for_width(width, gamma, online, noise)
+            shade_regions(ax, regions)
+
     if hline is not None:
         add_hline(ax, hline)
 
@@ -205,6 +259,7 @@ for online, noise, gamma, name, title in iter_by_gamma():
             metric=m,
             ylabel=METRIC_LABELS[m],
             log_scale=(m == "train_loss"),
+            shade=(m == "train_loss"),  # Only shade on loss plot
         )
     fig.suptitle(title)
     save(fig, f"curves_{name}")
@@ -227,6 +282,7 @@ for online, noise, gamma, name, title in iter_by_gamma():
         ylabel="E[L_SGD] - L_GD",
         hline=0,
         log_scale=False,
+        shade=True,
     )
     ax.set_ylim(-10, 10)
     ax.set_title(f"{title} — (GPH holds if ≤ 0)")
@@ -252,6 +308,7 @@ for online, noise, gamma, name, title in iter_by_gamma():
         ylabel="GPH Bound",
         hline=0,
         log_scale=False,
+        shade=True,
     )
     ax.set_title(f"{title} — (GPH holds if ≥ 0)")
     save(fig, f"gph_bound_{name}")
@@ -271,7 +328,13 @@ def gamma_label(g: float) -> str:
 for online, noise, width, name, title in iter_by_width():
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
+    # Compute regions for this width
+    all_regions = []
+    for g in GAMMAS:
+        all_regions.extend(get_regions_for_width(width, g, online, noise))
+
     # Left: GD loss by regime
+    shade_regions(axes[0], all_regions)
     gd_data = {
         gamma_label(g): gd for g in GAMMAS if (gd := load_gd(width, g, online, noise))
     }
@@ -279,6 +342,7 @@ for online, noise, width, name, title in iter_by_width():
         plot(gd_data, ax=axes[0], title="GD Loss")
 
     # Right: Loss difference by regime
+    shade_regions(axes[1], all_regions)
     add_hline(axes[1])
     diff_data, steps = {}, None
     for g in GAMMAS:

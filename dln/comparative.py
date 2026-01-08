@@ -51,32 +51,27 @@ class ComparativeTrainer:
             inputs_a, targets_a = next(self.trainer_a.train_iterator)
             inputs_b, targets_b = next(self.trainer_b.train_iterator)
 
-            # Record BEFORE step (both train and test at same weights)
             if step % evaluate_every == 0 or step == (max_steps - 1):
+                record = {"step": step}
+
                 with t.inference_mode():
-                    self.trainer_a.model.eval()
-                    self.trainer_b.model.eval()
-                    batch_loss_a = self.trainer_a.criterion(
-                        self.trainer_a.model(inputs_a), targets_a
-                    ).item()
-                    batch_loss_b = self.trainer_b.criterion(
-                        self.trainer_b.model(inputs_b), targets_b
-                    ).item()
-                    self.trainer_a.model.train()
-                    self.trainer_b.model.train()
+                    if self.trainer_a.train_data is not None:
+                        train_inputs, train_targets = self.trainer_a.train_data
+                        record["train_loss_a"] = self.trainer_a.criterion(
+                            self.trainer_a.model(train_inputs), train_targets
+                        ).item()
+                        record["train_loss_b"] = self.trainer_b.criterion(
+                            self.trainer_b.model(train_inputs), train_targets
+                        ).item()
 
-                record = {
-                    "step": step,
-                    "train_loss_a": batch_loss_a,
-                    "train_loss_b": batch_loss_b,
-                }
-
-                test_loss_a = self.trainer_a.evaluate()
-                test_loss_b = self.trainer_b.evaluate()
-                if test_loss_a is not None:
-                    record["test_loss_a"] = test_loss_a
-                if test_loss_b is not None:
-                    record["test_loss_b"] = test_loss_b
+                    if self.trainer_a.test_data is not None:
+                        test_inputs, test_targets = self.trainer_a.test_data
+                        record["test_loss_a"] = self.trainer_a.criterion(
+                            self.trainer_a.model(test_inputs), test_targets
+                        ).item()
+                        record["test_loss_b"] = self.trainer_b.criterion(
+                            self.trainer_b.model(test_inputs), test_targets
+                        ).item()
 
                 if model_metrics:
                     metric_inputs, metric_targets = self._metric_data or (None, None)
@@ -110,17 +105,18 @@ class ComparativeTrainer:
 
                 self.history.append(record)
 
-            # Step AFTER recording
-            loss_a = self.trainer_a._training_step(inputs_a, targets_a)
-            loss_b = self.trainer_b._training_step(inputs_b, targets_b)
+                train_loss_a = record.get("train_loss_a")
+                train_loss_b = record.get("train_loss_b")
+                if train_loss_a is not None:
+                    progress_bar.set_postfix({"loss_a": f"{train_loss_a:.4f}"})
+                    if (
+                        stop_threshold is not None
+                        and train_loss_a < stop_threshold
+                        and train_loss_b < stop_threshold
+                    ):
+                        break
 
-            progress_bar.set_postfix({"loss_a": f"{loss_a:.4f}"})
-
-            if (
-                stop_threshold is not None
-                and loss_a < stop_threshold
-                and loss_b < stop_threshold
-            ):
-                break
+            self.trainer_a._training_step(inputs_a, targets_a)
+            self.trainer_b._training_step(inputs_b, targets_b)
 
         return rows_to_columns(self.history)

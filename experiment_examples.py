@@ -4,6 +4,7 @@ Experiment examples
 
 # %%
 import matplotlib.pyplot as plt
+import torch as t
 
 from runner import run, run_comparative, run_sweep, run_comparative_sweep
 from plotting import plot, plot_run, plot_comparative
@@ -13,7 +14,8 @@ from plotting import plot, plot_run, plot_comparative
 # =============================================================================
 # %%
 # In yaml we have show plotting enabled by default, so this will plot automatically
-result = run("diagonal_teacher")
+print(t.cuda.is_available())
+result = run("diagonal_teacher", overrides={"training.batch_seed": 2})
 
 
 # =============================================================================
@@ -74,7 +76,7 @@ plot({**sweep.to_average("SGD (batch=20)"), "GD (full batch)": baseline})
 result = run_comparative(
     "diagonal_teacher",
     overrides={
-        "training_b.batch_size": 10,
+        "training_b.batch_size": 5,
         "comparative_metrics": ["param_distance"],
     },
     autoplot=False,

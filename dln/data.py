@@ -57,9 +57,9 @@ class Dataset:
             self.test_data = None
 
         if self.online:
-            self._train_data = None
+            self.train_data = None
         else:
-            self._train_data = self.sample(cfg.train_samples)
+            self.train_data = self.sample(cfg.train_samples)
 
     def sample(
         self, n: int, generator: t.Generator | None = None
@@ -71,11 +71,6 @@ class Dataset:
             noise = t.randn(targets.shape, generator=generator)
             targets = targets + noise * self.noise_std
         return inputs, targets
-
-    def get_train_data(self) -> tuple[Tensor, Tensor]:
-        if self._train_data is None:
-            raise ValueError("No training data in online mode")
-        return self._train_data
 
     def get_train_iterator(
         self,
@@ -114,7 +109,7 @@ class Dataset:
         device: t.device,
         generator: t.Generator | None = None,
     ) -> Iterator[tuple[Tensor, Tensor]]:
-        x, y = self._train_data[0].to(device), self._train_data[1].to(device)
+        x, y = self.train_data[0].to(device), self.train_data[1].to(device)
         n_samples = len(x)
 
         if batch_size is None or batch_size >= n_samples:
@@ -138,7 +133,7 @@ def get_metric_data(
     if config.mode == "population":
         if dataset.online:
             raise ValueError("Population mode not available in online mode")
-        x, y = dataset.get_train_data()
+        x, y = dataset.train_data
         return x.clone(), y.clone()
 
     if config.mode == "estimator":
@@ -150,7 +145,7 @@ def get_metric_data(
         if dataset.online:
             return dataset.sample(config.holdout_size, generator=generator)
 
-        x, y = dataset.get_train_data()
+        x, y = dataset.train_data
         indices = t.randperm(len(x), generator=generator)[: config.holdout_size]
         return x[indices].clone(), y[indices].clone()
 

@@ -16,13 +16,13 @@ shared:
     in_dim: 5
     out_dim: 5
     num_hidden: 3
-    hidden_dim: 10
+    hidden_dim: 100
     gamma: 1.5
     bias: false
     seed: 0
   
   training:
-    lr: 0.0005
+    lr: 0.0001
     batch_size: null
     optimizer: "SGD"
     optimizer_params: null
@@ -64,7 +64,7 @@ training_b:
   batch_seed: ${shared.training.batch_seed}
 
 data:
-  train_samples: 100
+  train_samples: 500
   test_samples: null
   data_seed: 0
   online: false
@@ -73,9 +73,9 @@ data:
     matrix: "diagonal"
     scale: 10.0
 
-max_steps: 2000
+max_steps: 20000
 stop_threshold: null
-evaluate_every: 1
+evaluate_every: 20
 model_metrics: []
 comparative_metrics:        
   - "param_distance"
