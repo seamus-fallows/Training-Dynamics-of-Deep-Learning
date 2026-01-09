@@ -1,0 +1,5 @@
+- model.hidden_dim=10
+- model.gamma=1.5
+- mode=offline
+- data.noise_std=0.0
+- metric_chunks=1
