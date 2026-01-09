@@ -10,13 +10,13 @@ plotting:
   enabled: true
   show: false
   save: true
-  show_test: false
+  show_test: true
 
 model:
   in_dim: 5
   out_dim: 5
   num_hidden: 3
-  hidden_dim: 10
+  hidden_dim: 100
   gamma: 1.0
   bias: false
   seed: 0
@@ -31,7 +31,7 @@ training:
 
 data:
   train_samples: 500
-  test_samples: 100
+  test_samples: 500
   data_seed: 0
   noise_std: 0.0
   params:

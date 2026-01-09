@@ -71,9 +71,8 @@ def run_experiment(
             show_test=cfg.plotting.show_test,
         )
 
-    del trainer, dataset, metric_data
+    gc.collect()
     if device.type == "cuda":
-        gc.collect()
         t.cuda.empty_cache()
 
     return history

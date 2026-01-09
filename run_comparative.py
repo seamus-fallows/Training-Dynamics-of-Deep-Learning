@@ -3,6 +3,8 @@ from typing import Any
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
+import gc
+import torch as t
 from dln.utils import seed_rng, get_device, save_history, is_multirun
 from dln.data import Dataset, get_metric_data
 from dln.comparative import ComparativeTrainer
@@ -71,6 +73,10 @@ def run_comparative_experiment(
             save=cfg.plotting.save,
             show_test=cfg.plotting.show_test,
         )
+
+    gc.collect()
+    if device.type == "cuda":
+        t.cuda.empty_cache()
 
     return history
 
