@@ -7,10 +7,10 @@ experiment:
   name: "gph"
 
 plotting:
-  enabled: true
+  enabled: false
   show: false
-  save: true
-  show_test: true
+  save: false
+  show_test: false
 
 model:
   in_dim: 5

@@ -21,10 +21,10 @@ BASE_PATH = Path("outputs/gph")
 FIGURES_PATH = Path("figures/gph")
 FIGURES_PATH.mkdir(parents=True, exist_ok=True)
 
-BATCH_SIZES = [1, 10]
-N_SEEDS = 50
+BATCH_SIZES = [1, 2, 5, 10, 50]
+N_SEEDS = 101
 
-WIDTHS = [10, 100]
+WIDTHS = [10, 50, 100]
 GAMMAS = [0.75, 1.0, 1.5]
 NOISE_LEVELS = [0.0, 0.2]
 
@@ -123,12 +123,10 @@ for noise in NOISE_LEVELS:
                 sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
                 sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_losses)
 
-                # Plot
                 ax.plot(steps, gd_loss, label="GD", color="C0")
                 ax.plot(steps, sgd_mean, label=f"SGD (n={len(sgd_runs)})", color="C1")
                 ax.fill_between(steps, sgd_lower, sgd_upper, alpha=0.3, color="C1")
 
-                # Shade where GD < E[SGD]
                 ax.fill_between(
                     steps,
                     0,
@@ -155,7 +153,60 @@ print("Loss plots saved.")
 
 # %%
 # =============================================================================
-# 2. Metrics (log scale, symlog for trace_hessian_covariance)
+# 2. Loss with CI-based shading (GD < lower 95% CI of SGD)
+# =============================================================================
+
+for noise in NOISE_LEVELS:
+    for gamma in GAMMAS:
+        for batch_size in BATCH_SIZES:
+            fig, axes = plt.subplots(1, len(WIDTHS), figsize=(6 * len(WIDTHS), 5))
+            if len(WIDTHS) == 1:
+                axes = [axes]
+
+            for ax, width in zip(axes, WIDTHS):
+                gd = load_gd(width, gamma, noise)
+                sgd_runs = load_sgd(width, gamma, noise, batch_size)
+
+                if not gd or not sgd_runs:
+                    ax.set_title(f"Width={width} (no data)")
+                    continue
+
+                steps = np.array(gd["step"])
+                gd_loss = np.array(gd["train_loss"])
+                sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
+                sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_losses)
+
+                ax.plot(steps, gd_loss, label="GD", color="C0")
+                ax.plot(steps, sgd_mean, label=f"SGD (n={len(sgd_runs)})", color="C1")
+                ax.fill_between(steps, sgd_lower, sgd_upper, alpha=0.3, color="C1")
+
+                ax.fill_between(
+                    steps,
+                    0,
+                    1,
+                    where=(gd_loss < sgd_lower),
+                    alpha=0.4,
+                    color="green",
+                    transform=ax.get_xaxis_transform(),
+                )
+
+                ax.set_yscale("log")
+                ax.set_xlabel("Step")
+                ax.set_ylabel("Train Loss")
+                ax.set_title(f"Width={width}")
+                ax.legend()
+
+            fig.suptitle(
+                f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size} — shaded: GD < CI lower"
+            )
+            save(fig, f"loss_ci_g{gamma}_noise{noise}_b{batch_size}")
+
+print("Loss CI plots saved.")
+
+
+# %%
+# =============================================================================
+# 3. Metrics (log scale, symlog for trace_hessian_covariance)
 # =============================================================================
 
 for noise in NOISE_LEVELS:
@@ -221,7 +272,67 @@ print("Metric plots saved.")
 
 # %%
 # =============================================================================
-# 3. Train vs Test Loss (GD and averaged SGD)
+# 4. Signal-to-Noise Ratio: ||∇L||² / Tr(Σ)
+# =============================================================================
+
+for noise in NOISE_LEVELS:
+    for gamma in GAMMAS:
+        for batch_size in BATCH_SIZES:
+            gd = load_gd(WIDTHS[0], gamma, noise)
+            if not gd or not gd.has("grad_norm_squared"):
+                continue
+
+            fig, axes = plt.subplots(1, len(WIDTHS), figsize=(6 * len(WIDTHS), 5))
+            if len(WIDTHS) == 1:
+                axes = [axes]
+
+            for ax, width in zip(axes, WIDTHS):
+                gd = load_gd(width, gamma, noise)
+                sgd_runs = load_sgd(width, gamma, noise, batch_size)
+
+                if not gd or not sgd_runs:
+                    ax.set_title(f"Width={width} (no data)")
+                    continue
+
+                steps = np.array(gd["step"])
+
+                # GD ratio (no noise covariance, so just plot grad norm)
+                gd_grad = np.array(gd["grad_norm_squared"])
+                gd_trace = np.array(gd["trace_gradient_covariance"])
+                # Avoid division by zero
+                gd_ratio = np.where(gd_trace > 1e-12, gd_grad / gd_trace, np.nan)
+
+                # SGD: compute ratio for each run, then CI
+                sgd_ratios = []
+                for r in sgd_runs:
+                    grad = np.array(r["grad_norm_squared"])
+                    trace = np.array(r["trace_gradient_covariance"])
+                    ratio = np.where(trace > 1e-12, grad / trace, np.nan)
+                    sgd_ratios.append(ratio)
+
+                sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_ratios)
+
+                ax.plot(steps, gd_ratio, label="GD", color="C0")
+                ax.plot(steps, sgd_mean, label=f"SGD (n={len(sgd_runs)})", color="C1")
+                ax.fill_between(steps, sgd_lower, sgd_upper, alpha=0.3, color="C1")
+
+                ax.set_yscale("log")
+                ax.set_xlabel("Step")
+                ax.set_ylabel("||∇L||² / Tr(Σ)")
+                ax.set_title(f"Width={width}")
+                ax.legend()
+
+            fig.suptitle(
+                f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}"
+            )
+            save(fig, f"snr_g{gamma}_noise{noise}_b{batch_size}")
+
+print("Signal-to-noise ratio plots saved.")
+
+
+# %%
+# =============================================================================
+# 5. Train vs Test Loss (GD and averaged SGD)
 # =============================================================================
 
 for noise in NOISE_LEVELS:
