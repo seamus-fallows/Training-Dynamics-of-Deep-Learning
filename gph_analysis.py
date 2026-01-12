@@ -22,7 +22,7 @@ FIGURES_PATH = Path("figures/gph")
 FIGURES_PATH.mkdir(parents=True, exist_ok=True)
 
 BATCH_SIZES = [1, 2, 5, 10, 50]
-N_SEEDS = 101
+N_SEEDS = 100
 
 WIDTHS = [10, 50, 100]
 GAMMAS = [0.75, 1.0, 1.5]
