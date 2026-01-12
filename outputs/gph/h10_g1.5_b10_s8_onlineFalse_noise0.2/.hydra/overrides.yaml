@@ -1,7 +1,0 @@
-- model.hidden_dim=10
-- model.gamma=1.5
-- mode=offline
-- data.noise_std=0.2
-- training.batch_size=10
-- training.batch_seed=8
-- metric_chunks=1
