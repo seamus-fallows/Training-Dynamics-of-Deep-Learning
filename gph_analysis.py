@@ -425,3 +425,5 @@ for noise in NOISE_LEVELS:
             print(row)
 
 print(f"\nFigures saved to: {FIGURES_PATH}")
+
+# %%
