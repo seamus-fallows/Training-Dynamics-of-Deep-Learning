@@ -93,15 +93,26 @@ class Dataset:
         generator: t.Generator | None = None,
     ) -> Iterator[tuple[Tensor, Tensor]]:
         teacher_matrix = self.teacher_matrix.to(device)
+        n_pregenerate = 1000
+
         while True:
-            inputs = t.randn(
-                batch_size, self.in_dim, device=device, generator=generator
+            inputs_all = t.randn(
+                n_pregenerate, batch_size, self.in_dim, generator=generator
             )
-            targets = inputs @ teacher_matrix.T
             if self.noise_std > 0:
-                noise = t.randn(targets.shape, device=device, generator=generator)
-                targets = targets + noise * self.noise_std
-            yield inputs, targets
+                noise_all = t.randn(
+                    n_pregenerate, batch_size, self.out_dim, generator=generator
+                )
+                inputs_all, noise_all = inputs_all.to(device), noise_all.to(device)
+            else:
+                inputs_all = inputs_all.to(device)
+
+            for i in range(n_pregenerate):
+                inputs = inputs_all[i]
+                targets = inputs @ teacher_matrix.T
+                if self.noise_std > 0:
+                    targets = targets + noise_all[i] * self.noise_std
+                yield inputs, targets
 
     def _offline_iterator(
         self,
@@ -117,7 +128,7 @@ class Dataset:
                 yield x, y
 
         while True:
-            indices = t.randperm(n_samples, device=device, generator=generator)
+            indices = t.randperm(n_samples, generator=generator).to(device)
             # Generate batches with start_idx up to (n_samples-batch_size + 1) to avoid smaller final batch
             for start_idx in range(0, n_samples - batch_size + 1, batch_size):
                 batch_idx = indices[start_idx : start_idx + batch_size]
