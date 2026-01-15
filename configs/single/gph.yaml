@@ -39,7 +39,7 @@ data:
     scale: 10.0
 
 max_steps: ${max_steps_for_gamma:${model.gamma}}
-evaluate_every: 20
+evaluate_every: ${eval_points:${max_steps}, 250}
 metrics:
   - "trace_covariances"
 metric_chunks: 1

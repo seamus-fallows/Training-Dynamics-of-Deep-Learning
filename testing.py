@@ -24,7 +24,7 @@ common_overrides = {
     "data.train_samples": 500,
     "data.test_samples": 500,
     "training.lr": 0.0001,
-    "training.batch_size": 5,
+    "training.batch_size": 50,
     "training.batch_seed": 0,
     "model.seed": 0,
     "data.data_seed": 0,
@@ -150,3 +150,28 @@ for width, noise in product(WIDTHS, NOISE_LEVELS):
     fig.suptitle(f"Width={width}, Noise={noise}", fontsize=14)
     fig.tight_layout()
     plt.show()
+
+# %%
+from dln.utils import get_device
+
+print(get_device())
+# %%
+from runner import run
+
+result = run(
+    "diagonal_teacher",
+    overrides={
+        "max_steps": 100,
+        "evaluate_every": 20,
+        "training.batch_size": 5,
+        "training.batch_seed": 0,
+        "model.seed": 0,
+        "data.data_seed": 0,
+        "plotting.enabled": False,
+    },
+    autoplot=False,
+)
+
+print(result["step"])
+print(result["train_loss"])
+# %%
