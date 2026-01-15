@@ -23,7 +23,7 @@ class Trainer:
         self.dataset = dataset
         self.batch_size = cfg.batch_size
 
-        self._batch_generator = t.Generator(device=device)
+        self._batch_generator = t.Generator()
         self._batch_generator.manual_seed(cfg.batch_seed)
 
         self.test_data = to_device(dataset.test_data, device)
