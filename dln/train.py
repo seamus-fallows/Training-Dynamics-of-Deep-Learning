@@ -73,7 +73,7 @@ class Trainer:
 
             inputs, targets = next(self.train_iterator)
 
-            if step % evaluate_every == 0 or step == max_steps - 1:
+            if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics, metric_chunks)
                 self.history.append(record)
 

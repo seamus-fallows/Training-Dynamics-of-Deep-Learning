@@ -118,7 +118,8 @@ class Dataset:
 
         while True:
             indices = t.randperm(n_samples, device=device, generator=generator)
-            for start_idx in range(0, n_samples, batch_size):
+            # Generate batches with start_idx up to (n_samples-batch_size + 1) to avoid smaller final batch
+            for start_idx in range(0, n_samples - batch_size + 1, batch_size):
                 batch_idx = indices[start_idx : start_idx + batch_size]
                 yield x[batch_idx], y[batch_idx]
 

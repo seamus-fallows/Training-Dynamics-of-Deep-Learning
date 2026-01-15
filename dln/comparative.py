@@ -51,7 +51,7 @@ class ComparativeTrainer:
             inputs_a, targets_a = next(self.trainer_a.train_iterator)
             inputs_b, targets_b = next(self.trainer_b.train_iterator)
 
-            if step % evaluate_every == 0 or step == (max_steps - 1):
+            if step % evaluate_every == 0:
                 record = {"step": step}
 
                 with t.inference_mode():
