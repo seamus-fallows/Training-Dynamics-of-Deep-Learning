@@ -372,7 +372,7 @@ print("Power analysis plots saved.")
 
 # %%
 # =============================================================================
-# 3. SGD Spread (SD bands in log space)
+# 3. SGD Spread: Envelope of min/max across runs vs GD
 # =============================================================================
 
 for noise in NOISE_LEVELS:
