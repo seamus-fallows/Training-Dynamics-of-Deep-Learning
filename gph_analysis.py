@@ -6,6 +6,7 @@ GPH Experiment Analysis (Offline Only)
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from scipy import stats
 
 from runner import load_run
 from plotting import compute_ci
@@ -71,26 +72,6 @@ def load_sgd(
 # Plot Helpers
 # =============================================================================
 
-SYMLOG_THRESH = 1e-8
-
-
-def symlog(x: np.ndarray) -> np.ndarray:
-    """Symmetric log: sign(x) * log10(|x|), with threshold for small values."""
-    x = np.asarray(x)
-    result = np.zeros_like(x, dtype=float)
-    mask = np.abs(x) > SYMLOG_THRESH
-    result[mask] = np.sign(x[mask]) * np.log10(np.abs(x[mask]))
-    result[~mask] = x[~mask] / SYMLOG_THRESH * np.log10(SYMLOG_THRESH)
-    return result
-
-
-def symlog_ticks(ax: plt.Axes) -> None:
-    """Set readable tick labels for symmetric log scale."""
-    ticks = [-1e4, -1e2, -1e0, -1e-2, 0, 1e-2, 1e0, 1e2, 1e4]
-    positions = symlog(np.array(ticks))
-    ax.set_yticks(positions)
-    ax.set_yticklabels(["−10⁴", "−10²", "−1", "−10⁻²", "0", "10⁻²", "1", "10²", "10⁴"])
-
 
 def save(fig: plt.Figure, name: str) -> None:
     fig.tight_layout()
@@ -98,9 +79,26 @@ def save(fig: plt.Figure, name: str) -> None:
     plt.close(fig)
 
 
+def clip_below(arr: np.ndarray, threshold: float = 1e-6) -> np.ndarray:
+    """Clip values below threshold for log scale plotting."""
+    return np.clip(arr, threshold, None)
+
+
+def share_ylim(axes: list[plt.Axes]) -> None:
+    """Set all axes to share the same y limits (union of all)."""
+    y_mins, y_maxs = [], []
+    for ax in axes:
+        ylim = ax.get_ylim()
+        y_mins.append(ylim[0])
+        y_maxs.append(ylim[1])
+    y_min, y_max = min(y_mins), max(y_maxs)
+    for ax in axes:
+        ax.set_ylim(y_min, y_max)
+
+
 # %%
 # =============================================================================
-# 1. Loss: SGD (averaged + CI) vs GD, shaded where GD < E[SGD]
+# 1. Loss: SGD (averaged + CI) vs GD, two-tone shading
 # =============================================================================
 
 for noise in NOISE_LEVELS:
@@ -127,21 +125,37 @@ for noise in NOISE_LEVELS:
                 ax.plot(steps, sgd_mean, label=f"SGD (n={len(sgd_runs)})", color="C1")
                 ax.fill_between(steps, sgd_lower, sgd_upper, alpha=0.3, color="C1")
 
+                # Dark green: GD < CI_lower (statistically significant)
                 ax.fill_between(
                     steps,
                     0,
                     1,
-                    where=(gd_loss < sgd_mean),
-                    alpha=0.4,
-                    color="green",
+                    where=(gd_loss < sgd_lower),
+                    alpha=0.5,
+                    color="darkgreen",
+                    edgecolor="none",
                     transform=ax.get_xaxis_transform(),
+                    label="GD < CI lower",
+                )
+
+                # Light green: CI_lower <= GD < E[SGD] (GD better but not significant)
+                ax.fill_between(
+                    steps,
+                    0,
+                    1,
+                    where=(gd_loss >= sgd_lower) & (gd_loss < sgd_mean),
+                    alpha=0.3,
+                    color="lightgreen",
+                    edgecolor="none",
+                    transform=ax.get_xaxis_transform(),
+                    label="CI lower ≤ GD < E[SGD]",
                 )
 
                 ax.set_yscale("log")
                 ax.set_xlabel("Step")
                 ax.set_ylabel("Train Loss")
                 ax.set_title(f"Width={width}")
-                ax.legend()
+                ax.legend(loc="upper right", fontsize=8)
 
             fig.suptitle(
                 f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}"
@@ -153,7 +167,212 @@ print("Loss plots saved.")
 
 # %%
 # =============================================================================
-# 2. Loss with CI-based shading (GD < lower 95% CI of SGD)
+# 2. Loss Ratio: SGD / GD (all batch sizes on same plot)
+# =============================================================================
+
+# Color map for batch sizes
+BATCH_COLORS = {1: "C0", 2: "C1", 5: "C2", 10: "C3", 50: "C4"}
+
+# First pass: compute y-limits per noise level
+noise_ylims = {}
+for noise in NOISE_LEVELS:
+    y_min, y_max = float("inf"), float("-inf")
+    for gamma in GAMMAS:
+        for batch_size in BATCH_SIZES:
+            for width in WIDTHS:
+                gd = load_gd(width, gamma, noise)
+                sgd_runs = load_sgd(width, gamma, noise, batch_size)
+                if not gd or not sgd_runs:
+                    continue
+                gd_loss = np.array(gd["train_loss"])
+                sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
+                sgd_ratios = [sgd / gd_loss for sgd in sgd_losses]
+                _, ratio_lower, ratio_upper = compute_ci(sgd_ratios)
+                y_min = min(y_min, np.nanmin(ratio_lower))
+                y_max = max(y_max, np.nanmax(ratio_upper))
+    margin = (y_max - y_min) * 0.05
+    noise_ylims[noise] = (y_min - margin, y_max + margin)
+
+# Second pass: create plots (one per gamma/noise, all batch sizes together)
+for noise in NOISE_LEVELS:
+    for gamma in GAMMAS:
+        fig, axes = plt.subplots(1, len(WIDTHS), figsize=(6 * len(WIDTHS), 5))
+        if len(WIDTHS) == 1:
+            axes = [axes]
+
+        for ax, width in zip(axes, WIDTHS):
+            gd = load_gd(width, gamma, noise)
+            if not gd:
+                ax.set_title(f"Width={width} (no data)")
+                continue
+
+            steps = np.array(gd["step"])
+            gd_loss = np.array(gd["train_loss"])
+
+            ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5)
+
+            for batch_size in BATCH_SIZES:
+                sgd_runs = load_sgd(width, gamma, noise, batch_size)
+                if not sgd_runs:
+                    continue
+
+                sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
+                sgd_ratios = [sgd / gd_loss for sgd in sgd_losses]
+                ratio_mean, ratio_lower, ratio_upper = compute_ci(sgd_ratios)
+
+                color = BATCH_COLORS.get(batch_size, "C5")
+                ax.plot(steps, ratio_mean, label=f"b={batch_size}", color=color)
+                ax.fill_between(steps, ratio_lower, ratio_upper, alpha=0.2, color=color)
+
+            ax.set_ylim(noise_ylims[noise])
+            ax.ticklabel_format(style="plain", axis="y")
+            ax.set_xlabel("Step")
+            ax.set_ylabel("SGD Loss / GD Loss")
+            ax.set_title(f"Width={width}")
+            ax.legend()
+
+        fig.suptitle(f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}")
+        save(fig, f"loss_ratio_g{gamma}_noise{noise}")
+
+print("Loss ratio plots saved.")
+
+
+# %%
+# =============================================================================
+# 2b. Power Analysis: Where would more runs help?
+# =============================================================================
+
+
+def samples_needed(effect_size, power=0.8, alpha=0.05):
+    """Approximate sample size for detecting effect with given power."""
+    if effect_size <= 0:
+        return np.inf
+    z_alpha = stats.norm.ppf(1 - alpha)
+    z_beta = stats.norm.ppf(power)
+    n = ((z_alpha + z_beta) / effect_size) ** 2
+    return n
+
+
+for noise in NOISE_LEVELS:
+    for gamma in GAMMAS:
+        for batch_size in BATCH_SIZES:
+            fig, axes = plt.subplots(2, len(WIDTHS), figsize=(6 * len(WIDTHS), 8))
+            if len(WIDTHS) == 1:
+                axes = axes.reshape(2, 1)
+
+            for col, width in enumerate(WIDTHS):
+                gd = load_gd(width, gamma, noise)
+                sgd_runs = load_sgd(width, gamma, noise, batch_size)
+
+                if not gd or not sgd_runs:
+                    axes[0, col].set_title(f"Width={width} (no data)")
+                    axes[1, col].set_title(f"Width={width} (no data)")
+                    continue
+
+                steps = np.array(gd["step"])
+                gd_loss = np.array(gd["train_loss"])
+                sgd_losses = np.array([np.array(r["train_loss"]) for r in sgd_runs])
+
+                sgd_mean = sgd_losses.mean(axis=0)
+                sgd_std = sgd_losses.std(axis=0, ddof=1)
+                n_runs = len(sgd_runs)
+
+                # Effect size: (E[SGD] - GD) / std(SGD)
+                # Positive means SGD > GD (GD is better)
+                effect_size = np.where(
+                    sgd_std > 1e-12, (sgd_mean - gd_loss) / sgd_std, 0
+                )
+
+                # Samples needed for 80% power
+                n_needed = np.array([samples_needed(d) for d in effect_size])
+                n_needed = np.clip(n_needed, 1, 10000)  # Cap for plotting
+
+                # Regions where more runs would help:
+                # - GD < E[SGD] (effect_size > 0)
+                # - Effect size is meaningful (> 0.2)
+                # - But not yet significant (need more runs than we have)
+                sgd_sem = sgd_std / np.sqrt(n_runs)
+                t_val = stats.t.ppf(0.975, df=n_runs - 1)
+                sgd_lower = sgd_mean - t_val * sgd_sem
+
+                more_runs_useful = (
+                    (gd_loss < sgd_mean) & (gd_loss >= sgd_lower) & (effect_size > 0.2)
+                )
+
+                # Top plot: Effect size
+                ax_effect = axes[0, col]
+                ax_effect.axhline(0, color="gray", linestyle="-", alpha=0.3)
+                ax_effect.axhline(
+                    0.2, color="green", linestyle="--", alpha=0.5, label="Small (0.2)"
+                )
+                ax_effect.axhline(
+                    0.5, color="orange", linestyle="--", alpha=0.5, label="Medium (0.5)"
+                )
+                ax_effect.axhline(
+                    0.8, color="red", linestyle="--", alpha=0.5, label="Large (0.8)"
+                )
+                ax_effect.plot(steps, effect_size, color="C0", label="Effect size")
+
+                # Shade regions where more runs would help
+                ax_effect.fill_between(
+                    steps,
+                    ax_effect.get_ylim()[0] if ax_effect.get_ylim()[0] < 0 else 0,
+                    effect_size,
+                    where=more_runs_useful,
+                    alpha=0.3,
+                    color="yellow",
+                    edgecolor="none",
+                    label="More runs useful",
+                )
+
+                ax_effect.set_xlabel("Step")
+                ax_effect.set_ylabel("Effect size d = (E[SGD] - GD) / σ")
+                ax_effect.set_title(f"Width={width}")
+                ax_effect.legend(loc="upper right", fontsize=7)
+                ax_effect.set_ylim(-0.5, max(2, np.nanmax(effect_size) * 1.1))
+
+                # Bottom plot: Samples needed for 80% power
+                ax_power = axes[1, col]
+                ax_power.axhline(
+                    n_runs,
+                    color="red",
+                    linestyle="-",
+                    alpha=0.7,
+                    label=f"Current n={n_runs}",
+                )
+                ax_power.plot(steps, n_needed, color="C0", label="n needed (80% power)")
+
+                # Shade where we need more runs than we have
+                ax_power.fill_between(
+                    steps,
+                    n_runs,
+                    n_needed,
+                    where=(n_needed > n_runs) & (effect_size > 0),
+                    alpha=0.3,
+                    color="yellow",
+                    edgecolor="none",
+                    label="Underpowered",
+                )
+
+                ax_power.set_yscale("log")
+                ax_power.set_xlabel("Step")
+                ax_power.set_ylabel("Samples needed")
+                ax_power.set_title(f"Width={width}")
+                ax_power.legend(loc="upper right", fontsize=7)
+                ax_power.set_ylim(1, 10000)
+
+            fig.suptitle(
+                f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}\n"
+                f"Top: Effect size | Bottom: Runs needed for 80% power"
+            )
+            save(fig, f"power_g{gamma}_noise{noise}_b{batch_size}")
+
+print("Power analysis plots saved.")
+
+
+# %%
+# =============================================================================
+# 3. SGD Spread (SD bands in log space)
 # =============================================================================
 
 for noise in NOISE_LEVELS:
@@ -173,22 +392,27 @@ for noise in NOISE_LEVELS:
 
                 steps = np.array(gd["step"])
                 gd_loss = np.array(gd["train_loss"])
-                sgd_losses = [np.array(r["train_loss"]) for r in sgd_runs]
-                sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_losses)
 
-                ax.plot(steps, gd_loss, label="GD", color="C0")
-                ax.plot(steps, sgd_mean, label=f"SGD (n={len(sgd_runs)})", color="C1")
-                ax.fill_between(steps, sgd_lower, sgd_upper, alpha=0.3, color="C1")
+                # Compute envelope
+                sgd_losses = np.array([np.array(r["train_loss"]) for r in sgd_runs])
+                sgd_mean = sgd_losses.mean(axis=0)
+                sgd_min = sgd_losses.min(axis=0)
+                sgd_max = sgd_losses.max(axis=0)
 
+                # Plot envelope
                 ax.fill_between(
                     steps,
-                    0,
-                    1,
-                    where=(gd_loss < sgd_lower),
-                    alpha=0.4,
-                    color="green",
-                    transform=ax.get_xaxis_transform(),
+                    sgd_min,
+                    sgd_max,
+                    alpha=0.3,
+                    color="C1",
+                    edgecolor="none",
+                    label="SGD (min/max)",
                 )
+                ax.plot(steps, sgd_mean, color="C1", linewidth=1.5, label="SGD mean")
+
+                # Plot GD on top
+                ax.plot(steps, gd_loss, label="GD", color="C0", linewidth=2)
 
                 ax.set_yscale("log")
                 ax.set_xlabel("Step")
@@ -197,16 +421,16 @@ for noise in NOISE_LEVELS:
                 ax.legend()
 
             fig.suptitle(
-                f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size} — shaded: GD < CI lower"
+                f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}"
             )
-            save(fig, f"loss_ci_g{gamma}_noise{noise}_b{batch_size}")
+            save(fig, f"loss_spread_g{gamma}_noise{noise}_b{batch_size}")
 
-print("Loss CI plots saved.")
+print("Envelope plots saved.")
 
 
 # %%
 # =============================================================================
-# 3. Metrics (log scale, symlog for trace_hessian_covariance)
+# 4. Metrics (log scale, dynamic clip for trace_hessian_covariance)
 # =============================================================================
 
 for noise in NOISE_LEVELS:
@@ -232,29 +456,31 @@ for noise in NOISE_LEVELS:
 
                 for row, metric in enumerate(METRICS):
                     ax = axes[row, col]
-                    use_symlog = metric == "trace_hessian_covariance"
 
                     gd_vals = np.array(gd[metric])
                     sgd_vals = [np.array(r[metric]) for r in sgd_runs]
                     sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_vals)
 
-                    if use_symlog:
-                        gd_vals = symlog(gd_vals)
-                        sgd_mean, sgd_lower, sgd_upper = (
-                            symlog(sgd_mean),
-                            symlog(sgd_lower),
-                            symlog(sgd_upper),
-                        )
+                    # Dynamic clip threshold based on end-of-training values
+                    if metric == "trace_hessian_covariance":
+                        final_vals = [gd_vals[-1], sgd_mean[-1], sgd_lower[-1]]
+                        final_vals = [v for v in final_vals if v > 0]
+                        if final_vals:
+                            clip_threshold = (
+                                min(final_vals) * 0.1
+                            )  # 10% of smallest final value
+                        else:
+                            clip_threshold = 1e-10
+                        gd_vals = clip_below(gd_vals, clip_threshold)
+                        sgd_mean = clip_below(sgd_mean, clip_threshold)
+                        sgd_lower = clip_below(sgd_lower, clip_threshold)
+                        sgd_upper = clip_below(sgd_upper, clip_threshold)
 
                     ax.plot(steps, gd_vals, label="GD", color="C0")
                     ax.plot(steps, sgd_mean, label="SGD", color="C1")
                     ax.fill_between(steps, sgd_lower, sgd_upper, alpha=0.3, color="C1")
 
-                    if use_symlog:
-                        symlog_ticks(ax)
-                    else:
-                        ax.set_yscale("log")
-
+                    ax.set_yscale("log")
                     ax.set_xlabel("Step")
                     ax.set_ylabel(METRIC_LABELS[metric])
                     if row == 0:
@@ -272,7 +498,7 @@ print("Metric plots saved.")
 
 # %%
 # =============================================================================
-# 4. Signal-to-Noise Ratio: ||∇L||² / Tr(Σ)
+# 5. Signal-to-Noise Ratio: ||∇L||² / Tr(Σ) — shared y-axis
 # =============================================================================
 
 for noise in NOISE_LEVELS:
@@ -286,6 +512,8 @@ for noise in NOISE_LEVELS:
             if len(WIDTHS) == 1:
                 axes = [axes]
 
+            valid_axes = []
+
             for ax, width in zip(axes, WIDTHS):
                 gd = load_gd(width, gamma, noise)
                 sgd_runs = load_sgd(width, gamma, noise, batch_size)
@@ -296,13 +524,10 @@ for noise in NOISE_LEVELS:
 
                 steps = np.array(gd["step"])
 
-                # GD ratio (no noise covariance, so just plot grad norm)
                 gd_grad = np.array(gd["grad_norm_squared"])
                 gd_trace = np.array(gd["trace_gradient_covariance"])
-                # Avoid division by zero
                 gd_ratio = np.where(gd_trace > 1e-12, gd_grad / gd_trace, np.nan)
 
-                # SGD: compute ratio for each run, then CI
                 sgd_ratios = []
                 for r in sgd_runs:
                     grad = np.array(r["grad_norm_squared"])
@@ -321,6 +546,11 @@ for noise in NOISE_LEVELS:
                 ax.set_ylabel("||∇L||² / Tr(Σ)")
                 ax.set_title(f"Width={width}")
                 ax.legend()
+                valid_axes.append(ax)
+
+            # Share y-axis across all valid subplots
+            if valid_axes:
+                share_ylim(valid_axes)
 
             fig.suptitle(
                 f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}"
@@ -328,71 +558,6 @@ for noise in NOISE_LEVELS:
             save(fig, f"snr_g{gamma}_noise{noise}_b{batch_size}")
 
 print("Signal-to-noise ratio plots saved.")
-
-
-# %%
-# =============================================================================
-# 5. Train vs Test Loss (GD and averaged SGD)
-# =============================================================================
-
-for noise in NOISE_LEVELS:
-    for gamma in GAMMAS:
-        for batch_size in BATCH_SIZES:
-            fig, axes = plt.subplots(1, len(WIDTHS), figsize=(6 * len(WIDTHS), 5))
-            if len(WIDTHS) == 1:
-                axes = [axes]
-
-            for ax, width in zip(axes, WIDTHS):
-                gd = load_gd(width, gamma, noise)
-                sgd_runs = load_sgd(width, gamma, noise, batch_size)
-
-                if not gd or not sgd_runs:
-                    ax.set_title(f"Width={width} (no data)")
-                    continue
-
-                steps = np.array(gd["step"])
-
-                # GD
-                ax.plot(
-                    steps, gd["train_loss"], label="GD train", color="C0", linestyle="-"
-                )
-                if gd.has("test_loss"):
-                    ax.plot(
-                        steps,
-                        gd["test_loss"],
-                        label="GD test",
-                        color="C0",
-                        linestyle="--",
-                    )
-
-                # SGD averaged
-                sgd_train = [np.array(r["train_loss"]) for r in sgd_runs]
-                train_mean, train_lower, train_upper = compute_ci(sgd_train)
-                ax.plot(steps, train_mean, label="SGD train", color="C1", linestyle="-")
-                ax.fill_between(steps, train_lower, train_upper, alpha=0.2, color="C1")
-
-                if sgd_runs[0].has("test_loss"):
-                    sgd_test = [np.array(r["test_loss"]) for r in sgd_runs]
-                    test_mean, test_lower, test_upper = compute_ci(sgd_test)
-                    ax.plot(
-                        steps, test_mean, label="SGD test", color="C1", linestyle="--"
-                    )
-                    ax.fill_between(
-                        steps, test_lower, test_upper, alpha=0.2, color="C1"
-                    )
-
-                ax.set_yscale("log")
-                ax.set_xlabel("Step")
-                ax.set_ylabel("Loss")
-                ax.set_title(f"Width={width}")
-                ax.legend()
-
-            fig.suptitle(
-                f"γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}"
-            )
-            save(fig, f"train_test_g{gamma}_noise{noise}_b{batch_size}")
-
-print("Train/test plots saved.")
 
 
 # %%
