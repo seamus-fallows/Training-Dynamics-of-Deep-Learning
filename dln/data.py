@@ -26,6 +26,16 @@ def create_diagonal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     return scale * t.diag(t.arange(1, in_dim + 1).float())
 
 
+@register_matrix("identity")
+def create_identity_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
+    if out_dim != in_dim:
+        raise ValueError(
+            f"Identity matrix requires out_dim == in_dim, "
+            f"but got in_dim={in_dim}, out_dim={out_dim}."
+        )
+    return t.eye(in_dim)
+
+
 @register_matrix("random_normal")
 def create_random_normal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     mean = params["mean"]
