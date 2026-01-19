@@ -23,7 +23,8 @@ def load_run(path: Path) -> RunResult:
     return RunResult(history=history, config=config, output_dir=path)
 
 
-def load_hydra_sweep(path: Path, sweep_param: str) -> SweepResult:
+def load_sweep(path: Path, sweep_param: str) -> SweepResult:
+    """Load results from a sweep directory."""
     runs: dict[str, RunResult] = {}
 
     for subdir in sorted(path.iterdir()):

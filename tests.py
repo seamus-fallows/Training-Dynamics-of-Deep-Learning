@@ -132,9 +132,9 @@ class TestMetrics:
         expected = sum((p.grad**2).sum().item() for p in model.parameters())
 
         model = create_model(seed=0)
-        result = metrics.grad_norm_squared(model, inputs, targets, criterion)
+        result = metrics.trace_covariances(model, inputs, targets, criterion)
 
-        assert abs(result - expected) < 1e-5
+        assert abs(result["grad_norm_squared"] - expected) < 1e-5
 
     def test_trace_covariances_vs_manual(self):
         """Verify both trace metrics against naive element-wise computation."""

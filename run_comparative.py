@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Any
-import hydra
-from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, OmegaConf
 import gc
+
 import torch as t
+from omegaconf import DictConfig, OmegaConf
+
 from dln.utils import seed_rng, get_device, save_history
 from dln.data import Dataset, get_metric_data
 from dln.comparative import ComparativeTrainer
@@ -16,12 +16,12 @@ from plotting import auto_plot
 
 def run_comparative_experiment(
     cfg: DictConfig,
-    output_dir: Path | None = None,
+    output_dir: Path,
     show_progress: bool = True,
     show_plots: bool = True,
 ) -> dict[str, list[Any]]:
-    if output_dir is None:
-        output_dir = Path(HydraConfig.get().runtime.output_dir)
+    """Run a comparative training experiment (two models side by side)."""
+    output_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, output_dir / "config.yaml")
     device = get_device()
 
@@ -82,25 +82,3 @@ def run_comparative_experiment(
         t.cuda.empty_cache()
 
     return history
-
-
-@hydra.main(
-    version_base=None,
-    config_path="configs/comparative",
-    config_name="diagonal_teacher",
-)
-def main(cfg: DictConfig) -> None:
-    is_multirun = HydraConfig.get().mode.name == "MULTIRUN"
-    if is_multirun:
-        is_first = HydraConfig.get().job.num == 0
-        show_progress = is_first
-        show_plots = False
-    else:
-        show_progress = True
-        show_plots = True
-
-    run_comparative_experiment(cfg, show_progress=show_progress, show_plots=show_plots)
-
-
-if __name__ == "__main__":
-    main()
