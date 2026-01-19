@@ -3,30 +3,20 @@ from typing import Any
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
-from dln.utils import seed_rng, get_device, save_history, is_multirun
+from dln.utils import seed_rng, get_device, save_history
 from dln.data import Dataset, get_metric_data
 from dln.factory import create_trainer
 from dln.callbacks import create_callbacks
 from dln.results import RunResult
-from dln.resolvers import register
 import torch as t
 import gc
-
-register()
-
-
-def is_first_job() -> bool:
-    if not HydraConfig.initialized():
-        return True
-    try:
-        return HydraConfig.get().job.num == 0
-    except Exception:
-        return True
 
 
 def run_experiment(
     cfg: DictConfig,
     output_dir: Path | None = None,
+    show_progress: bool = True,
+    show_plots: bool = True,
 ) -> dict[str, list[Any]]:
     if output_dir is None:
         output_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -51,11 +41,12 @@ def run_experiment(
         metrics=cfg.metrics,
         callbacks=callbacks,
         stop_threshold=cfg.stop_threshold,
-        show_progress=is_first_job(),
+        show_progress=show_progress,
         metric_chunks=cfg.metric_chunks,
     )
 
     save_history(history, output_dir)
+
     if cfg.plotting.enabled:
         from plotting import auto_plot
 
@@ -66,7 +57,7 @@ def run_experiment(
         )
         auto_plot(
             result,
-            show=cfg.plotting.show,
+            show=show_plots,
             save=cfg.plotting.save,
             show_test=cfg.plotting.show_test,
         )
@@ -82,7 +73,16 @@ def run_experiment(
     version_base=None, config_path="configs/single", config_name="diagonal_teacher"
 )
 def main(cfg: DictConfig) -> None:
-    run_experiment(cfg)
+    is_multirun = HydraConfig.get().mode.name == "MULTIRUN"
+    if is_multirun:
+        is_first = HydraConfig.get().job.num == 0
+        show_progress = is_first
+        show_plots = False
+    else:
+        show_progress = True
+        show_plots = True
+
+    run_experiment(cfg, show_progress=show_progress, show_plots=show_plots)
 
 
 if __name__ == "__main__":

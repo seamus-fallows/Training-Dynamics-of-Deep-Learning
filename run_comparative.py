@@ -5,7 +5,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import gc
 import torch as t
-from dln.utils import seed_rng, get_device, save_history, is_multirun
+from dln.utils import seed_rng, get_device, save_history
 from dln.data import Dataset, get_metric_data
 from dln.comparative import ComparativeTrainer
 from dln.factory import create_trainer
@@ -17,6 +17,8 @@ from plotting import auto_plot
 def run_comparative_experiment(
     cfg: DictConfig,
     output_dir: Path | None = None,
+    show_progress: bool = True,
+    show_plots: bool = True,
 ) -> dict[str, list[Any]]:
     if output_dir is None:
         output_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -56,11 +58,12 @@ def run_comparative_experiment(
         callbacks_a=callbacks_a,
         callbacks_b=callbacks_b,
         stop_threshold=cfg.stop_threshold,
-        show_progress=not is_multirun(),
+        show_progress=show_progress,
         metric_chunks=cfg.metric_chunks,
     )
 
     save_history(history, output_dir)
+
     if cfg.plotting.enabled:
         result = RunResult(
             history=history,
@@ -69,7 +72,7 @@ def run_comparative_experiment(
         )
         auto_plot(
             result,
-            show=cfg.plotting.show,
+            show=show_plots,
             save=cfg.plotting.save,
             show_test=cfg.plotting.show_test,
         )
@@ -87,7 +90,16 @@ def run_comparative_experiment(
     config_name="diagonal_teacher",
 )
 def main(cfg: DictConfig) -> None:
-    run_comparative_experiment(cfg)
+    is_multirun = HydraConfig.get().mode.name == "MULTIRUN"
+    if is_multirun:
+        is_first = HydraConfig.get().job.num == 0
+        show_progress = is_first
+        show_plots = False
+    else:
+        show_progress = True
+        show_plots = True
+
+    run_comparative_experiment(cfg, show_progress=show_progress, show_plots=show_plots)
 
 
 if __name__ == "__main__":

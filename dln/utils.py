@@ -7,8 +7,8 @@ import numpy as np
 import torch as t
 from torch.optim import Optimizer
 from torch import Tensor
-from hydra.core.hydra_config import HydraConfig
 import os
+from omegaconf import OmegaConf, DictConfig
 
 
 def seed_rng(seed: int) -> None:
@@ -30,13 +30,6 @@ def get_device() -> t.device:
     if t.backends.mps.is_available():
         return t.device("mps")
     return t.device("cpu")
-
-
-def is_multirun() -> bool:
-    """Check if running in Hydra multirun mode."""
-    if not HydraConfig.initialized():
-        return False
-    return HydraConfig.get().mode.name == "MULTIRUN"
 
 
 def to_device(
@@ -85,3 +78,30 @@ def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
         for key, value in record.items():
             columns[key].append(value)
     return columns
+
+
+CONFIG_ROOT = Path(__file__).parent.parent / "configs"
+
+
+def load_config(
+    config_name: str,
+    config_dir: str = "single",
+    overrides: dict[str, Any] | None = None,
+) -> DictConfig:
+    """Load a YAML config and apply overrides."""
+    config_path = CONFIG_ROOT / config_dir / f"{config_name}.yaml"
+    cfg = OmegaConf.load(config_path)
+
+    if overrides:
+        for key, value in overrides.items():
+            OmegaConf.update(cfg, key, value, merge=True)
+
+    OmegaConf.resolve(cfg)
+
+    # Compute derived values
+    if "num_evaluations" in cfg and "evaluate_every" not in cfg:
+        OmegaConf.update(
+            cfg, "evaluate_every", max(1, cfg.max_steps // cfg.num_evaluations)
+        )
+
+    return cfg

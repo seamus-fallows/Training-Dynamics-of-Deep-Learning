@@ -1,13 +1,8 @@
-defaults:
-  - paths
-  - _self_
-
 experiment:
   name: "diagonal_teacher"
 
 plotting:
   enabled: true
-  show: true
   save: true
   show_test: true
 

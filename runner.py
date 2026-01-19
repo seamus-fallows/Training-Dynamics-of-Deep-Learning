@@ -2,32 +2,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from hydra import compose, initialize_config_dir
-from hydra.core.global_hydra import GlobalHydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 
 from dln.results import RunResult, SweepResult
-from dln.utils import load_history
+from dln.utils import load_history, load_config
 from run import run_experiment
 from run_comparative import run_comparative_experiment
-
-
-def _load_config(
-    config_subdir: str, config_name: str, overrides: dict[str, Any] | None
-) -> DictConfig:
-    GlobalHydra.instance().clear()
-    config_path = str(Path(__file__).parent / "configs" / config_subdir)
-    initialize_config_dir(version_base=None, config_dir=config_path)
-    cfg = compose(config_name=config_name)
-    for key, value in (overrides or {}).items():
-        if "." in key:
-            parts = key.split(".")
-            for i in range(len(parts) - 1):
-                parent = ".".join(parts[: i + 1])
-                if OmegaConf.select(cfg, parent) is None:
-                    OmegaConf.update(cfg, parent, {}, force_add=True)
-        OmegaConf.update(cfg, key, value, force_add=True)
-    return cfg
 
 
 def _make_output_dir(name: str, root: Path) -> Path:
@@ -62,14 +42,17 @@ def run(
     overrides: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     output_root: Path = Path("outputs/runs"),
-    autoplot: bool = True,
+    show_progress: bool = True,
+    show_plots: bool = True,
 ) -> RunResult:
-    overrides = overrides or {}
-    if not autoplot:
-        overrides = {**overrides, "plotting.show": False}
-    cfg = _load_config("single", config_name, overrides)
+    cfg = load_config(config_name, "single", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    history = run_experiment(cfg, output_dir=output_dir)
+    history = run_experiment(
+        cfg,
+        output_dir=output_dir,
+        show_progress=show_progress,
+        show_plots=show_plots,
+    )
     return RunResult(history=history, config=cfg, output_dir=output_dir)
 
 
@@ -78,14 +61,17 @@ def run_comparative(
     overrides: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     output_root: Path = Path("outputs/runs"),
-    autoplot: bool = True,
+    show_progress: bool = True,
+    show_plots: bool = True,
 ) -> RunResult:
-    overrides = overrides or {}
-    if not autoplot:
-        overrides = {**overrides, "plotting.show": False}
-    cfg = _load_config("comparative", config_name, overrides)
+    cfg = load_config(config_name, "comparative", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    history = run_comparative_experiment(cfg, output_dir=output_dir)
+    history = run_comparative_experiment(
+        cfg,
+        output_dir=output_dir,
+        show_progress=show_progress,
+        show_plots=show_plots,
+    )
     return RunResult(history=history, config=cfg, output_dir=output_dir)
 
 
@@ -95,7 +81,8 @@ def run_sweep(
     values: list[Any],
     overrides: dict[str, Any] | None = None,
     output_root: Path = Path("outputs/sweeps"),
-    autoplot: bool = False,
+    show_progress: bool = False,
+    show_plots: bool = False,
 ) -> SweepResult:
     runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
@@ -111,7 +98,8 @@ def run_sweep(
             config_name,
             overrides=run_overrides,
             output_dir=output_dir,
-            autoplot=autoplot,
+            show_progress=show_progress,
+            show_plots=show_plots,
         )
 
     return SweepResult(runs=runs, sweep_param=param)
@@ -123,7 +111,8 @@ def run_comparative_sweep(
     values: list[Any],
     overrides: dict[str, Any] | None = None,
     output_root: Path = Path("outputs/sweeps"),
-    autoplot: bool = False,
+    show_progress: bool = False,
+    show_plots: bool = False,
 ) -> SweepResult:
     runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
@@ -139,7 +128,8 @@ def run_comparative_sweep(
             config_name,
             overrides=run_overrides,
             output_dir=output_dir,
-            autoplot=autoplot,
+            show_progress=show_progress,
+            show_plots=show_plots,
         )
 
     return SweepResult(runs=runs, sweep_param=param)
