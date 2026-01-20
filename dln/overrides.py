@@ -150,15 +150,11 @@ def expand_sweep_params(
 # =============================================================================
 
 
-def make_output_dir(config_name: str, output_arg: str | None) -> Path:
-    """Create and return the output directory for a sweep."""
+def get_output_dir(config_name: str, output_arg: str | None) -> Path:
+    """Return the output directory path for a sweep."""
     if output_arg:
-        output_dir = Path(output_arg)
-    else:
-        output_dir = Path("outputs/sweeps") / config_name
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
+        return Path(output_arg)
+    return Path("outputs/sweeps") / config_name
 
 
 def auto_subdir_pattern(overrides: dict[str, Any]) -> str | None:

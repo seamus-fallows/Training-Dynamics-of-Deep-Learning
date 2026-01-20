@@ -32,10 +32,10 @@ from pathlib import Path
 from typing import Any
 
 from dln.experiment import run_experiment, run_comparative_experiment
-from dln.jobs import (
+from dln.overrides import (
     parse_overrides,
     expand_sweep_params,
-    make_output_dir,
+    get_output_dir,
     auto_subdir_pattern,
     make_job_subdir,
     check_subdir_uniqueness,
@@ -342,7 +342,8 @@ if __name__ == "__main__":
         subdir_pattern = auto_subdir_pattern(overrides)
 
     check_subdir_uniqueness(jobs, subdir_pattern)
-    output_dir = make_output_dir(args.config_name, args.output)
+    output_dir = get_output_dir(args.config_name, args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     run_sweep(
         config_name=args.config_name,
