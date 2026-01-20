@@ -9,7 +9,7 @@ from pathlib import Path
 from scipy import stats
 
 from runner import load_run
-from plotting import compute_ci
+from dln.plotting import compute_ci
 from dln.results import RunResult
 
 

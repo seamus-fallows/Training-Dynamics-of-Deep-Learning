@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch as t
 
 from runner import run, run_comparative, run_sweep, run_comparative_sweep
-from plotting import plot, plot_run, plot_comparative
+from dln.plotting import plot, plot_run, plot_comparative
 
 # =============================================================================
 # Example 1: Basic Single Run

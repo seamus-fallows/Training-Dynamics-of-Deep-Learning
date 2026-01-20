@@ -6,8 +6,7 @@ from omegaconf import OmegaConf
 
 from dln.results import RunResult, SweepResult
 from dln.utils import load_history, load_config
-from run import run_experiment
-from run_comparative import run_comparative_experiment
+from dln.experiment import run_experiment, run_comparative_experiment
 
 
 def _make_output_dir(name: str, root: Path) -> Path:
@@ -48,13 +47,7 @@ def run(
 ) -> RunResult:
     cfg = load_config(config_name, "single", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    history = run_experiment(
-        cfg,
-        output_dir=output_dir,
-        show_progress=show_progress,
-        show_plots=show_plots,
-    )
-    return RunResult(history=history, config=cfg, output_dir=output_dir)
+    return run_experiment(cfg, output_dir, show_progress, show_plots)
 
 
 def run_comparative(
@@ -67,13 +60,7 @@ def run_comparative(
 ) -> RunResult:
     cfg = load_config(config_name, "comparative", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    history = run_comparative_experiment(
-        cfg,
-        output_dir=output_dir,
-        show_progress=show_progress,
-        show_plots=show_plots,
-    )
-    return RunResult(history=history, config=cfg, output_dir=output_dir)
+    return run_comparative_experiment(cfg, output_dir, show_progress, show_plots)
 
 
 def run_sweep(

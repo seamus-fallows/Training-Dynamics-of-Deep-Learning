@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib.axes import Axes
 from scipy import stats
 
-from dln.results import RunResult, SweepResult
+from .results import RunResult, SweepResult
 
 
 # =============================================================================

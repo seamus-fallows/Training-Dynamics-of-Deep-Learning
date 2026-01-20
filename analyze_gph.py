@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from runner import load_run
-from plotting import compute_ci
+from dln.plotting import compute_ci
 
 
 # %%
@@ -41,7 +41,10 @@ def get_gd_path(width: int, data_seed: int, model_seed: int) -> Path:
 
 
 def get_sgd_path(width: int, batch_seed: int, data_seed: int, model_seed: int) -> Path:
-    return BASE_PATH / f"h{width}_g{GAMMA}_b{BATCH_SIZE}_s{batch_seed}_d{data_seed}_m{model_seed}"
+    return (
+        BASE_PATH
+        / f"h{width}_g{GAMMA}_b{BATCH_SIZE}_s{batch_seed}_d{data_seed}_m{model_seed}"
+    )
 
 
 def load_gd(width: int, data_seed: int, model_seed: int):
@@ -86,8 +89,10 @@ for row_idx, (data_seed, model_seed) in enumerate(
 ):
     for col, width in enumerate(WIDTHS):
         ax = axes[row_idx, col]
-        
-        print(f"Loading width={width}, data_seed={data_seed}, model_seed={model_seed}...")
+
+        print(
+            f"Loading width={width}, data_seed={data_seed}, model_seed={model_seed}..."
+        )
         gd = load_gd(width, data_seed, model_seed)
         sgd_runs = load_sgd(width, data_seed, model_seed)
         print(f"  GD: {'found' if gd else 'missing'}, SGD runs: {len(sgd_runs)}")
@@ -107,18 +112,26 @@ for row_idx, (data_seed, model_seed) in enumerate(
 
         # Dark green: GD < CI_lower (statistically significant)
         ax.fill_between(
-            steps, 0, 1,
+            steps,
+            0,
+            1,
             where=(gd_loss < sgd_lower),
-            alpha=0.5, color="darkgreen", edgecolor="none",
+            alpha=0.5,
+            color="darkgreen",
+            edgecolor="none",
             transform=ax.get_xaxis_transform(),
             label="GD < CI lower",
         )
 
         # Light green: CI_lower <= GD < E[SGD] (GD better but not significant)
         ax.fill_between(
-            steps, 0, 1,
+            steps,
+            0,
+            1,
             where=(gd_loss >= sgd_lower) & (gd_loss < sgd_mean),
-            alpha=0.3, color="lightgreen", edgecolor="none",
+            alpha=0.3,
+            color="lightgreen",
+            edgecolor="none",
             transform=ax.get_xaxis_transform(),
             label="CI lower ≤ GD < E[SGD]",
         )
@@ -147,8 +160,8 @@ print(f"Summary: γ={GAMMA}, noise={NOISE}, batch={BATCH_SIZE}")
 print("=" * 70)
 
 for width in WIDTHS:
-    print(f"\n{'='*30} Width={width} {'='*30}")
-    
+    print(f"\n{'=' * 30} Width={width} {'=' * 30}")
+
     for data_seed in DATA_SEEDS:
         for model_seed in MODEL_SEEDS:
             gd = load_gd(width, data_seed, model_seed)
@@ -168,6 +181,8 @@ for width in WIDTHS:
 
             print(f"\n  d={data_seed}, m={model_seed} ({len(sgd_runs)} runs):")
             print(f"    GD < E[SGD]:     {pct_better:5.1f}% of steps")
-            print(f"    GD < CI lower:   {pct_significant:5.1f}% of steps (significant)")
+            print(
+                f"    GD < CI lower:   {pct_significant:5.1f}% of steps (significant)"
+            )
 
 # %%

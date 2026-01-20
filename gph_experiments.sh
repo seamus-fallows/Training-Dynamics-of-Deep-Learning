@@ -1,16 +1,13 @@
 #!/bin/bash
 set -e
 
-NUM_GPUS=10
-JOBS_PER_GPU=4
-
-LAUNCHER="hydra/launcher=joblib hydra.launcher.n_jobs=$((NUM_GPUS * JOBS_PER_GPU)) hydra.launcher.verbose=10"
-COMMON="model.hidden_dim=100,50,10 model.gamma=1.5,1.0,0.75 mode=offline data.noise_std=0.0,0.2"
+WORKERS=40
+COMMON="model.hidden_dim=10,50,100 model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000 data.noise_std=0.0,0.2 --zip=model.gamma,max_steps --workers=$WORKERS"
 
 echo "=== Full batch training ==="
-python run.py -cn=gph -m $COMMON 'training.batch_size=null' $LAUNCHER
+python sweep.py -cn=gph $COMMON training.batch_size=null --output=outputs/gph/fullbatch
 
 echo "=== Mini Batch Training ==="
-python run.py -cn=gph -m $COMMON training.batch_size=1,2,5,10,50 'training.batch_seed=range(0,100)' $LAUNCHER
+python sweep.py -cn=gph $COMMON training.batch_size=1,2,5,10,50 training.batch_seed=0..100 --output=outputs/gph/minibatch
 
 echo "=== Done ==="
