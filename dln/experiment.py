@@ -45,7 +45,6 @@ def run_experiment(
         evaluate_every=cfg.evaluate_every,
         metrics=cfg.metrics,
         callbacks=callbacks,
-        stop_threshold=cfg.stop_threshold,
         show_progress=show_progress,
         metric_chunks=cfg.metric_chunks,
     )
@@ -108,7 +107,6 @@ def run_comparative_experiment(
         comparative_metrics=cfg.comparative_metrics,
         callbacks_a=callbacks_a,
         callbacks_b=callbacks_b,
-        stop_threshold=cfg.stop_threshold,
         show_progress=show_progress,
         metric_chunks=cfg.metric_chunks,
     )

@@ -35,7 +35,6 @@ data:
 
 max_steps: 10000
 num_evaluations: 250
-
 metrics:
   - "trace_covariances"
 metric_data:
@@ -43,4 +42,3 @@ metric_data:
   holdout_size: null
 metric_chunks: 1
 callbacks: []
-stop_threshold: null

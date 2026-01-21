@@ -35,7 +35,6 @@ data:
     std: 1.0
 
 max_steps: 2000
-stop_threshold: null
 evaluate_every: 1
 metrics: []
 metric_data: null

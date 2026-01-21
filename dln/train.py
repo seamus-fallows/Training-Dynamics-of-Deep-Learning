@@ -56,7 +56,6 @@ class Trainer:
         evaluate_every: int,
         metrics: list[str] | None = None,
         callbacks: list[Callable] | None = None,
-        stop_threshold: float | None = None,
         show_progress: bool = True,
         metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
@@ -80,8 +79,6 @@ class Trainer:
                 train_loss = record.get("train_loss")
                 if train_loss is not None:
                     progress_bar.set_postfix({"loss": f"{train_loss:.4f}"})
-                    if stop_threshold is not None and train_loss < stop_threshold:
-                        break
 
             self._training_step(inputs, targets)
 

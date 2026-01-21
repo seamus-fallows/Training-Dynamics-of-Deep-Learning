@@ -69,7 +69,6 @@ data:
     scale: 10.0
 
 max_steps: 20000
-stop_threshold: null
 evaluate_every: 20
 model_metrics: []
 comparative_metrics:
