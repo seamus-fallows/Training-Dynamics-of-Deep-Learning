@@ -26,6 +26,7 @@ Usage:
 
 import argparse
 import os
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -88,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="Output directory (default: outputs/sweeps/{config_name})",
+        help="Output directory (default: outputs/{experiment_name}/{timestamp}_{sweep_params})",
     )
     parser.add_argument(
         "--subdir",
@@ -98,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Skip jobs where history.json already exists",
+        help="Skip jobs where history.json already exists (requires --output)",
     )
     parser.add_argument(
         "--fail-fast",
@@ -334,6 +335,11 @@ def run_sweep(
 
 if __name__ == "__main__":
     args = parse_args()
+
+    if args.skip_existing and not args.output:
+        print("Error: --skip-existing requires --output")
+        sys.exit(1)
+
     overrides = parse_overrides(args.overrides)
     jobs = expand_sweep_params(overrides, args.zip_groups)
 
@@ -342,7 +348,12 @@ if __name__ == "__main__":
         subdir_pattern = auto_subdir_pattern(overrides)
 
     check_subdir_uniqueness(jobs, subdir_pattern)
-    output_dir = get_output_dir(args.config_name, args.output)
+
+    config_dir = "comparative" if args.comparative else "single"
+    cfg = load_config(args.config_name, config_dir)
+    experiment_name = cfg.experiment.name
+
+    output_dir = get_output_dir(experiment_name, overrides, args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     run_sweep(

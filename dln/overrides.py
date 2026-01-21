@@ -1,8 +1,9 @@
 """
-Job configuration utilities: parsing CLI overrides and expanding sweep parameters.
+Override parsing and sweep expansion utilities.
 """
 
 import re
+from datetime import datetime
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -150,11 +151,29 @@ def expand_sweep_params(
 # =============================================================================
 
 
-def get_output_dir(config_name: str, output_arg: str | None) -> Path:
+def get_sweep_params_suffix(overrides: dict[str, Any]) -> str:
+    """Generate suffix from sweep parameter names."""
+    sweep_keys = [k for k, v in overrides.items() if isinstance(v, list)]
+    if not sweep_keys:
+        return ""
+    short_names = [k.split(".")[-1] for k in sorted(sweep_keys)]
+    return "_" + "_".join(short_names)
+
+
+def get_output_dir(
+    experiment_name: str,
+    overrides: dict[str, Any],
+    output_arg: str | None,
+) -> Path:
     """Return the output directory path for a sweep."""
     if output_arg:
         return Path(output_arg)
-    return Path("outputs/sweeps") / config_name
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    suffix = get_sweep_params_suffix(overrides)
+    dir_name = f"{timestamp}{suffix}"
+
+    return Path("outputs") / experiment_name / dir_name
 
 
 def auto_subdir_pattern(overrides: dict[str, Any]) -> str | None:
