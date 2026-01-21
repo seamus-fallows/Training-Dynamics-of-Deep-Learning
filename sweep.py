@@ -147,7 +147,7 @@ def run_single_job(
             )
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, f"{type(e).__name__}: {e}"
 
 
 def run_jobs_sequential(
