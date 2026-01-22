@@ -3,7 +3,7 @@ import torch as t
 from torch import nn
 
 from dln.model import DeepLinearNetwork
-from dln.data import Dataset, get_metric_data
+from dln.data import Dataset, create_metric_data
 from dln.train import Trainer
 from dln.comparative import ComparativeTrainer
 from dln.config import ModelConfig, DataConfig, TrainingConfig, MetricDataConfig
@@ -250,7 +250,7 @@ class TestSeedIsolation:
                 dataset=dataset,
                 device=device,
             )
-            return trainer.run(max_steps=50, evaluate_every=10)
+            return trainer.run(max_steps=50, num_evaluations=5)
 
         history_a = run_once()
         history_b = run_once()
@@ -328,7 +328,7 @@ class TestMetricData:
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
         config = MetricDataConfig(mode="population")
 
-        x, y = get_metric_data(dataset, config)
+        x, y = create_metric_data(dataset, config)
         train_x, train_y = dataset.train_data
 
         assert t.allclose(x, train_x)
@@ -339,7 +339,7 @@ class TestMetricData:
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
         config = MetricDataConfig(mode="estimator", holdout_size=10)
 
-        x, y = get_metric_data(dataset, config)
+        x, y = create_metric_data(dataset, config)
 
         assert x.shape[0] == 10
         assert y.shape[0] == 10
@@ -350,7 +350,7 @@ class TestMetricData:
         config = MetricDataConfig(mode="estimator", holdout_size=None)
 
         with pytest.raises(ValueError, match="holdout_size"):
-            get_metric_data(dataset, config)
+            create_metric_data(dataset, config)
 
     def test_population_mode_fails_for_online(self):
         seed_rng(0)
@@ -358,14 +358,14 @@ class TestMetricData:
         config = MetricDataConfig(mode="population")
 
         with pytest.raises(ValueError, match="online"):
-            get_metric_data(dataset, config)
+            create_metric_data(dataset, config)
 
     def test_estimator_mode_works_for_online(self):
         seed_rng(0)
         dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
         config = MetricDataConfig(mode="estimator", holdout_size=20)
 
-        x, y = get_metric_data(dataset, config)
+        x, y = create_metric_data(dataset, config)
 
         assert x.shape[0] == 20
         assert y.shape[0] == 20
@@ -551,7 +551,7 @@ class TestComparativeTrainer:
         comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
         history = comp_trainer.run(
             max_steps=50,
-            evaluate_every=10,
+            num_evaluations=5,
             comparative_metrics=["param_distance"],
         )
 
@@ -589,7 +589,7 @@ class TestComparativeTrainer:
         comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
         history = comp_trainer.run(
             max_steps=50,
-            evaluate_every=10,
+            num_evaluations=5,
             comparative_metrics=["param_distance"],
         )
 
@@ -622,7 +622,7 @@ class TestCallbacks:
         callback = create_callback(
             "switch_batch_size", {"step": 25, "batch_size": None}
         )
-        trainer.run(max_steps=50, evaluate_every=10, callbacks=[callback])
+        trainer.run(max_steps=50, num_evaluations=5, callbacks=[callback])
 
         assert trainer.batch_size is None
 
@@ -646,7 +646,7 @@ class TestCallbacks:
         callback = create_callback(
             "multi_switch_batch_size", {"schedule": {10: 5, 30: None}}
         )
-        trainer.run(max_steps=50, evaluate_every=10, callbacks=[callback])
+        trainer.run(max_steps=50, num_evaluations=5, callbacks=[callback])
 
         assert trainer.batch_size is None
 
@@ -669,7 +669,7 @@ class TestCallbacks:
 
         initial_lr = trainer.optimizer.param_groups[0]["lr"]
         callback = create_callback("lr_decay", {"decay_every": 10, "factor": 0.5})
-        trainer.run(max_steps=25, evaluate_every=5, callbacks=[callback])
+        trainer.run(max_steps=25, num_evaluations=5, callbacks=[callback])
 
         final_lr = trainer.optimizer.param_groups[0]["lr"]
         # Should have decayed twice: at step 10 and step 20
