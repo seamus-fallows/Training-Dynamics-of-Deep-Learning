@@ -58,7 +58,7 @@ class ExperimentConfig:
     data: DataConfig
     training: TrainingConfig
     max_steps: int
-    evaluate_every: int
+    num_evaluations: int
     metrics: list[str] = field(default_factory=list)
     metric_data: MetricDataConfig | None = None
     callbacks: list[CallbackConfig] = field(default_factory=list)
@@ -73,7 +73,7 @@ class ComparativeExperimentConfig:
     training_a: TrainingConfig
     training_b: TrainingConfig
     max_steps: int
-    evaluate_every: int
+    num_evaluations: int
     model_metrics: list[str] = field(default_factory=list)
     comparative_metrics: list[str] = field(default_factory=list)
     metric_data: MetricDataConfig | None = None

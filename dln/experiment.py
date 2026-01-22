@@ -9,7 +9,7 @@ import torch as t
 from omegaconf import DictConfig, OmegaConf
 
 from .utils import seed_rng, get_device, save_history
-from .data import Dataset, get_metric_data
+from .data import Dataset, create_metric_data
 from .factory import create_trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
@@ -30,8 +30,12 @@ def run_experiment(
     device = get_device()
     try:
         seed_rng(cfg.data.data_seed)
-        dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
-        metric_data = get_metric_data(dataset, cfg.metric_data)
+        dataset = Dataset(
+            cfg.data,
+            in_dim=cfg.model.in_dim,
+            out_dim=cfg.model.out_dim,
+        )
+        metric_data = create_metric_data(dataset, cfg.metric_data)
         callbacks = create_callbacks(cfg.callbacks)
 
         trainer = create_trainer(
@@ -41,9 +45,10 @@ def run_experiment(
             device=device,
             metric_data=metric_data,
         )
+
         history = trainer.run(
             max_steps=cfg.max_steps,
-            evaluate_every=cfg.evaluate_every,
+            num_evaluations=cfg.num_evaluations,
             metrics=cfg.metrics,
             callbacks=callbacks,
             show_progress=show_progress,
@@ -80,9 +85,11 @@ def run_comparative_experiment(
     try:
         seed_rng(cfg.data.data_seed)
         dataset = Dataset(
-            cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim
+            cfg.data,
+            in_dim=cfg.model_a.in_dim,
+            out_dim=cfg.model_a.out_dim,
         )
-        metric_data = get_metric_data(dataset, cfg.metric_data)
+        metric_data = create_metric_data(dataset, cfg.metric_data)
         callbacks_a = create_callbacks(cfg.callbacks_a)
         callbacks_b = create_callbacks(cfg.callbacks_b)
 
@@ -107,7 +114,7 @@ def run_comparative_experiment(
 
         history = comparative_trainer.run(
             max_steps=cfg.max_steps,
-            evaluate_every=cfg.evaluate_every,
+            num_evaluations=cfg.num_evaluations,
             model_metrics=cfg.model_metrics,
             comparative_metrics=cfg.comparative_metrics,
             callbacks_a=callbacks_a,

@@ -22,7 +22,7 @@ class RunResult:
     def final(self, metric: str) -> Any:
         return self.history[metric][-1]
 
-    def metrics(self) -> list[str]:
+    def metric_names(self) -> list[str]:
         """Return list of available metrics (excluding 'step')."""
         return [k for k in self.history.keys() if k != "step"]
 
@@ -33,9 +33,3 @@ class SweepResult:
 
     runs: dict[str, RunResult]
     sweep_param: str
-
-    def to_average(self, label: str | None = None) -> dict[str, list[RunResult]]:
-        """All runs grouped for averaging into one curve with CI."""
-        if label is None:
-            label = "averaged"
-        return {label: list(self.runs.values())}

@@ -69,7 +69,7 @@ data:
     scale: 10.0
 
 max_steps: 20000
-evaluate_every: 20
+num_evaluations: 250
 model_metrics: []
 comparative_metrics:
   - "param_distance"

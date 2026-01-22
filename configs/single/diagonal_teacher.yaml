@@ -34,7 +34,7 @@ data:
     scale: 10
 
 max_steps: 20000
-evaluate_every: 20
+num_evaluations: 250
 metrics: []
 metric_data:
   mode: "population"

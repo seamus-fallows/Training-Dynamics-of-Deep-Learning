@@ -38,54 +38,31 @@ def smooth(values: list[float] | np.ndarray, window: int) -> np.ndarray:
 # =============================================================================
 
 
-def _extract_curve_data(
-    data: RunResult | list[RunResult] | np.ndarray | list[np.ndarray],
-    metric: str,
-    steps: np.ndarray | None,
-) -> tuple[np.ndarray, np.ndarray | list[np.ndarray]]:
-    """Convert any input type to (steps, values_or_list_of_values)."""
-    if isinstance(data, RunResult):
-        return np.asarray(data["step"]), np.asarray(data[metric])
-
-    if isinstance(data, np.ndarray):
-        if steps is None:
-            raise ValueError("steps required for raw array data")
-        return steps, data
-
-    if isinstance(data, list) and len(data) > 0:
-        first = data[0]
-        if isinstance(first, RunResult):
-            return np.asarray(first["step"]), [np.asarray(r[metric]) for r in data]
-        if isinstance(first, np.ndarray):
-            if steps is None:
-                raise ValueError("steps required for raw array data")
-            return steps, data
-
-    raise ValueError(f"Unsupported data type: {type(data)}")
-
-
-def _plot_curve(
+def _plot_series(
     ax: Axes,
-    steps: np.ndarray,
-    values: np.ndarray | list[np.ndarray],
+    series: RunResult | list[RunResult],
+    metric: str,
     label: str | None,
     ci: float,
     smoothing: int | None,
 ) -> None:
-    """Plot single curve or multiple curves with CI band."""
-    if isinstance(values, np.ndarray):
+    """Plot a single RunResult or list of RunResults (with CI)."""
+    if isinstance(series, RunResult):
+        steps = np.asarray(series["step"])
+        values = np.asarray(series[metric])
         if smoothing:
             values = smooth(values, smoothing)
         ax.plot(steps, values, label=label)
-
-    elif len(values) == 1:
-        v = np.asarray(values[0])
+    elif len(series) == 1:
+        steps = np.asarray(series[0]["step"])
+        values = np.asarray(series[0][metric])
         if smoothing:
-            v = smooth(v, smoothing)
-        ax.plot(steps, v, label=label)
-
+            values = smooth(values, smoothing)
+        ax.plot(steps, values, label=label)
     else:
-        mean, lower, upper = compute_ci(values, ci)
+        steps = np.asarray(series[0]["step"])
+        curves = [np.asarray(r[metric]) for r in series]
+        mean, lower, upper = compute_ci(curves, ci)
         if smoothing:
             mean = smooth(mean, smoothing)
             lower = smooth(lower, smoothing)
@@ -100,15 +77,18 @@ def _plot_curve(
 
 
 def plot(
-    data: RunResult | list[RunResult] | np.ndarray | list[np.ndarray] | dict,
+    data: RunResult
+    | list[RunResult]
+    | SweepResult
+    | dict[str, RunResult | list[RunResult]],
     metric: str = "train_loss",
-    steps: np.ndarray | None = None,
     ylabel: str | None = None,
     ci: float = 0.95,
     smoothing: int | None = None,
     log_scale: bool = True,
     title: str | None = None,
     legend_title: str | None = None,
+    average: bool | str = False,
     ax: Axes | None = None,
 ) -> Axes:
     """Plot training curves.
@@ -116,25 +96,32 @@ def plot(
     Accepts:
         - RunResult: single curve
         - list[RunResult]: averaged with CI
-        - np.ndarray: single curve (requires steps=)
-        - list[np.ndarray]: averaged with CI (requires steps=)
-        - dict mapping labels to any of the above
+        - SweepResult: each param value as separate curve (or averaged if average=True)
+        - dict mapping labels to RunResult or list[RunResult]
 
-    For RunResult data, values come from `metric` key.
-    For raw arrays, pass steps= explicitly.
+    Args:
+        average: For SweepResult only. If True or a string, combine all runs into
+            one curve with CI. String value becomes the label.
     """
     if ax is None:
         _, ax = plt.subplots()
 
-    # Normalize to dict
-    if isinstance(data, dict):
-        labeled_data = data
-    else:
+    # Normalize to dict[str, RunResult | list[RunResult]]
+    if isinstance(data, RunResult):
         labeled_data = {None: data}
+    elif isinstance(data, SweepResult):
+        if average:
+            label = average if isinstance(average, str) else "averaged"
+            labeled_data = {label: list(data.runs.values())}
+        else:
+            labeled_data = data.runs
+    elif isinstance(data, list):
+        labeled_data = {None: data}
+    else:
+        labeled_data = data
 
     for label, series in labeled_data.items():
-        s, v = _extract_curve_data(series, metric, steps)
-        _plot_curve(ax, s, v, label, ci, smoothing)
+        _plot_series(ax, series, metric, label, ci, smoothing)
 
     if log_scale:
         ax.set_yscale("log")
@@ -162,13 +149,18 @@ def plot_comparative(
     log_scale: bool = True,
     title: str | None = None,
     legend_title: str | None = None,
+    average: bool | str = False,
     ax: Axes | None = None,
 ) -> Axes:
     """Plot comparative training curves (model A vs B)."""
     if isinstance(runs, RunResult):
         runs = {None: runs}
     elif isinstance(runs, SweepResult):
-        runs = runs.runs
+        if average:
+            label = average if isinstance(average, str) else None
+            runs = {label: list(runs.runs.values())}
+        else:
+            runs = runs.runs
 
     if ax is None:
         _, ax = plt.subplots()
@@ -242,7 +234,9 @@ def plot_run(
 ) -> None:
     """Quick visualization of a single run: loss + all tracked metrics."""
     if metrics is None:
-        metrics = [m for m in result.metrics() if m not in ("train_loss", "test_loss")]
+        metrics = [
+            m for m in result.metric_names() if m not in ("train_loss", "test_loss")
+        ]
 
     has_test = show_test and result.has("test_loss")
     n_panels = 1 + len(metrics)

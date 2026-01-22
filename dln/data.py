@@ -144,7 +144,7 @@ class Dataset:
                 yield x[batch_idx], y[batch_idx]
 
 
-def get_metric_data(
+def create_metric_data(
     dataset: Dataset,
     config: MetricDataConfig | None,
 ) -> tuple[Tensor, Tensor] | None:

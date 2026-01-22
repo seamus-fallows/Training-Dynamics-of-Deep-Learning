@@ -53,12 +53,14 @@ class Trainer:
     def run(
         self,
         max_steps: int,
-        evaluate_every: int,
+        num_evaluations: int,
         metrics: list[str] | None = None,
         callbacks: list[Callable] | None = None,
         show_progress: bool = True,
         metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
+        evaluate_every = max(1, max_steps // num_evaluations)
+
         self.model.train()
         self.history = []
         callbacks = callbacks or []

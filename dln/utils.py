@@ -98,10 +98,4 @@ def load_config(
 
     OmegaConf.resolve(cfg)
 
-    # Compute derived values
-    if "num_evaluations" in cfg and "evaluate_every" not in cfg:
-        OmegaConf.update(
-            cfg, "evaluate_every", max(1, cfg.max_steps // cfg.num_evaluations)
-        )
-
     return cfg

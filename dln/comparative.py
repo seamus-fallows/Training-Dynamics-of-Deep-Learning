@@ -24,7 +24,7 @@ class ComparativeTrainer:
     def run(
         self,
         max_steps: int,
-        evaluate_every: int,
+        num_evaluations: int,
         model_metrics: list[str] | None = None,
         comparative_metrics: list[str] | None = None,
         callbacks_a: list[Callable] | None = None,
@@ -32,6 +32,8 @@ class ComparativeTrainer:
         show_progress: bool = True,
         metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
+        evaluate_every = max(1, max_steps // num_evaluations)
+
         self.trainer_a.model.train()
         self.trainer_b.model.train()
         self.history = []

@@ -61,12 +61,12 @@ sweep = run_sweep(
 # %%
 baseline = run(
     "diagonal_teacher",
-    autoplot=False,
+    show_plots=False,
     overrides={**overrides, "training.batch_size": None},
 )
 
 # Averaged with CI
-plot({**sweep.to_average("SGD (batch=20)"), "GD (full batch)": baseline})
+plot({"SGD (batch=20)": list(sweep.runs.values()), "GD (full batch)": baseline})
 
 # =============================================================================
 # Example 5: Comparative Run (Different Batch Sizes)
@@ -79,7 +79,7 @@ result = run_comparative(
         "training_b.batch_size": 5,
         "comparative_metrics": ["param_distance"],
     },
-    autoplot=False,
+    show_plots=False,
 )
 plot_comparative(result, suffixes=("Full batch", "Batch=10"))
 plot(result, metric="param_distance", log_scale=False)
@@ -99,8 +99,8 @@ sweep = run_comparative_sweep(
         "comparative_metrics": ["param_distance"],
     },
 )
-plot_comparative(sweep.to_average(), suffixes=("Full batch", "Batch=10"))
-plot(sweep.to_average(), metric="param_distance", log_scale=False)
+plot_comparative(sweep, average=True, suffixes=("Full batch", "Batch=10"))
+plot(sweep, average=True, metric="param_distance", log_scale=False)
 
 # =============================================================================
 # Example 7: Comparative with Model Metrics
@@ -115,7 +115,7 @@ result = run_comparative(
         "comparative_metrics": ["param_distance"],
         "metric_data.mode": "population",
     },
-    autoplot=False,
+    show_plots=False,
 )
 plot_comparative(result, suffixes=("Full batch", "Batch=10"))
 plot_comparative(
@@ -191,12 +191,12 @@ high_to_low = run(
             {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": None}}
         ],
     },
-    autoplot=False,
+    show_plots=False,
 )
 baseline = run(
     "diagonal_teacher",
     overrides={**common, "training.batch_size": None},
-    autoplot=False,
+    show_plots=False,
 )
 
 plot(
@@ -214,7 +214,7 @@ low_to_high = run(
             {"name": "switch_batch_size", "params": {"step": 1100, "batch_size": 5}}
         ],
     },
-    autoplot=False,
+    show_plots=False,
 )
 
 plot(
@@ -251,11 +251,11 @@ sweep = run_sweep(
 baseline = run(
     "diagonal_teacher",
     overrides={**common, "training.batch_size": None},
-    autoplot=False,
+    show_plots=False,
 )
 
 plot(
-    {**sweep.to_average("high_to_low"), "baseline": baseline},
+    {"high_to_low": list(sweep.runs.values()), "baseline": baseline},
     title="High to Low (Averaged)",
 )
 
@@ -264,7 +264,7 @@ plot(
 # =============================================================================
 # %%
 
-result = run("diagonal_teacher", autoplot=False)
+result = run("diagonal_teacher", show_plots=False)
 
 # Smoothing
 plot(result, smoothing=50, title="Smoothed")
