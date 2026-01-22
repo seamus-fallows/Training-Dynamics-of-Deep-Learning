@@ -7,7 +7,7 @@ Callbacks are functions called at each training step with signature:
 Register new callbacks with the @register_callback decorator.
 """
 
-from typing import Callable, Any
+from typing import Callable
 
 # Registry
 CALLBACKS: dict[str, Callable[..., Callable]] = {}
@@ -21,17 +21,24 @@ def register_callback(name: str):
     return decorator
 
 
-def create_callback(name: str, params: dict[str, Any]) -> Callable:
+def create_callback(spec: str | dict) -> Callable:
+    """Create a callback from a spec (string or dict)."""
+    if isinstance(spec, str):
+        name, params = spec, {}
+    else:
+        name = next(iter(spec))
+        params = spec[name] or {}
+
     if name not in CALLBACKS:
         raise ValueError(f"Unknown callback: {name!r}")
     return CALLBACKS[name](**params)
 
 
-def create_callbacks(configs: list[dict[str, Any]] | None) -> list[Callable]:
-    """Create multiple callbacks from config list."""
-    if not configs:
+def create_callbacks(specs: list | None) -> list[Callable]:
+    """Create multiple callbacks from spec list."""
+    if not specs:
         return []
-    return [create_callback(cfg["name"], cfg.get("params", {})) for cfg in configs]
+    return [create_callback(spec) for spec in specs]
 
 
 @register_callback("switch_batch_size")

@@ -1,7 +1,7 @@
 from typing import Iterator, Callable
 import torch as t
 from torch import Tensor
-from .config import DataConfig, MetricDataConfig
+from omegaconf import DictConfig
 
 
 MATRIX_FACTORIES: dict[str, Callable] = {}
@@ -51,7 +51,7 @@ class Dataset:
     Online: Samples fresh data each batch (infinite data regime).
     """
 
-    def __init__(self, cfg: DataConfig, in_dim: int, out_dim: int):
+    def __init__(self, cfg: DictConfig, in_dim: int, out_dim: int):
         self.cfg = cfg
         self.in_dim = in_dim
         self.out_dim = out_dim
@@ -146,7 +146,7 @@ class Dataset:
 
 def create_metric_data(
     dataset: Dataset,
-    config: MetricDataConfig | None,
+    config: DictConfig | None,
 ) -> tuple[Tensor, Tensor] | None:
     if config is None:
         return None

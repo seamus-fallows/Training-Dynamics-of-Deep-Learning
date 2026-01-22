@@ -32,13 +32,14 @@ data:
   params:
     matrix: "diagonal"
     scale: 10.0
-
-max_steps: 10000
-num_evaluations: 250
 metrics:
-  - "trace_covariances"
+  - trace_covariances:
+      chunks: 1
+
 metric_data:
   mode: "population"
   holdout_size: null
-metric_chunks: 1
+
+max_steps: 10000
+num_evaluations: 250
 callbacks: []

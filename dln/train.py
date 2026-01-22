@@ -3,8 +3,8 @@ from tqdm import tqdm
 import torch as t
 from torch import Tensor
 from dln.data import Dataset
-from dln.config import TrainingConfig
 from dln.model import DeepLinearNetwork
+from omegaconf import DictConfig
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
 from metrics import compute_metrics
 
@@ -13,7 +13,7 @@ class Trainer:
     def __init__(
         self,
         model: DeepLinearNetwork,
-        cfg: TrainingConfig,
+        cfg: DictConfig,
         dataset: Dataset,
         device: t.device,
         metric_data: tuple[Tensor, Tensor] | None = None,
@@ -54,10 +54,9 @@ class Trainer:
         self,
         max_steps: int,
         num_evaluations: int,
-        metrics: list[str] | None = None,
+        metrics: list | None = None,
         callbacks: list[Callable] | None = None,
         show_progress: bool = True,
-        metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
         evaluate_every = max(1, max_steps // num_evaluations)
 
@@ -75,7 +74,7 @@ class Trainer:
             inputs, targets = next(self.train_iterator)
 
             if step % evaluate_every == 0:
-                record = self._evaluate(step, metrics, metric_chunks)
+                record = self._evaluate(step, metrics)
                 self.history.append(record)
 
                 train_loss = record.get("train_loss")
@@ -94,24 +93,23 @@ class Trainer:
         self.optimizer.step()
         return loss
 
-    def _evaluate(
-        self,
-        step: int,
-        metrics: list[str] | None,
-        metric_chunks: int,
-    ) -> dict[str, Any]:
+    def _evaluate(self, step: int, metrics: list | None) -> dict[str, Any]:
         record = {"step": step}
 
         with t.inference_mode():
             if self.test_data is not None:
                 test_inputs, test_targets = self.test_data
-                test_loss = self.criterion(self.model(test_inputs), test_targets).item()
+                test_loss = self.criterion(
+                    self.model(test_inputs),
+                    test_targets,
+                ).item()
                 record["test_loss"] = test_loss
 
             if self.train_data is not None:
                 train_inputs, train_targets = self.train_data
                 train_loss = self.criterion(
-                    self.model(train_inputs), train_targets
+                    self.model(train_inputs),
+                    train_targets,
                 ).item()
                 record["train_loss"] = train_loss
 
@@ -124,7 +122,6 @@ class Trainer:
                     metric_inputs,
                     metric_targets,
                     self.criterion,
-                    num_chunks=metric_chunks,
                 )
             )
 

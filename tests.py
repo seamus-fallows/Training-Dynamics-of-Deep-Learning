@@ -1,12 +1,12 @@
 import pytest
 import torch as t
 from torch import nn
+from omegaconf import OmegaConf
 
 from dln.model import DeepLinearNetwork
 from dln.data import Dataset, create_metric_data
 from dln.train import Trainer
 from dln.comparative import ComparativeTrainer
-from dln.config import ModelConfig, DataConfig, TrainingConfig, MetricDataConfig
 from dln.callbacks import create_callback
 from dln.utils import seed_rng
 from dln.overrides import (
@@ -25,7 +25,7 @@ import metrics
 # ============================================================================
 
 
-def make_model_config(**overrides) -> ModelConfig:
+def make_model_config(**overrides):
     defaults = dict(
         in_dim=5,
         out_dim=5,
@@ -36,10 +36,10 @@ def make_model_config(**overrides) -> ModelConfig:
         seed=0,
     )
     defaults.update(overrides)
-    return ModelConfig(**defaults)
+    return OmegaConf.create(defaults)
 
 
-def make_data_config(**overrides) -> DataConfig:
+def make_data_config(**overrides):
     defaults = dict(
         train_samples=40,
         test_samples=10,
@@ -49,10 +49,10 @@ def make_data_config(**overrides) -> DataConfig:
         params={"matrix": "diagonal", "scale": 1.0},
     )
     defaults.update(overrides)
-    return DataConfig(**defaults)
+    return OmegaConf.create(defaults)
 
 
-def make_training_config(**overrides) -> TrainingConfig:
+def make_training_config(**overrides):
     defaults = dict(
         lr=0.01,
         batch_size=None,
@@ -62,7 +62,16 @@ def make_training_config(**overrides) -> TrainingConfig:
         batch_seed=0,
     )
     defaults.update(overrides)
-    return TrainingConfig(**defaults)
+    return OmegaConf.create(defaults)
+
+
+def make_metric_data_config(**overrides):
+    defaults = dict(
+        mode="population",
+        holdout_size=None,
+    )
+    defaults.update(overrides)
+    return OmegaConf.create(defaults)
 
 
 def create_model(seed: int = 0, **kwargs) -> DeepLinearNetwork:
@@ -326,7 +335,7 @@ class TestMetricData:
     def test_population_mode_returns_full_train_data(self):
         seed_rng(0)
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
-        config = MetricDataConfig(mode="population")
+        config = make_metric_data_config(mode="population")
 
         x, y = create_metric_data(dataset, config)
         train_x, train_y = dataset.train_data
@@ -337,7 +346,7 @@ class TestMetricData:
     def test_estimator_mode_returns_subset(self):
         seed_rng(0)
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
-        config = MetricDataConfig(mode="estimator", holdout_size=10)
+        config = make_metric_data_config(mode="estimator", holdout_size=10)
 
         x, y = create_metric_data(dataset, config)
 
@@ -347,7 +356,7 @@ class TestMetricData:
     def test_estimator_mode_requires_holdout_size(self):
         seed_rng(0)
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
-        config = MetricDataConfig(mode="estimator", holdout_size=None)
+        config = make_metric_data_config(mode="estimator", holdout_size=None)
 
         with pytest.raises(ValueError, match="holdout_size"):
             create_metric_data(dataset, config)
@@ -355,7 +364,7 @@ class TestMetricData:
     def test_population_mode_fails_for_online(self):
         seed_rng(0)
         dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
-        config = MetricDataConfig(mode="population")
+        config = make_metric_data_config(mode="population")
 
         with pytest.raises(ValueError, match="online"):
             create_metric_data(dataset, config)
@@ -363,7 +372,7 @@ class TestMetricData:
     def test_estimator_mode_works_for_online(self):
         seed_rng(0)
         dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
-        config = MetricDataConfig(mode="estimator", holdout_size=20)
+        config = make_metric_data_config(mode="estimator", holdout_size=20)
 
         x, y = create_metric_data(dataset, config)
 
@@ -463,12 +472,12 @@ class TestMetrics:
         criterion = nn.MSELoss()
 
         result_unchunked = metrics.trace_covariances(
-            model, inputs, targets, criterion, num_chunks=1
+            model, inputs, targets, criterion, chunks=1
         )
 
         model = create_model(seed=0, num_hidden=2, hidden_dim=8)
         result_chunked = metrics.trace_covariances(
-            model, inputs, targets, criterion, num_chunks=4
+            model, inputs, targets, criterion, chunks=4
         )
 
         assert (
@@ -620,7 +629,7 @@ class TestCallbacks:
         )
 
         callback = create_callback(
-            "switch_batch_size", {"step": 25, "batch_size": None}
+            {"switch_batch_size": {"step": 25, "batch_size": None}}
         )
         trainer.run(max_steps=50, num_evaluations=5, callbacks=[callback])
 
@@ -644,7 +653,7 @@ class TestCallbacks:
         )
 
         callback = create_callback(
-            "multi_switch_batch_size", {"schedule": {10: 5, 30: None}}
+            {"multi_switch_batch_size": {"schedule": {10: 5, 30: None}}}
         )
         trainer.run(max_steps=50, num_evaluations=5, callbacks=[callback])
 
@@ -668,7 +677,7 @@ class TestCallbacks:
         )
 
         initial_lr = trainer.optimizer.param_groups[0]["lr"]
-        callback = create_callback("lr_decay", {"decay_every": 10, "factor": 0.5})
+        callback = create_callback({"lr_decay": {"decay_every": 10, "factor": 0.5}})
         trainer.run(max_steps=25, num_evaluations=5, callbacks=[callback])
 
         final_lr = trainer.optimizer.param_groups[0]["lr"]

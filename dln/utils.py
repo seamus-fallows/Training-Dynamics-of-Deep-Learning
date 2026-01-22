@@ -96,6 +96,19 @@ def load_config(
         for key, value in overrides.items():
             OmegaConf.update(cfg, key, value, merge=True)
 
+    # Merge shared into a/b configs for comparative experiments
+    if config_dir == "comparative" and "shared" in cfg:
+        if "model" in cfg.shared:
+            cfg.model_a = OmegaConf.merge(cfg.shared.model, cfg.get("model_a") or {})
+            cfg.model_b = OmegaConf.merge(cfg.shared.model, cfg.get("model_b") or {})
+        if "training" in cfg.shared:
+            cfg.training_a = OmegaConf.merge(
+                cfg.shared.training, cfg.get("training_a") or {}
+            )
+            cfg.training_b = OmegaConf.merge(
+                cfg.shared.training, cfg.get("training_b") or {}
+            )
+
     OmegaConf.resolve(cfg)
 
     return cfg

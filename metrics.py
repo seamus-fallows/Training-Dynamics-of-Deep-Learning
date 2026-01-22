@@ -122,7 +122,7 @@ def trace_covariances(
     inputs: Tensor,
     targets: Tensor,
     criterion: Module,
-    num_chunks: int = 1,
+    chunks: int = 1,
 ) -> dict[str, float]:
     """
     Compute gradient norm and traces of gradient noise covariance matrices.
@@ -135,14 +135,14 @@ def trace_covariances(
         trace_hessian_covariance: Tr(HΣ) = E[n_i @ H @ n_i]
 
     Args:
-        num_chunks: Split computation into chunks to reduce VRAM usage.
+        chunks: Split computation into chunks to reduce VRAM usage.
             Higher values use less memory but may be slower.
     """
     params, buffers = _to_functional(model)
     n_samples = len(inputs)
-    chunk_size = (n_samples + num_chunks - 1) // num_chunks
+    chunk_size = (n_samples + chunks - 1) // chunks
 
-    if num_chunks == 1:
+    if chunks == 1:
         per_sample_grads = _compute_per_sample_grads(
             model, params, buffers, inputs, targets, criterion
         ).detach()
@@ -243,28 +243,25 @@ def param_cosine_sim(model_a: Module, model_b: Module) -> float:
 
 def compute_metrics(
     model: Module,
-    names: list[str],
+    specs: list[str | dict],
     inputs: Tensor,
     targets: Tensor,
     criterion: Module,
-    num_chunks: int = 1,
 ) -> dict[str, float]:
     results = {}
-    for name in names:
-        try:
-            metric_fn = METRICS[name]
-            value = metric_fn(model, inputs, targets, criterion, num_chunks=num_chunks)
+    for spec in specs:
+        if isinstance(spec, str):
+            name, params = spec, {}
+        else:
+            name = next(iter(spec))
+            params = spec[name] or {}
 
-            if isinstance(value, dict):
-                results.update(value)
-            else:
-                results[name] = value
-        except TypeError as e:
-            if inputs is None:
-                raise ValueError(
-                    f"Metric '{name}' requires input data. Set metric_data.mode in config."
-                ) from e
-            raise
+        value = METRICS[name](model, inputs, targets, criterion, **params)
+
+        if isinstance(value, dict):
+            results.update(value)
+        else:
+            results[name] = value
 
     return results
 

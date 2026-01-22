@@ -52,7 +52,6 @@ def run_experiment(
             metrics=cfg.metrics,
             callbacks=callbacks,
             show_progress=show_progress,
-            metric_chunks=cfg.metric_chunks,
         )
 
         save_history(history, output_dir)
@@ -115,12 +114,11 @@ def run_comparative_experiment(
         history = comparative_trainer.run(
             max_steps=cfg.max_steps,
             num_evaluations=cfg.num_evaluations,
-            model_metrics=cfg.model_metrics,
+            metrics=cfg.metrics,
             comparative_metrics=cfg.comparative_metrics,
             callbacks_a=callbacks_a,
             callbacks_b=callbacks_b,
             show_progress=show_progress,
-            metric_chunks=cfg.metric_chunks,
         )
 
         save_history(history, output_dir)

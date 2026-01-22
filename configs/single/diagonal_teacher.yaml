@@ -1,26 +1,26 @@
 experiment:
-  name: "diagonal_teacher"
+  name: gph
 
 plotting:
-  enabled: true
-  save: true
-  show_test: true
+  enabled: false
+  save: false
+  show_test: false
 
 model:
   in_dim: 5
   out_dim: 5
-  num_hidden: 4
-  hidden_dim: 50
-  gamma: 1.5
+  num_hidden: 3
+  hidden_dim: 100
+  gamma: 1.0
   bias: false
   seed: 0
 
 training:
-  lr: 0.0005
+  lr: 0.0001
   batch_size: null
-  optimizer: "SGD"
+  optimizer: SGD
   optimizer_params: null
-  criterion: "MSELoss"
+  criterion: MSELoss
   batch_seed: 0
 
 data:
@@ -30,14 +30,18 @@ data:
   online: false
   noise_std: 0.0
   params:
-    matrix: "diagonal"
-    scale: 10
+    matrix: diagonal
+    scale: 10.0
 
-max_steps: 20000
-num_evaluations: 250
-metrics: []
+metrics:
+  # - trace_covariances:
+  #     chunks: 2
+
 metric_data:
-  mode: "population"
+  mode: population
   holdout_size: null
-metric_chunks: 1
+
 callbacks: []
+
+max_steps: 10000
+num_evaluations: 250

@@ -1,0 +1,123 @@
+# =============================================================================
+# SINGLE EXPERIMENT CONFIG REFERENCE
+# =============================================================================
+# This file documents all available config fields. Don't run this directly —
+# copy and modify for your experiment.
+# =============================================================================
+
+experiment:
+  name: my_experiment  # string, used for output directory naming
+
+# -----------------------------------------------------------------------------
+# Plotting
+# -----------------------------------------------------------------------------
+plotting:
+  enabled: true      # bool: whether to generate plots after training
+  save: true         # bool: save plots to output directory
+  show_test: true    # bool: include test loss in plots (if test_samples set)
+
+# -----------------------------------------------------------------------------
+# Model
+# -----------------------------------------------------------------------------
+model:
+  in_dim: 5          # int: input dimension
+  out_dim: 5         # int: output dimension
+  num_hidden: 3      # int: number of hidden layers
+  hidden_dim: 50     # int: width of hidden layers
+  gamma: 1.0         # float: initialization scaling exponent
+                     #   std = hidden_dim^(-gamma/2)
+                     #   0.5 = standard, 0.75 = NTK, 1.0 = mean-field, 1.5+ = saddle-to-saddle
+  bias: false        # bool: include bias terms
+  seed: 0            # int: random seed for weight initialization
+
+# -----------------------------------------------------------------------------
+# Training
+# -----------------------------------------------------------------------------
+training:
+  lr: 0.0001               # float: learning rate
+  batch_size: null         # int or null: samples per batch (null = full batch)
+  optimizer: SGD           # string: optimizer class name from torch.optim
+                           #   SGD, Adam, AdamW, RMSprop, etc.
+  optimizer_params: null   # dict or null: additional optimizer kwargs
+                           #   e.g., {momentum: 0.9, weight_decay: 0.01}
+  criterion: MSELoss       # string: loss class name from torch.nn
+                           #   MSELoss, L1Loss, CrossEntropyLoss, etc.
+  batch_seed: 0            # int: random seed for batch shuffling
+
+# -----------------------------------------------------------------------------
+# Data
+# -----------------------------------------------------------------------------
+data:
+  train_samples: 500    # int: number of training samples
+  test_samples: null    # int or null: number of test samples (null = no test set)
+  data_seed: 0          # int: random seed for data generation
+  online: false         # bool: if true, sample fresh data each batch (infinite data)
+                        #   requires batch_size to be set
+  noise_std: 0.0        # float: standard deviation of label noise
+  params:               # dict: parameters for teacher matrix generation
+    matrix: diagonal    # string: matrix type
+                        #   "diagonal" - diagonal matrix with entries scale * [1, 2, ..., d]
+                        #     requires: scale (float)
+                        #   "random_normal" - random Gaussian matrix
+                        #     requires: mean (float), std (float)
+    scale: 10.0         # (for diagonal)
+    # mean: 0.0         # (for random_normal)
+    # std: 1.0          # (for random_normal)
+
+# -----------------------------------------------------------------------------
+# Training Loop
+# -----------------------------------------------------------------------------
+max_steps: 10000        # int: total training steps
+num_evaluations: 250    # int: number of times to evaluate/log metrics
+                        #   evaluate_every = max_steps // num_evaluations
+
+# -----------------------------------------------------------------------------
+# Metrics
+# -----------------------------------------------------------------------------
+# Metrics are computed on metric_data at each evaluation step.
+# Two formats:
+#   - string: "metric_name" (uses defaults)
+#   - dict: {metric_name: {param: value}} (with custom params)
+#
+# Available metrics:
+#   weight_norm          - L2 norm of all parameters
+#   trace_covariances    - returns grad_norm_squared, trace_gradient_covariance,
+#                          trace_hessian_covariance
+#                          params: chunks (int, default 1) - split computation for lower VRAM
+metrics: []
+# Examples:
+#   metrics:
+#     - weight_norm
+#     - trace_covariances:
+#         chunks: 10
+
+metric_data:            # dict or null: data source for metric computation
+  mode: population      # string: "population" or "estimator"
+                        #   population - use full training set (not available in online mode)
+                        #   estimator - use fixed holdout subset
+  holdout_size: null    # int or null: number of samples for estimator mode (required if mode=estimator)
+# Set to null if not tracking any metrics that need data:
+# metric_data: null
+
+# -----------------------------------------------------------------------------
+# Callbacks
+# -----------------------------------------------------------------------------
+# Callbacks are called at each training step.
+# Format: {callback_name: {param: value}}
+#
+# Available callbacks:
+#   switch_batch_size       - change batch size at a specific step
+#                             params: step (int), batch_size (int or null)
+#   multi_switch_batch_size - change batch size at multiple steps
+#                             params: schedule (dict mapping step -> batch_size)
+#   lr_decay                - multiply learning rate by factor every N steps
+#                             params: decay_every (int), factor (float)
+callbacks: []
+# Examples:
+#   callbacks:
+#     - switch_batch_size:
+#         step: 1000
+#         batch_size: null
+#     - lr_decay:
+#         decay_every: 5000
+#         factor: 0.5

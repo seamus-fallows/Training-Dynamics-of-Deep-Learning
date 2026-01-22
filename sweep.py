@@ -174,13 +174,16 @@ def run_jobs_sequential(
             continue
 
         job_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[{i + 1}/{len(jobs)}] Running {subdir}...", end=" ", flush=True)
 
-        success, error = run_single_job(config_name, config_dir, job, job_dir)
+        if len(jobs) > 1:
+            print(f"[{i + 1}/{len(jobs)}] {subdir}")
+
+        success, error = run_single_job(
+            config_name, config_dir, job, job_dir, show_progress=True
+        )
 
         if success:
             completed += 1
-            print("done")
         else:
             failed += 1
             errors.append((i, job, error))

@@ -1,13 +1,13 @@
 import torch as t
 import torch.nn as nn
 from torch import Tensor
-from .config import ModelConfig
+from omegaconf import DictConfig
 
 
 class DeepLinearNetwork(nn.Module):
     def __init__(
         self,
-        cfg: ModelConfig,
+        cfg: DictConfig,
     ):
         super().__init__()
 

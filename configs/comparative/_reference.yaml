@@ -1,0 +1,106 @@
+# =============================================================================
+# COMPARATIVE EXPERIMENT CONFIG REFERENCE
+# =============================================================================
+# Trains two models (A and B) in lockstep on the same dataset.
+# Useful for comparing training regimes (e.g., full-batch vs mini-batch).
+# =============================================================================
+
+experiment:
+  name: my_comparative_experiment
+
+plotting:
+  enabled: true
+  save: true
+  show_test: false
+
+# -----------------------------------------------------------------------------
+# Shared defaults
+# -----------------------------------------------------------------------------
+# Values here are automatically merged into model_a/b and training_a/b.
+# Explicit values in model_a/b or training_a/b override shared.
+#
+# CLI overrides:
+#   shared.training.lr=0.01     -> changes both training_a and training_b
+#   training_b.batch_size=10    -> changes only training_b
+shared:
+  model:
+    in_dim: 5
+    out_dim: 5
+    num_hidden: 3
+    hidden_dim: 100
+    gamma: 1.0
+    bias: false
+    seed: 0
+  training:
+    lr: 0.0001
+    batch_size: null
+    optimizer: SGD
+    optimizer_params: null
+    criterion: MSELoss
+    batch_seed: 0
+
+# -----------------------------------------------------------------------------
+# Model A and B
+# -----------------------------------------------------------------------------
+# Empty = use all shared.model values
+# Add fields to override specific values for that model
+model_a: {}
+model_b: {}
+# Example: different gamma for model_b
+#   model_a: {}
+#   model_b:
+#     gamma: 0.75
+
+# -----------------------------------------------------------------------------
+# Training A and B
+# -----------------------------------------------------------------------------
+# Empty = use all shared.training values
+# Add fields to override specific values
+training_a: {}
+training_b: {}
+# Example: mini-batch for model_b only
+#   training_a: {}
+#   training_b:
+#     batch_size: 10
+
+# -----------------------------------------------------------------------------
+# Data (shared between both models)
+# -----------------------------------------------------------------------------
+data:
+  train_samples: 500
+  test_samples: null
+  data_seed: 0
+  online: false
+  noise_std: 0.0
+  params:
+    matrix: diagonal
+    scale: 10.0
+
+# -----------------------------------------------------------------------------
+# Training Loop
+# -----------------------------------------------------------------------------
+max_steps: 10000
+num_evaluations: 250
+
+# -----------------------------------------------------------------------------
+# Metrics
+# -----------------------------------------------------------------------------
+# metrics: computed on each model individually, suffixed with _a and _b
+#   Same format as single config (string or {name: {params}})
+#
+# comparative_metrics: computed between models (no suffix)
+#   Available:
+#     param_distance    - L2 distance between model parameters
+#     param_cosine_sim  - cosine similarity between model parameters
+metrics: []
+comparative_metrics:
+  - param_distance
+
+metric_data: null
+
+# -----------------------------------------------------------------------------
+# Callbacks (separate for each model)
+# -----------------------------------------------------------------------------
+# Format: {callback_name: {param: value}}
+callbacks_a: []
+callbacks_b: []
