@@ -1,8 +1,0 @@
-
-# @package _global_
-data:
-  online: false
-
-metric_data:
-  mode: population
-  holdout_size: null

@@ -1,13 +1,8 @@
-defaults:
-  - paths
-  - _self_
-
 experiment:
   name: "diagonal_teacher"
 
 plotting:
   enabled: true
-  show: true
   save: true
   show_test: true
 
@@ -38,9 +33,8 @@ data:
     matrix: "diagonal"
     scale: 10
 
-max_steps: 50000
-stop_threshold: null
-evaluate_every: 80
+max_steps: 20000
+evaluate_every: 20
 metrics: []
 metric_data:
   mode: "population"

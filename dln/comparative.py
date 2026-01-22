@@ -29,7 +29,6 @@ class ComparativeTrainer:
         comparative_metrics: list[str] | None = None,
         callbacks_a: list[Callable] | None = None,
         callbacks_b: list[Callable] | None = None,
-        stop_threshold: float | None = None,
         show_progress: bool = True,
         metric_chunks: int = 1,
     ) -> dict[str, list[Any]]:
@@ -106,15 +105,9 @@ class ComparativeTrainer:
                 self.history.append(record)
 
                 train_loss_a = record.get("train_loss_a")
-                train_loss_b = record.get("train_loss_b")
+
                 if train_loss_a is not None:
                     progress_bar.set_postfix({"loss_a": f"{train_loss_a:.4f}"})
-                    if (
-                        stop_threshold is not None
-                        and train_loss_a < stop_threshold
-                        and train_loss_b < stop_threshold
-                    ):
-                        break
 
             self.trainer_a._training_step(inputs_a, targets_a)
             self.trainer_b._training_step(inputs_b, targets_b)

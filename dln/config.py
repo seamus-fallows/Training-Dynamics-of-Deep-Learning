@@ -62,7 +62,6 @@ class ExperimentConfig:
     metrics: list[str] = field(default_factory=list)
     metric_data: MetricDataConfig | None = None
     callbacks: list[CallbackConfig] = field(default_factory=list)
-    stop_threshold: float | None = None
 
 
 @dataclass

@@ -1,13 +1,8 @@
-defaults:
-  - paths
-  - _self_
-
 experiment:
   name: "random_teacher"
 
 plotting:
   enabled: true
-  show: false
   save: true
   show_test: false
 
