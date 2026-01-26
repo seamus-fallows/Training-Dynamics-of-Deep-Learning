@@ -22,10 +22,12 @@ def run_experiment(
     output_dir: Path,
     show_progress: bool = True,
     show_plots: bool = True,
+    save_results: bool = True,
 ) -> RunResult:
     """Run a single training experiment."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, output_dir / "config.yaml")
+    if save_results:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = get_device()
     try:
@@ -54,10 +56,12 @@ def run_experiment(
             show_progress=show_progress,
         )
 
-        save_history(history, output_dir)
+        if save_results:
+            save_history(history, output_dir)
+
         result = RunResult(history=history, config=cfg, output_dir=output_dir)
 
-        if cfg.plotting.enabled:
+        if cfg.plotting.enabled and save_results:
             auto_plot(
                 result,
                 show=show_plots,
@@ -75,10 +79,13 @@ def run_comparative_experiment(
     output_dir: Path,
     show_progress: bool = True,
     show_plots: bool = True,
+    save_results: bool = True,
 ) -> RunResult:
     """Run a comparative training experiment (two models side by side)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, output_dir / "config.yaml")
+
+    if save_results:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = get_device()
     try:
@@ -120,11 +127,12 @@ def run_comparative_experiment(
             callbacks_b=callbacks_b,
             show_progress=show_progress,
         )
+        if save_results:
+            save_history(history, output_dir)
 
-        save_history(history, output_dir)
         result = RunResult(history=history, config=cfg, output_dir=output_dir)
 
-        if cfg.plotting.enabled:
+        if cfg.plotting.enabled and save_results:
             auto_plot(
                 result,
                 show=show_plots,

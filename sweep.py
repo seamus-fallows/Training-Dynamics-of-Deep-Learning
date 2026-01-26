@@ -31,6 +31,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+import tempfile
 
 from dln.experiment import run_experiment, run_comparative_experiment
 from dln.overrides import (
@@ -110,6 +111,12 @@ def parse_args() -> argparse.Namespace:
         "overrides",
         nargs="*",
         help="Config overrides in format param=value or param=val1,val2,val3",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_false",
+        dest="save_results",
+        help="Run experiments without saving results (for testing)",
     )
 
     return parser.parse_args()
@@ -356,17 +363,26 @@ if __name__ == "__main__":
     cfg = load_config(args.config_name, config_dir)
     experiment_name = cfg.experiment.name
 
-    output_dir = get_output_dir(experiment_name, overrides, args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if args.save_results:
+        output_dir = get_output_dir(experiment_name, overrides, args.output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir_context = None
+    else:
+        temp_dir_context = tempfile.TemporaryDirectory()
+        output_dir = Path(temp_dir_context.name)
 
-    run_sweep(
-        config_name=args.config_name,
-        comparative=args.comparative,
-        jobs=jobs,
-        output_dir=output_dir,
-        subdir_pattern=subdir_pattern,
-        skip_existing=args.skip_existing,
-        fail_fast=args.fail_fast,
-        workers=args.workers,
-        device=args.device,
-    )
+    try:
+        run_sweep(
+            config_name=args.config_name,
+            comparative=args.comparative,
+            jobs=jobs,
+            output_dir=output_dir,
+            subdir_pattern=subdir_pattern,
+            skip_existing=args.skip_existing,
+            fail_fast=args.fail_fast,
+            workers=args.workers,
+            device=args.device,
+        )
+    finally:
+        if temp_dir_context is not None:
+            temp_dir_context.cleanup()
