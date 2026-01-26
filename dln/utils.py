@@ -80,6 +80,66 @@ def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
     return columns
 
 
+def validate_config(cfg: DictConfig, config_type: str = "single") -> None:
+    """Validate config values before experiment execution."""
+
+    if config_type == "single":
+        _validate_model_config(cfg.model)
+        _validate_training_config(cfg.training)
+        _validate_data_config(cfg.data)
+        _validate_metric_data_config(cfg.metric_data, cfg.data.online)
+
+    elif config_type == "comparative":
+        _validate_model_config(cfg.model_a)
+        _validate_model_config(cfg.model_b)
+        _validate_training_config(cfg.training_a)
+        _validate_training_config(cfg.training_b)
+        _validate_data_config(cfg.data)
+        _validate_metric_data_config(cfg.metric_data, cfg.data.online)
+
+
+def _validate_model_config(model_cfg: DictConfig) -> None:
+    assert model_cfg.in_dim > 0, "in_dim must be positive"
+    assert model_cfg.out_dim > 0, "out_dim must be positive"
+    assert model_cfg.num_hidden >= 0, "num_hidden must be non-negative"
+    assert model_cfg.hidden_dim > 0, "hidden_dim must be positive"
+    if model_cfg.gamma is not None:
+        assert model_cfg.gamma > 0, "gamma must be positive"
+
+
+def _validate_training_config(training_cfg: DictConfig) -> None:
+    assert training_cfg.lr > 0, "lr must be positive"
+    if training_cfg.batch_size is not None:
+        assert training_cfg.batch_size > 0, "batch_size must be positive"
+
+
+def _validate_data_config(data_cfg: DictConfig) -> None:
+    assert data_cfg.train_samples > 0, "train_samples must be positive"
+    if data_cfg.test_samples is not None:
+        assert data_cfg.test_samples > 0, "test_samples must be positive"
+    assert data_cfg.noise_std >= 0, "noise_std must be non-negative"
+
+    if data_cfg.online and data_cfg.test_samples is None:
+        raise ValueError("Online mode requires test_samples for loss tracking")
+
+
+def _validate_metric_data_config(metric_cfg: DictConfig | None, online: bool) -> None:
+    if metric_cfg is None:
+        return
+
+    if metric_cfg.mode == "population":
+        if online:
+            raise ValueError("Population mode not available in online mode")
+    elif metric_cfg.mode == "estimator":
+        if metric_cfg.holdout_size is None:
+            raise ValueError("Estimator mode requires holdout_size")
+        assert metric_cfg.holdout_size > 0, "holdout_size must be positive"
+    else:
+        raise ValueError(
+            f"metric_data.mode must be 'population' or 'estimator', got {metric_cfg.mode}"
+        )
+
+
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"
 
 
@@ -110,5 +170,7 @@ def load_config(
             )
 
     OmegaConf.resolve(cfg)
+
+    validate_config(cfg, config_dir)
 
     return cfg
