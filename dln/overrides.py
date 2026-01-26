@@ -171,9 +171,13 @@ def get_output_dir(
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     suffix = get_sweep_params_suffix(overrides)
-    dir_name = f"{timestamp}{suffix}"
 
-    return Path("outputs") / experiment_name / dir_name
+    if suffix:
+        # Sweep: outputs/{exp_name}/{sweep_params}/{timestamp}/
+        return Path("outputs") / experiment_name / suffix.lstrip("_") / timestamp
+    else:
+        # Single run: outputs/{exp_name}/{timestamp}/
+        return Path("outputs") / experiment_name / timestamp
 
 
 def auto_subdir_pattern(overrides: dict[str, Any]) -> str | None:

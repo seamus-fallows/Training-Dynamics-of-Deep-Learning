@@ -25,13 +25,14 @@ training:
 
 data:
   train_samples: 500
-  test_samples: 500
+  test_samples: null
   data_seed: 0
   online: false
   noise_std: 0.0
   params:
     matrix: "diagonal"
     scale: 10.0
+    
 metrics:
   - trace_covariances:
       chunks: 1
