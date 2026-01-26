@@ -43,6 +43,7 @@ from dln.overrides import (
     check_subdir_uniqueness,
 )
 from dln.utils import load_config
+import torch as t
 
 
 # =============================================================================
@@ -127,12 +128,26 @@ def parse_args() -> argparse.Namespace:
 # =============================================================================
 
 
+def init_worker(device: str | None) -> None:
+    """Initialize worker process with proper thread configuration."""
+    if device == "cpu":
+        t.set_num_threads(1)
+        t.set_num_interop_threads(1)
+
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+
 def run_single_job(
     config_name: str,
     config_dir: str,
     overrides: dict[str, Any],
     output_dir: Path,
     show_progress: bool = False,
+    device: str | None = None,
 ) -> tuple[bool, str | None]:
     """Run a single experiment job. Returns (success, error_message)."""
     try:
@@ -144,6 +159,7 @@ def run_single_job(
                 output_dir=output_dir,
                 show_progress=show_progress,
                 show_plots=False,
+                device=device,
             )
         else:
             run_experiment(
@@ -151,6 +167,7 @@ def run_single_job(
                 output_dir=output_dir,
                 show_progress=show_progress,
                 show_plots=False,
+                device=device,
             )
         return True, None
     except Exception as e:
@@ -165,8 +182,12 @@ def run_jobs_sequential(
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
+    device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
     """Run jobs sequentially. Returns (completed, skipped, failed, errors)."""
+
+    init_worker(device)
+
     completed = 0
     skipped = 0
     failed = 0
@@ -186,7 +207,7 @@ def run_jobs_sequential(
             print(f"[{i + 1}/{len(jobs)}] {subdir}")
 
         success, error = run_single_job(
-            config_name, config_dir, job, job_dir, show_progress=True
+            config_name, config_dir, job, job_dir, show_progress=True, device=device
         )
 
         if success:
@@ -233,18 +254,23 @@ def run_jobs_parallel(
     if not jobs_to_run:
         return completed, skipped, failed, errors
 
-    if device == "cpu":
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
     total = len(jobs_to_run)
     start_time = time.time()
 
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+    with ProcessPoolExecutor(
+        max_workers=workers, initializer=init_worker, initargs=(device,)
+    ) as executor:
         futures = {}
         for idx, (i, job, job_dir) in enumerate(jobs_to_run):
             show_progress = idx == 0
             future = executor.submit(
-                run_single_job, config_name, config_dir, job, job_dir, show_progress
+                run_single_job,
+                config_name,
+                config_dir,
+                job,
+                job_dir,
+                show_progress,
+                device,
             )
             futures[future] = (i, job)
 
@@ -306,6 +332,7 @@ def run_sweep(
             subdir_pattern,
             skip_existing,
             fail_fast,
+            device,
         )
     else:
         completed, skipped, failed, errors = run_jobs_parallel(

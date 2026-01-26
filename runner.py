@@ -45,10 +45,11 @@ def run(
     output_root: Path = Path("outputs/runs"),
     show_progress: bool = True,
     show_plots: bool = True,
+    device: str | None = None,
 ) -> RunResult:
     cfg = load_config(config_name, "single", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    return run_experiment(cfg, output_dir, show_progress, show_plots)
+    return run_experiment(cfg, output_dir, show_progress, show_plots, device)
 
 
 def run_comparative(
@@ -58,10 +59,13 @@ def run_comparative(
     output_root: Path = Path("outputs/runs"),
     show_progress: bool = True,
     show_plots: bool = True,
+    device: str | None = None,
 ) -> RunResult:
     cfg = load_config(config_name, "comparative", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    return run_comparative_experiment(cfg, output_dir, show_progress, show_plots)
+    return run_comparative_experiment(
+        cfg, output_dir, show_progress, show_plots, device
+    )
 
 
 def run_sweep(
@@ -72,6 +76,7 @@ def run_sweep(
     output_root: Path = Path("outputs/sweeps"),
     show_progress: bool = False,
     show_plots: bool = False,
+    device: str | None = None,
 ) -> SweepResult:
     runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
@@ -89,6 +94,7 @@ def run_sweep(
             output_dir=output_dir,
             show_progress=show_progress,
             show_plots=show_plots,
+            device=device,
         )
 
     return SweepResult(runs=runs, sweep_param=param)
@@ -102,6 +108,7 @@ def run_comparative_sweep(
     output_root: Path = Path("outputs/sweeps"),
     show_progress: bool = False,
     show_plots: bool = False,
+    device: str | None = None,
 ) -> SweepResult:
     runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
@@ -119,6 +126,7 @@ def run_comparative_sweep(
             output_dir=output_dir,
             show_progress=show_progress,
             show_plots=show_plots,
+            device=device,
         )
 
     return SweepResult(runs=runs, sweep_param=param)
@@ -131,6 +139,7 @@ def run_sweep_multi(
     output_root: Path = Path("outputs/sweeps"),
     show_progress: bool = False,
     show_plots: bool = False,
+    device: str | None = None,
 ) -> dict[str, RunResult]:
     """Run a parameter sweep with multiple varying parameters."""
     jobs = expand_sweep_params(overrides, zip_groups)
@@ -150,6 +159,7 @@ def run_sweep_multi(
             output_dir=job_dir,
             show_progress=show_progress,
             show_plots=show_plots,
+            device=device,
         )
         results[subdir] = result
 

@@ -9,12 +9,13 @@ import torch as t
 from omegaconf import DictConfig, OmegaConf
 
 from .utils import seed_rng, get_device, save_history
-from .data import Dataset, create_metric_data
+from .data import Dataset, create_metric_data, get_or_create_dataset
 from .factory import create_trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
 from .results import RunResult
 from .plotting import auto_plot
+import time
 
 
 def run_experiment(
@@ -23,13 +24,14 @@ def run_experiment(
     show_progress: bool = True,
     show_plots: bool = True,
     save_results: bool = True,
+    device: str | None = None,
 ) -> RunResult:
     """Run a single training experiment."""
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, output_dir / "config.yaml")
 
-    device = get_device()
+    device = get_device(device=device)
     try:
         seed_rng(cfg.data.data_seed)
         dataset = Dataset(
@@ -80,6 +82,7 @@ def run_comparative_experiment(
     show_progress: bool = True,
     show_plots: bool = True,
     save_results: bool = True,
+    device: str | None = None,
 ) -> RunResult:
     """Run a comparative training experiment (two models side by side)."""
 
@@ -87,7 +90,7 @@ def run_comparative_experiment(
         output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, output_dir / "config.yaml")
 
-    device = get_device()
+    device = get_device(device=device)
     try:
         seed_rng(cfg.data.data_seed)
         dataset = Dataset(
