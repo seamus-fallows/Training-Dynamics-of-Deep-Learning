@@ -33,7 +33,7 @@ def make_model_config(**overrides):
         hidden_dim=10,
         gamma=1.5,
         bias=False,
-        seed=0,
+        model_seed=0,
     )
     defaults.update(overrides)
     return OmegaConf.create(defaults)
@@ -74,9 +74,9 @@ def make_metric_data_config(**overrides):
     return OmegaConf.create(defaults)
 
 
-def create_model(seed: int = 0, **kwargs) -> DeepLinearNetwork:
-    seed_rng(seed)
-    cfg = make_model_config(seed=seed, **kwargs)
+def create_model(model_seed: int = 0, **kwargs) -> DeepLinearNetwork:
+    seed_rng(model_seed)
+    cfg = make_model_config(model_seed=model_seed, **kwargs)
     return DeepLinearNetwork(cfg)
 
 
@@ -227,20 +227,20 @@ class TestOverrides:
 
 class TestSeedIsolation:
     def test_same_model_seed_same_init(self):
-        model_a = create_model(seed=42)
-        model_b = create_model(seed=42)
+        model_a = create_model(model_seed=42)
+        model_b = create_model(model_seed=42)
         assert t.allclose(get_all_params(model_a), get_all_params(model_b))
 
     def test_model_seed_independent_of_data_seed(self):
         seed_rng(0)
         _ = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
         seed_rng(42)
-        model_a = DeepLinearNetwork(make_model_config(seed=42))
+        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
 
         seed_rng(999)
         _ = Dataset(make_data_config(data_seed=999), in_dim=5, out_dim=5)
         seed_rng(42)
-        model_b = DeepLinearNetwork(make_model_config(seed=42))
+        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
 
         assert t.allclose(get_all_params(model_a), get_all_params(model_b))
 
@@ -252,7 +252,7 @@ class TestSeedIsolation:
             seed_rng(0)
             dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
             seed_rng(42)
-            model = DeepLinearNetwork(make_model_config(seed=42))
+            model = DeepLinearNetwork(make_model_config(model_seed=42))
             trainer = Trainer(
                 model=model,
                 cfg=make_training_config(batch_seed=0),
@@ -387,7 +387,7 @@ class TestMetricData:
 
 class TestMetrics:
     def test_weight_norm(self):
-        model = create_model(seed=0)
+        model = create_model(model_seed=0)
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
         criterion = nn.MSELoss()
@@ -400,7 +400,7 @@ class TestMetrics:
         assert abs(result["weight_norm"] - expected) < 1e-6
 
     def test_grad_norm_squared_vs_manual(self):
-        model = create_model(seed=0)
+        model = create_model(model_seed=0)
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
         criterion = nn.MSELoss()
@@ -410,14 +410,14 @@ class TestMetrics:
         loss.backward()
         expected = sum((p.grad**2).sum().item() for p in model.parameters())
 
-        model = create_model(seed=0)
+        model = create_model(model_seed=0)
         result = metrics.trace_covariances(model, inputs, targets, criterion)
 
         assert abs(result["grad_norm_squared"] - expected) < 1e-5
 
     def test_trace_covariances_vs_manual(self):
         """Verify both trace metrics against naive element-wise computation."""
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
         criterion = nn.MSELoss()
@@ -459,14 +459,14 @@ class TestMetrics:
         expected_trace_hess = trace_hess_sum / n_samples
 
         # Compare against trace_covariances
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         result = metrics.trace_covariances(model, inputs, targets, criterion)
 
         assert abs(result["trace_gradient_covariance"] - expected_trace_grad) < 1e-4
         assert abs(result["trace_hessian_covariance"] - expected_trace_hess) < 1e-4
 
     def test_trace_covariances_chunked_matches_unchunked(self):
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(20, 5)
         targets = t.randn(20, 5)
         criterion = nn.MSELoss()
@@ -475,7 +475,7 @@ class TestMetrics:
             model, inputs, targets, criterion, chunks=1
         )
 
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         result_chunked = metrics.trace_covariances(
             model, inputs, targets, criterion, chunks=4
         )
@@ -496,7 +496,7 @@ class TestMetrics:
         )
 
     def test_compute_metrics_expands_trace_covariances(self):
-        model = create_model(seed=0, num_hidden=2, hidden_dim=8)
+        model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(20, 5)
         targets = t.randn(20, 5)
         criterion = nn.MSELoss()
@@ -515,8 +515,8 @@ class TestMetrics:
         assert results["trace_gradient_covariance"] > 0
 
     def test_param_distance(self):
-        model_a = create_model(seed=0)
-        model_b = create_model(seed=1)
+        model_a = create_model(model_seed=0)
+        model_b = create_model(model_seed=1)
 
         distance = metrics.param_distance(model_a, model_b)
 
@@ -578,9 +578,9 @@ class TestComparativeTrainer:
         )
 
         seed_rng(42)
-        model_a = DeepLinearNetwork(make_model_config(seed=42))
+        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
         seed_rng(42)
-        model_b = DeepLinearNetwork(make_model_config(seed=42))
+        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
 
         trainer_a = Trainer(
             model=model_a,
@@ -620,7 +620,7 @@ class TestCallbacks:
         )
 
         seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(seed=42))
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
             model=model,
             cfg=make_training_config(batch_size=10, batch_seed=0),
@@ -644,7 +644,7 @@ class TestCallbacks:
         )
 
         seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(seed=42))
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
             model=model,
             cfg=make_training_config(batch_size=10, batch_seed=0),
@@ -668,7 +668,7 @@ class TestCallbacks:
         )
 
         seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(seed=42))
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
             model=model,
             cfg=make_training_config(lr=0.1, batch_seed=0),

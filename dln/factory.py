@@ -14,7 +14,7 @@ def create_trainer(
     device: t.device,
     metric_data: tuple[Tensor, Tensor] | None = None,
 ) -> Trainer:
-    seed_rng(model_cfg.seed)
+    seed_rng(model_cfg.model_seed)
     model = DeepLinearNetwork(model_cfg)
 
     return Trainer(

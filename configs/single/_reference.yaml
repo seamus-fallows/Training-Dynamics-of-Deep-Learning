@@ -28,7 +28,7 @@ model:
                      #   std = hidden_dim^(-gamma/2)
                      #   0.5 = standard, 0.75 = NTK, 1.0 = mean-field, 1.5+ = saddle-to-saddle
   bias: false        # bool: include bias terms
-  seed: 0            # int: random seed for weight initialization
+  model_seed: 0            # int: random seed for weight initialization
 
 # -----------------------------------------------------------------------------
 # Training

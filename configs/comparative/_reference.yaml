@@ -30,7 +30,7 @@ shared:
     hidden_dim: 100
     gamma: 1.0
     bias: false
-    seed: 0
+    model_seed: 0
   training:
     lr: 0.0001
     batch_size: null

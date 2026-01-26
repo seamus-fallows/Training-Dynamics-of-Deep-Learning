@@ -61,15 +61,11 @@ class Dataset:
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
 
-        if cfg.test_samples and cfg.test_samples > 0:
-            self.test_data = self.sample(cfg.test_samples)
-        else:
-            self.test_data = None
+        self.test_data = self.sample(cfg.test_samples) if cfg.test_samples else None
+        self.train_data = None if self.online else self.sample(cfg.train_samples)
 
-        if self.online:
-            self.train_data = None
-        else:
-            self.train_data = self.sample(cfg.train_samples)
+        if self.online and self.test_data is None:
+            raise ValueError("Online mode requires test_samples for loss tracking")
 
     def sample(
         self, n: int, generator: t.Generator | None = None
