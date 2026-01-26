@@ -34,8 +34,8 @@ data:
     scale: 10.0
     
 metrics:
-  - trace_covariances:
-      chunks: 1
+  # - trace_covariances:
+  #     chunks: 1
 
 metric_data:
   mode: "population"
