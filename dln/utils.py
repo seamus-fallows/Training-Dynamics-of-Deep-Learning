@@ -1,22 +1,12 @@
 import json
-import random
 from pathlib import Path
 from typing import Any, Type
 from torch import nn
-import numpy as np
 import torch as t
 from torch.optim import Optimizer
 from torch import Tensor
 import os
 from omegaconf import OmegaConf, DictConfig
-
-
-def seed_rng(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    t.manual_seed(seed)
-    if t.cuda.is_available():
-        t.cuda.manual_seed_all(seed)
 
 
 def get_device(device: str | None = None) -> t.device:

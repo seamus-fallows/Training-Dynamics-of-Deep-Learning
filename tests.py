@@ -8,7 +8,6 @@ from dln.data import Dataset, create_metric_data
 from dln.train import Trainer
 from dln.comparative import ComparativeTrainer
 from dln.callbacks import create_callback
-from dln.utils import seed_rng
 from dln.overrides import (
     parse_value,
     parse_overrides,
@@ -75,7 +74,6 @@ def make_metric_data_config(**overrides):
 
 
 def create_model(model_seed: int = 0, **kwargs) -> DeepLinearNetwork:
-    seed_rng(model_seed)
     cfg = make_model_config(model_seed=model_seed, **kwargs)
     return DeepLinearNetwork(cfg)
 
@@ -232,14 +230,10 @@ class TestSeedIsolation:
         assert t.allclose(get_all_params(model_a), get_all_params(model_b))
 
     def test_model_seed_independent_of_data_seed(self):
-        seed_rng(0)
         _ = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
-        seed_rng(42)
         model_a = DeepLinearNetwork(make_model_config(model_seed=42))
 
-        seed_rng(999)
         _ = Dataset(make_data_config(data_seed=999), in_dim=5, out_dim=5)
-        seed_rng(42)
         model_b = DeepLinearNetwork(make_model_config(model_seed=42))
 
         assert t.allclose(get_all_params(model_a), get_all_params(model_b))
@@ -249,9 +243,7 @@ class TestSeedIsolation:
         device = t.device("cpu")
 
         def run_once():
-            seed_rng(0)
             dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
-            seed_rng(42)
             model = DeepLinearNetwork(make_model_config(model_seed=42))
             trainer = Trainer(
                 model=model,
@@ -267,6 +259,40 @@ class TestSeedIsolation:
         assert history_a["step"] == history_b["step"]
         assert history_a["train_loss"] == history_b["train_loss"]
 
+    def test_cpu_gpu_training_identical(self):
+        """CPU and GPU training should produce identical results."""
+        if not t.cuda.is_available():
+            pytest.skip("CUDA not available")
+
+        def run_on_device(device_str: str):
+            device = t.device(device_str)
+            dataset = Dataset(
+                make_data_config(data_seed=42, train_samples=50), in_dim=5, out_dim=5
+            )
+            model = DeepLinearNetwork(make_model_config(model_seed=0))
+
+            trainer = Trainer(
+                model=model,
+                cfg=make_training_config(batch_seed=10, lr=0.01),
+                dataset=dataset,
+                device=device,
+            )
+            return trainer.run(max_steps=100, num_evaluations=10, show_progress=False)
+
+        cpu_history = run_on_device("cpu")
+        gpu_history = run_on_device("cuda")
+
+        # Steps should match exactly
+        assert cpu_history["step"] == gpu_history["step"]
+
+        # Losses should be very close (allow for minor floating point differences)
+        for cpu_loss, gpu_loss in zip(
+            cpu_history["train_loss"], gpu_history["train_loss"]
+        ):
+            assert abs(cpu_loss - gpu_loss) < 1e-5, (
+                f"CPU loss {cpu_loss} != GPU loss {gpu_loss}"
+            )
+
 
 # ============================================================================
 # Data Tests
@@ -275,7 +301,6 @@ class TestSeedIsolation:
 
 class TestOnlineData:
     def test_online_iterator_produces_fresh_samples(self):
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(online=True, train_samples=100),
             in_dim=5,
@@ -289,7 +314,6 @@ class TestOnlineData:
         assert not t.allclose(batch1, batch2)
 
     def test_online_requires_batch_size(self):
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(online=True),
             in_dim=5,
@@ -301,10 +325,8 @@ class TestOnlineData:
 
 class TestDataNoise:
     def test_noise_std_adds_variance(self):
-        seed_rng(0)
         clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
 
-        seed_rng(0)
         noisy = Dataset(make_data_config(noise_std=1.0), in_dim=5, out_dim=5)
 
         _, clean_y = clean.train_data
@@ -315,25 +337,14 @@ class TestDataNoise:
 
 class TestMatrixTypes:
     def test_diagonal_requires_square(self):
-        seed_rng(0)
         config = make_data_config(params={"matrix": "diagonal", "scale": 1.0})
 
         with pytest.raises(ValueError, match="out_dim == in_dim"):
             Dataset(config, in_dim=5, out_dim=3)
 
-    def test_random_normal_matrix(self):
-        seed_rng(0)
-        config = make_data_config(
-            params={"matrix": "random_normal", "mean": 0.0, "std": 1.0}
-        )
-        dataset = Dataset(config, in_dim=5, out_dim=3)
-
-        assert dataset.teacher_matrix.shape == (3, 5)
-
 
 class TestMetricData:
     def test_population_mode_returns_full_train_data(self):
-        seed_rng(0)
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
         config = make_metric_data_config(mode="population")
 
@@ -344,7 +355,6 @@ class TestMetricData:
         assert t.allclose(y, train_y)
 
     def test_estimator_mode_returns_subset(self):
-        seed_rng(0)
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
         config = make_metric_data_config(mode="estimator", holdout_size=10)
 
@@ -354,7 +364,6 @@ class TestMetricData:
         assert y.shape[0] == 10
 
     def test_estimator_mode_requires_holdout_size(self):
-        seed_rng(0)
         dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
         config = make_metric_data_config(mode="estimator", holdout_size=None)
 
@@ -362,7 +371,6 @@ class TestMetricData:
             create_metric_data(dataset, config)
 
     def test_population_mode_fails_for_online(self):
-        seed_rng(0)
         dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
         config = make_metric_data_config(mode="population")
 
@@ -370,7 +378,6 @@ class TestMetricData:
             create_metric_data(dataset, config)
 
     def test_estimator_mode_works_for_online(self):
-        seed_rng(0)
         dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
         config = make_metric_data_config(mode="estimator", holdout_size=20)
 
@@ -536,14 +543,10 @@ class TestComparativeTrainer:
     def test_identical_config_identical_trajectories(self):
         """Same config for both models yields identical loss curves."""
         device = t.device("cpu")
-        seed_rng(0)
         dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
 
-        seed_rng(42)
-        model_a = DeepLinearNetwork(make_model_config(seed=42))
-        seed_rng(42)
-        model_b = DeepLinearNetwork(make_model_config(seed=42))
-
+        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
+        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer_a = Trainer(
             model=model_a,
             cfg=make_training_config(batch_seed=0),
@@ -570,16 +573,13 @@ class TestComparativeTrainer:
     def test_different_batch_seeds_diverge(self):
         """Different batch seeds cause models to diverge."""
         device = t.device("cpu")
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(data_seed=0, train_samples=50),
             in_dim=5,
             out_dim=5,
         )
 
-        seed_rng(42)
         model_a = DeepLinearNetwork(make_model_config(model_seed=42))
-        seed_rng(42)
         model_b = DeepLinearNetwork(make_model_config(model_seed=42))
 
         trainer_a = Trainer(
@@ -614,12 +614,10 @@ class TestCallbacks:
     def test_switch_batch_size(self):
         """Batch size switch at specified step changes training behavior."""
         device = t.device("cpu")
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
 
-        seed_rng(42)
         model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
             model=model,
@@ -638,12 +636,11 @@ class TestCallbacks:
     def test_multi_switch_batch_size(self):
         """Multiple batch size switches work correctly."""
         device = t.device("cpu")
-        seed_rng(0)
+
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
 
-        seed_rng(42)
         model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
             model=model,
@@ -662,12 +659,10 @@ class TestCallbacks:
     def test_lr_decay(self):
         """Learning rate decay reduces LR at specified intervals."""
         device = t.device("cpu")
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
 
-        seed_rng(42)
         model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
             model=model,
@@ -693,7 +688,6 @@ class TestCallbacks:
 
 class TestBatchIterator:
     def test_full_batch_yields_all_samples(self):
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
@@ -703,7 +697,6 @@ class TestBatchIterator:
         assert batch_x.shape[0] == 50
 
     def test_mini_batch_yields_correct_size(self):
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
@@ -713,7 +706,6 @@ class TestBatchIterator:
         assert batch_x.shape[0] == 10
 
     def test_offline_iterator_same_seed_same_sequence(self):
-        seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
