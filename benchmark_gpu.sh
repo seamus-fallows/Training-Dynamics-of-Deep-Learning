@@ -11,7 +11,7 @@ TOTAL_JOBS=250
 PARAMS="training.batch_seed=0..${TOTAL_JOBS} training.batch_size=5,500  max_steps=${MAX_STEPS}"
 
 # Test different worker counts
-WORKER_COUNTS=(240)
+WORKER_COUNTS=(100)
 
 echo "=== GPU Benchmarking ==="
 echo "Total jobs: ${TOTAL_JOBS}"

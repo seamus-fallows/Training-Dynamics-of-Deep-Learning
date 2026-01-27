@@ -9,13 +9,12 @@ import torch as t
 from omegaconf import DictConfig, OmegaConf
 
 from .utils import seed_rng, get_device, save_history
-from .data import Dataset, create_metric_data, get_or_create_dataset
+from .data import Dataset, create_metric_data
 from .factory import create_trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
 from .results import RunResult
 from .plotting import auto_plot
-import time
 
 
 def run_experiment(
