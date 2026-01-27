@@ -23,7 +23,8 @@ def create_diagonal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
             f"but got in_dim={in_dim}, out_dim={out_dim}."
         )
     scale = params["scale"]
-    return scale * t.diag(t.arange(1, in_dim + 1).float())
+    # Diagonal doesn't use randomness, ignore generator
+    return scale * t.diag(t.arange(1, in_dim + 1, dtype=t.float32))
 
 
 @register_matrix("identity")
@@ -31,16 +32,9 @@ def create_identity_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     if out_dim != in_dim:
         raise ValueError(
             f"Identity matrix requires out_dim == in_dim, "
-            f"but got in_dim={in_dim}, out_dim={out_dim}."
+            f"but in_dim={in_dim}, out_dim={out_dim}."
         )
     return t.eye(in_dim)
-
-
-@register_matrix("random_normal")
-def create_random_normal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
-    mean = params["mean"]
-    std = params["std"]
-    return t.normal(mean, std, size=(out_dim, in_dim))
 
 
 class Dataset:
@@ -58,6 +52,9 @@ class Dataset:
         self.online = cfg.online
         self.noise_std = cfg.noise_std
 
+        self.generator = t.Generator(device="cpu")
+        self.generator.manual_seed(cfg.data_seed)
+
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
 
@@ -71,10 +68,14 @@ class Dataset:
         self, n: int, generator: t.Generator | None = None
     ) -> tuple[Tensor, Tensor]:
         """Generate n samples from the teacher matrix."""
-        inputs = t.randn(n, self.in_dim, generator=generator)
-        targets = inputs @ self.teacher_matrix.T
+        if generator is None:
+            generator = self.generator
+
+        # Generate on CPU for consistency across GPUs
+        inputs = t.randn(n, self.in_dim, generator=generator, device="cpu")
+        targets = inputs @ self.teacher_matrix.to("cpu").T
         if self.noise_std > 0:
-            noise = t.randn(targets.shape, generator=generator)
+            noise = t.randn(targets.shape, generator=generator, device="cpu")
             targets = targets + noise * self.noise_std
         return inputs, targets
 

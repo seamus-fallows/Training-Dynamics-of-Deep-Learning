@@ -31,7 +31,6 @@ def run_experiment(
 
     device = get_device()
     try:
-        seed_rng(cfg.data.data_seed)
         dataset = Dataset(
             cfg.data,
             in_dim=cfg.model.in_dim,
@@ -89,7 +88,6 @@ def run_comparative_experiment(
 
     device = get_device()
     try:
-        seed_rng(cfg.data.data_seed)
         dataset = Dataset(
             cfg.data,
             in_dim=cfg.model_a.in_dim,
