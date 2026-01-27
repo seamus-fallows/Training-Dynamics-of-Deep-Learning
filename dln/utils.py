@@ -19,16 +19,28 @@ def seed_rng(seed: int) -> None:
         t.cuda.manual_seed_all(seed)
 
 
-def get_device() -> t.device:
-    if t.cuda.is_available():
+def get_device(device: str | None = None) -> t.device:
+    if device is None:
+        if t.cuda.is_available():
+            device = "cuda"
+        elif t.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+    if device == "cpu":
+        return t.device("cpu")
+
+    if device == "cuda":
         n_gpus = t.cuda.device_count()
         if n_gpus > 1:
-            # Assign by PID so each worker keeps the same GPU
             gpu_id = os.getpid() % n_gpus
             return t.device(f"cuda:{gpu_id}")
         return t.device("cuda")
-    if t.backends.mps.is_available():
+
+    if device == "mps":
         return t.device("mps")
+
     return t.device("cpu")
 
 
