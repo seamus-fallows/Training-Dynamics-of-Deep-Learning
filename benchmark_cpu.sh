@@ -5,13 +5,13 @@ set -e
 
 CONFIG="diagonal_teacher"
 MAX_STEPS=10000  # Short jobs for faster benchmarking
-TOTAL_JOBS=250
+TOTAL_JOBS=256
 
 # Parameter sweep: 1000 batch seeds × 1 gamma = 1000 jobs
-PARAMS="training.batch_seed=0..${TOTAL_JOBS} training.batch_size=5,500 max_steps=${MAX_STEPS}"
+PARAMS="training.batch_seed=0..${TOTAL_JOBS} training.batch_size=1,500 max_steps=${MAX_STEPS}"
 
 # Test different worker counts (adjust based on your CPU core count)
-WORKER_COUNTS=(100)
+WORKER_COUNTS=(128)
 
 echo "=== CPU Benchmarking ==="
 echo "Total jobs: ${TOTAL_JOBS}"

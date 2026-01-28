@@ -134,12 +134,6 @@ def init_worker(device: str | None) -> None:
         t.set_num_threads(1)
         t.set_num_interop_threads(1)
 
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-        os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 
 def run_single_job(
     config_name: str,
