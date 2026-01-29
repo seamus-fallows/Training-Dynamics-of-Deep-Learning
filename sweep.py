@@ -25,7 +25,6 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -133,12 +132,6 @@ def init_worker(device: str | None) -> None:
     if device == "cpu":
         t.set_num_threads(1)
         t.set_num_interop_threads(1)
-
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-        os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
 def run_single_job(
