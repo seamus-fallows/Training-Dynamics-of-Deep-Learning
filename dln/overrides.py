@@ -145,6 +145,22 @@ def expand_sweep_params(
 
     return jobs
 
+def apply_overrides_to_dict(cfg: dict, overrides: dict[str, Any]) -> dict:
+    """
+    Apply dotted-key overrides to a nested dict (in-place).
+    
+    Example:
+        cfg = {"model": {"lr": 0.1}}
+        apply_overrides_to_dict(cfg, {"model.lr": 0.01})
+        # cfg is now {"model": {"lr": 0.01}}
+    """
+    for key, value in overrides.items():
+        parts = key.split(".")
+        target = cfg
+        for part in parts[:-1]:
+            target = target[part]
+        target[parts[-1]] = value
+    return cfg
 
 # =============================================================================
 # Output Directories
