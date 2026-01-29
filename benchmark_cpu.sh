@@ -11,7 +11,7 @@ TOTAL_JOBS=256
 PARAMS="training.batch_seed=0..${TOTAL_JOBS} training.batch_size=500 max_steps=${MAX_STEPS}"
 
 # Test different worker counts (adjust based on your CPU core count)
-WORKER_COUNTS=(96)
+WORKER_COUNTS=(90)
 
 echo "=== CPU Benchmarking ==="
 echo "Steps per job: ${MAX_STEPS}"

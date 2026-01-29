@@ -25,20 +25,15 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 import time
-import torch as t
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
-from omegaconf import OmegaConf
 import tempfile
-import copy
 
 from dln.experiment import run_experiment, run_comparative_experiment
 from dln.overrides import (
-    apply_overrides_to_dict,
     parse_overrides,
     expand_sweep_params,
     get_output_dir,
@@ -47,6 +42,8 @@ from dln.overrides import (
     check_subdir_uniqueness,
 )
 from dln.utils import load_config
+import torch as t
+
 
 # =============================================================================
 # CLI
@@ -79,9 +76,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        choices=["auto", "cpu", "cuda"],
-        default="auto",
-        help="Device selection (default: auto)",
+        choices=["cpu", "cuda", "mps"],
+        default="cuda",
+        help="Device selection (default: cuda)",
     )
     parser.add_argument(
         "--zip",
@@ -129,26 +126,17 @@ def parse_args() -> argparse.Namespace:
 # Job Execution
 # =============================================================================
 
-_worker_state: dict = {}
 
-
-def init_worker(base_cfg_dict: dict, config_type: str, num_workers: int) -> None:
-    """Initialize worker process with config and thread configuration."""
-    _worker_state["base_cfg_dict"] = base_cfg_dict
-    _worker_state["config_type"] = config_type
-
+def init_worker(num_workers: int) -> None:
+    """Initialize worker process with proper thread configuration."""
     if num_workers > 1:
         t.set_num_threads(1)
         t.set_num_interop_threads(1)
 
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-        os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 
 def run_single_job(
+    config_name: str,
+    config_dir: str,
     overrides: dict[str, Any],
     output_dir: Path,
     show_progress: bool = False,
@@ -156,11 +144,9 @@ def run_single_job(
 ) -> tuple[bool, str | None]:
     """Run a single experiment job. Returns (success, error_message)."""
     try:
-        cfg_dict = copy.deepcopy(_worker_state["base_cfg_dict"])
-        apply_overrides_to_dict(cfg_dict, overrides)
-        cfg = OmegaConf.create(cfg_dict)
+        cfg = load_config(config_name, config_dir, overrides)
 
-        if _worker_state["config_type"] == "comparative":
+        if config_dir == "comparative":
             run_comparative_experiment(
                 cfg,
                 output_dir=output_dir,
@@ -182,19 +168,19 @@ def run_single_job(
 
 
 def run_jobs_sequential(
+    config_name: str,
+    config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
-    base_cfg_dict: dict,
-    config_type: str,
     num_workers: int,
     device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
     """Run jobs sequentially. Returns (completed, skipped, failed, errors)."""
 
-    init_worker(base_cfg_dict, config_type, num_workers)
+    init_worker(num_workers)
 
     completed = 0
     skipped = 0
@@ -214,7 +200,9 @@ def run_jobs_sequential(
         if len(jobs) > 1:
             print(f"[{i + 1}/{len(jobs)}] {subdir}")
 
-        success, error = run_single_job(job, job_dir, show_progress=True, device=device)
+        success, error = run_single_job(
+            config_name, config_dir, job, job_dir, show_progress=True, device=device
+        )
 
         if success:
             completed += 1
@@ -229,13 +217,13 @@ def run_jobs_sequential(
 
 
 def run_jobs_parallel(
+    config_name: str,
+    config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
-    base_cfg_dict: dict,
-    config_type: str,
     num_workers: int,
     device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
@@ -266,13 +254,15 @@ def run_jobs_parallel(
     with ProcessPoolExecutor(
         max_workers=num_workers,
         initializer=init_worker,
-        initargs=(base_cfg_dict, config_type, num_workers),
+        initargs=(num_workers,),
     ) as executor:
         futures = {}
         for idx, (i, job, job_dir) in enumerate(jobs_to_run):
             show_progress = idx == 0
             future = executor.submit(
                 run_single_job,
+                config_name,
+                config_dir,
                 job,
                 job_dir,
                 show_progress,
@@ -310,17 +300,18 @@ def run_jobs_parallel(
 
 
 def run_sweep(
+    config_name: str,
+    comparative: bool,
     jobs: list[dict[str, Any]],
     output_dir: Path,
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
-    base_cfg_dict: dict,
-    config_type: str,
     workers: int,
     device: str,
 ) -> None:
     """Run a sweep of jobs."""
+    config_dir = "comparative" if comparative else "single"
 
     print(f"Running {len(jobs)} jobs (workers={workers}, device={device})")
     print(f"Output: {output_dir}")
@@ -330,25 +321,25 @@ def run_sweep(
 
     if workers == 1:
         completed, skipped, failed, errors = run_jobs_sequential(
+            config_name,
+            config_dir,
             jobs,
             output_dir,
             subdir_pattern,
             skip_existing,
             fail_fast,
-            base_cfg_dict,
-            config_type,
             workers,
             device,
         )
     else:
         completed, skipped, failed, errors = run_jobs_parallel(
+            config_name,
+            config_dir,
             jobs,
             output_dir,
             subdir_pattern,
             skip_existing,
             fail_fast,
-            base_cfg_dict,
-            config_type,
             workers,
             device,
         )
@@ -392,10 +383,9 @@ if __name__ == "__main__":
 
     check_subdir_uniqueness(jobs, subdir_pattern)
 
-    config_type = "comparative" if args.comparative else "single"
-    cfg = load_config(args.config_name, config_type)
+    config_dir = "comparative" if args.comparative else "single"
+    cfg = load_config(args.config_name, config_dir)
     experiment_name = cfg.experiment.name
-    base_cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     if args.save_results:
         output_dir = get_output_dir(experiment_name, overrides, args.output)
@@ -407,13 +397,13 @@ if __name__ == "__main__":
 
     try:
         run_sweep(
+            config_name=args.config_name,
+            comparative=args.comparative,
             jobs=jobs,
             output_dir=output_dir,
             subdir_pattern=subdir_pattern,
             skip_existing=args.skip_existing,
             fail_fast=args.fail_fast,
-            base_cfg_dict=base_cfg_dict,
-            config_type=config_type,
             workers=args.workers,
             device=args.device,
         )

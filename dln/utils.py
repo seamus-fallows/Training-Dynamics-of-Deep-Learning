@@ -1,4 +1,5 @@
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any, Type
@@ -7,7 +8,6 @@ import numpy as np
 import torch as t
 from torch.optim import Optimizer
 from torch import Tensor
-import os
 from omegaconf import OmegaConf, DictConfig
 
 
@@ -15,33 +15,21 @@ def seed_rng(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     t.manual_seed(seed)
-    if t.cuda.is_available():
-        t.cuda.manual_seed_all(seed)
 
 
-def get_device(device: str | None = None) -> t.device:
-    if device is None:
-        if t.cuda.is_available():
-            device = "cuda"
-        elif t.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-
+def resolve_device(device: str) -> t.device:
+    """Convert device string to torch.device."""
     if device == "cpu":
         return t.device("cpu")
-
     if device == "cuda":
         n_gpus = t.cuda.device_count()
         if n_gpus > 1:
             gpu_id = os.getpid() % n_gpus
             return t.device(f"cuda:{gpu_id}")
         return t.device("cuda")
-
     if device == "mps":
         return t.device("mps")
-
-    return t.device("cpu")
+    raise ValueError(f"Unknown device: {device}")
 
 
 def to_device(

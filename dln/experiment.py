@@ -5,7 +5,7 @@ Core experiment execution functions.
 from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 
-from .utils import seed_rng, get_device, save_history
+from .utils import resolve_device, seed_rng, save_history
 from .data import Dataset, create_metric_data
 from .factory import create_trainer
 from .callbacks import create_callbacks
@@ -20,14 +20,14 @@ def run_experiment(
     show_progress: bool = True,
     show_plots: bool = True,
     save_results: bool = True,
-    device: str | None = None,
+    device: str = "cuda",
 ) -> RunResult:
     """Run a single training experiment."""
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, output_dir / "config.yaml")
 
-    device = get_device(device=device)
+    device = resolve_device(device)
 
     seed_rng(cfg.data.data_seed)
     dataset = Dataset(
@@ -76,7 +76,7 @@ def run_comparative_experiment(
     show_progress: bool = True,
     show_plots: bool = True,
     save_results: bool = True,
-    device: str | None = None,
+    device: str = "cuda",
 ) -> RunResult:
     """Run a comparative training experiment (two models side by side)."""
 
@@ -84,7 +84,7 @@ def run_comparative_experiment(
         output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, output_dir / "config.yaml")
 
-    device = get_device(device=device)
+    device = resolve_device(device)
 
     seed_rng(cfg.data.data_seed)
     dataset = Dataset(

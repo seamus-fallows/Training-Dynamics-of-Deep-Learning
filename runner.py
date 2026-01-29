@@ -45,7 +45,7 @@ def run(
     output_root: Path = Path("outputs/runs"),
     show_progress: bool = True,
     show_plots: bool = True,
-    device: str | None = None,
+    device: str = "cuda",
 ) -> RunResult:
     cfg = load_config(config_name, "single", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
@@ -59,7 +59,7 @@ def run_comparative(
     output_root: Path = Path("outputs/runs"),
     show_progress: bool = True,
     show_plots: bool = True,
-    device: str | None = None,
+    device: str = "cuda",
 ) -> RunResult:
     cfg = load_config(config_name, "comparative", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
@@ -76,7 +76,7 @@ def run_sweep(
     output_root: Path = Path("outputs/sweeps"),
     show_progress: bool = False,
     show_plots: bool = False,
-    device: str | None = None,
+    device: str = "cuda",
 ) -> SweepResult:
     runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
@@ -108,7 +108,7 @@ def run_comparative_sweep(
     output_root: Path = Path("outputs/sweeps"),
     show_progress: bool = False,
     show_plots: bool = False,
-    device: str | None = None,
+    device: str = "cuda",
 ) -> SweepResult:
     runs: dict[str, RunResult] = {}
     sweep_name = f"{config_name}_{param.split('.')[-1]}"
