@@ -98,9 +98,9 @@ def parse_args() -> argparse.Namespace:
         help="Subdirectory pattern, e.g., 'g{model.gamma}_s{training.batch_seed}'",
     )
     parser.add_argument(
-        "--skip-existing",
+        "--overwrite",
         action="store_true",
-        help="Skip jobs where history.json already exists (requires --output)",
+        help="Overwrite existing results (default: skip existing)",
     )
     parser.add_argument(
         "--fail-fast",
@@ -311,13 +311,25 @@ def run_sweep(
     device: str,
 ) -> None:
     """Run a sweep of jobs."""
+    start_time = time.time()
+
     config_dir = "comparative" if comparative else "single"
+
+    # Count existing jobs upfront
+    if skip_existing:
+        existing = sum(
+            1
+            for i, job in enumerate(jobs)
+            if (
+                output_dir / make_job_subdir(i, job, subdir_pattern) / "history.json"
+            ).exists()
+        )
+        if existing:
+            print(f"Found {existing} existing jobs, will skip")
 
     print(f"Running {len(jobs)} jobs (workers={workers}, device={device})")
     print(f"Output: {output_dir}")
     print()
-
-    start_time = time.time()
 
     if workers == 1:
         completed, skipped, failed, errors = run_jobs_sequential(
@@ -370,10 +382,6 @@ def run_sweep(
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.skip_existing and not args.output:
-        print("Error: --skip-existing requires --output")
-        sys.exit(1)
-
     overrides = parse_overrides(args.overrides)
     jobs = expand_sweep_params(overrides, args.zip_groups)
 
@@ -402,7 +410,7 @@ if __name__ == "__main__":
             jobs=jobs,
             output_dir=output_dir,
             subdir_pattern=subdir_pattern,
-            skip_existing=args.skip_existing,
+            skip_existing=not args.overwrite,
             fail_fast=args.fail_fast,
             workers=args.workers,
             device=args.device,
