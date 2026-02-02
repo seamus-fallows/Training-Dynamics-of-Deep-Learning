@@ -1,5 +1,3 @@
 __pycache__/
 outputs/
-cache/
-*.pkl
 *.tar.gz*
