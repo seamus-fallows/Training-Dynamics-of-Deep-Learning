@@ -181,14 +181,17 @@ def get_output_dir(
 
 
 def auto_subdir_pattern(overrides: dict[str, Any]) -> str | None:
-    """Generate subdir pattern from sweep parameters."""
-    sweep_keys = [k for k, v in overrides.items() if isinstance(v, list)]
+    """
+    Generate subdir pattern from ALL override parameters.
 
-    if not sweep_keys:
+    Includes all overrides (not just sweep parameters) to ensure uniqueness
+    across multiple sweep commands writing to the same output directory.
+    """
+    if not overrides:
         return None
 
     parts = []
-    for key in sorted(sweep_keys):
+    for key in sorted(overrides.keys()):
         short_name = key.split(".")[-1]
         parts.append(f"{short_name}{{{key}}}")
 

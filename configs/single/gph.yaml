@@ -10,7 +10,7 @@ model:
   in_dim: 5
   out_dim: 5
   num_hidden: 3
-  hidden_dim: 100
+  hidden_dim: 50
   gamma: 1.0
   bias: false
   model_seed: 0

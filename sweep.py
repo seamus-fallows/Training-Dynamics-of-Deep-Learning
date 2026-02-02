@@ -76,9 +76,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        choices=["auto", "cpu", "cuda"],
-        default="auto",
-        help="Device selection (default: auto)",
+        choices=["cpu", "cuda", "mps"],
+        default="cuda",
+        help="Device selection (default: cuda)",
     )
     parser.add_argument(
         "--zip",
@@ -98,9 +98,9 @@ def parse_args() -> argparse.Namespace:
         help="Subdirectory pattern, e.g., 'g{model.gamma}_s{training.batch_seed}'",
     )
     parser.add_argument(
-        "--skip-existing",
+        "--overwrite",
         action="store_true",
-        help="Skip jobs where history.json already exists (requires --output)",
+        help="Overwrite existing results (default: skip existing)",
     )
     parser.add_argument(
         "--fail-fast",
@@ -127,9 +127,9 @@ def parse_args() -> argparse.Namespace:
 # =============================================================================
 
 
-def init_worker(device: str | None) -> None:
+def init_worker(num_workers: int) -> None:
     """Initialize worker process with proper thread configuration."""
-    if device == "cpu":
+    if num_workers > 1:
         t.set_num_threads(1)
         t.set_num_interop_threads(1)
 
@@ -175,11 +175,12 @@ def run_jobs_sequential(
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
+    num_workers: int,
     device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
     """Run jobs sequentially. Returns (completed, skipped, failed, errors)."""
 
-    init_worker(device)
+    init_worker(num_workers)
 
     completed = 0
     skipped = 0
@@ -223,7 +224,7 @@ def run_jobs_parallel(
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
-    workers: int,
+    num_workers: int,
     device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
     """Run jobs in parallel. Returns (completed, skipped, failed, errors)."""
@@ -251,7 +252,9 @@ def run_jobs_parallel(
     start_time = time.time()
 
     with ProcessPoolExecutor(
-        max_workers=workers, initializer=init_worker, initargs=(device,)
+        max_workers=num_workers,
+        initializer=init_worker,
+        initargs=(num_workers,),
     ) as executor:
         futures = {}
         for idx, (i, job, job_dir) in enumerate(jobs_to_run):
@@ -308,13 +311,25 @@ def run_sweep(
     device: str,
 ) -> None:
     """Run a sweep of jobs."""
+    start_time = time.time()
+
     config_dir = "comparative" if comparative else "single"
+
+    # Count existing jobs upfront
+    if skip_existing:
+        existing = sum(
+            1
+            for i, job in enumerate(jobs)
+            if (
+                output_dir / make_job_subdir(i, job, subdir_pattern) / "history.json"
+            ).exists()
+        )
+        if existing:
+            print(f"Found {existing} existing jobs, will skip")
 
     print(f"Running {len(jobs)} jobs (workers={workers}, device={device})")
     print(f"Output: {output_dir}")
     print()
-
-    start_time = time.time()
 
     if workers == 1:
         completed, skipped, failed, errors = run_jobs_sequential(
@@ -325,6 +340,7 @@ def run_sweep(
             subdir_pattern,
             skip_existing,
             fail_fast,
+            workers,
             device,
         )
     else:
@@ -366,10 +382,6 @@ def run_sweep(
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.skip_existing and not args.output:
-        print("Error: --skip-existing requires --output")
-        sys.exit(1)
-
     overrides = parse_overrides(args.overrides)
     jobs = expand_sweep_params(overrides, args.zip_groups)
 
@@ -398,7 +410,7 @@ if __name__ == "__main__":
             jobs=jobs,
             output_dir=output_dir,
             subdir_pattern=subdir_pattern,
-            skip_existing=args.skip_existing,
+            skip_existing=not args.overwrite,
             fail_fast=args.fail_fast,
             workers=args.workers,
             device=args.device,
