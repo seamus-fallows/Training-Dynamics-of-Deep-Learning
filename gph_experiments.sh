@@ -8,6 +8,6 @@ echo "=== Full batch training ==="
 python sweep.py -cn=gph $COMMON training.batch_size=null
 
 echo "=== Mini Batch Training ==="
-python sweep.py -cn=gph $COMMON training.batch_size=1,2,5,10,50 training.batch_seed=0..100
+python sweep.py -cn=gph $COMMON training.batch_size=1,2,5,10,50 training.batch_seed=0..200
 
 echo "=== Done ==="

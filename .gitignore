@@ -1,4 +1,4 @@
 __pycache__/
 outputs/
 figures/
-*.tar.gz
+*.tar.gz*
