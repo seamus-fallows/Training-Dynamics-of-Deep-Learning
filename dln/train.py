@@ -130,9 +130,7 @@ class Trainer:
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)
                 self.history.append(record)
-                if "train_loss" in record:
-                    progress_bar.set_postfix({"loss": f"{record['train_loss']:.4f}"})
-                elif "test_loss" in record:
+                if "test_loss" in record:
                     progress_bar.set_postfix({"loss": f"{record['test_loss']:.4f}"})
 
             self._training_step(inputs, targets)

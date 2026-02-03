@@ -81,7 +81,7 @@ def plot(
     | list[RunResult]
     | SweepResult
     | dict[str, RunResult | list[RunResult]],
-    metric: str = "train_loss",
+    metric: str = "test_loss",
     ylabel: str | None = None,
     ci: float = 0.95,
     smoothing: int | None = None,
@@ -142,7 +142,7 @@ def plot(
 
 def plot_comparative(
     runs: RunResult | SweepResult | dict[str, RunResult | list[RunResult]],
-    metric: str = "train_loss",
+    metric: str = "test_loss",
     suffixes: tuple[str, str] = ("A", "B"),
     ci: float = 0.95,
     smoothing: int | None = None,
@@ -288,7 +288,7 @@ def auto_plot(result: RunResult, show: bool = True) -> None:
 def subtract_baseline(
     baseline: RunResult,
     runs: list[RunResult],
-    metric: str = "train_loss",
+    metric: str = "test_loss",
 ) -> list[np.ndarray]:
     """Compute runs[i][metric] - baseline[metric] for each run."""
     base = np.array(baseline[metric])

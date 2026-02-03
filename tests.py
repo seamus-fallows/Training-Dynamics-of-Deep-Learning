@@ -590,58 +590,9 @@ class TestComparativeTrainer:
 
         assert history["param_distance"][-1] > 1e-6
 
-    def test_mini_batch_yields_correct_size(self):
-        device = t.device("cpu")
-        seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
-        seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(model_seed=42))
-        trainer = Trainer(
-            model=model,
-            cfg=make_training_config(batch_size=10, batch_seed=0),
-            dataset=dataset,
-            device=device,
-        )
-
-        batch_x, _ = next(trainer.train_iterator)
-        assert batch_x.shape[0] == 10
-
-    def test_offline_iterator_same_seed_same_sequence(self):
-        device = t.device("cpu")
-        seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
-
-        seed_rng(42)
-        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
-        trainer_a = Trainer(
-            model=model_a,
-            cfg=make_training_config(batch_size=10, batch_seed=99),
-            dataset=dataset,
-            device=device,
-        )
-
-        seed_rng(42)
-        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
-        trainer_b = Trainer(
-            model=model_b,
-            cfg=make_training_config(batch_size=10, batch_seed=99),
-            dataset=dataset,
-            device=device,
-        )
-
-        for _ in range(10):
-            x_a, y_a = next(trainer_a.train_iterator)
-            x_b, y_b = next(trainer_b.train_iterator)
-            assert t.allclose(x_a, x_b)
-            assert t.allclose(y_a, y_b)
-
 
 # ===========================================================================
-# Test Traier
+# Test Trainer
 # ===========================================================================
 class TestTrainer:
     def test_training_reduces_loss(self):
@@ -757,3 +708,176 @@ class TestTrainer:
         assert "weight_norm" in history
         assert len(history["weight_norm"]) == 5
         assert all(w > 0 for w in history["weight_norm"])
+
+    def test_mini_batch_yields_correct_size(self):
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(
+            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
+        )
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        batch_x, _ = next(trainer.train_iterator)
+        assert batch_x.shape[0] == 10
+
+    def test_offline_iterator_same_seed_same_sequence(self):
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(
+            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
+        )
+
+        seed_rng(42)
+        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer_a = Trainer(
+            model=model_a,
+            cfg=make_training_config(batch_size=10, batch_seed=99),
+            dataset=dataset,
+            device=device,
+        )
+
+        seed_rng(42)
+        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer_b = Trainer(
+            model=model_b,
+            cfg=make_training_config(batch_size=10, batch_seed=99),
+            dataset=dataset,
+            device=device,
+        )
+
+        for _ in range(10):
+            x_a, y_a = next(trainer_a.train_iterator)
+            x_b, y_b = next(trainer_b.train_iterator)
+            assert t.allclose(x_a, x_b)
+            assert t.allclose(y_a, y_b)
+
+    def test_full_batch_yields_all_samples(self):
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=None, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        batch_x, _ = next(trainer.train_iterator)
+        assert batch_x.shape[0] == 50
+
+
+# ===========================================================================
+# Test Callbacks
+# ===========================================================================
+class TestCallbacks:
+    def test_switch_batch_size(self):
+        """Batch size switch at specified step changes iterator behavior."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
+
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        batch_sizes = []
+
+        def record_batch_size(step, trainer):
+            x, _ = next(trainer.train_iterator)
+            batch_sizes.append(x.shape[0])
+
+        switch_callback = create_callback(
+            {"switch_batch_size": {"step": 25, "batch_size": None}}
+        )
+        trainer.run(
+            max_steps=50,
+            num_evaluations=50,
+            callbacks=[switch_callback, record_batch_size],  # switch first
+            show_progress=False,
+        )
+
+        assert all(bs == 10 for bs in batch_sizes[:25])
+        assert all(bs == 50 for bs in batch_sizes[25:])
+
+    def test_multi_switch_batch_size(self):
+        """Multiple batch size switches change iterator behavior at each step."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
+
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        batch_sizes = []
+
+        def record_batch_size(step, trainer):
+            x, _ = next(trainer.train_iterator)
+            batch_sizes.append(x.shape[0])
+
+        switch_callback = create_callback(
+            {"multi_switch_batch_size": {"schedule": {20: 5, 40: None}}}
+        )
+        trainer.run(
+            max_steps=60,
+            num_evaluations=60,
+            callbacks=[switch_callback, record_batch_size],  # switch first
+            show_progress=False,
+        )
+
+        assert all(bs == 10 for bs in batch_sizes[:20])
+        assert all(bs == 5 for bs in batch_sizes[20:40])
+        assert all(bs == 50 for bs in batch_sizes[40:])
+
+    def test_lr_decay(self):
+        """Learning rate decay reduces LR at specified intervals."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
+
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(lr=0.1, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        lrs = []
+
+        def record_lr(step, trainer):
+            lrs.append(trainer.optimizer.param_groups[0]["lr"])
+
+        decay_callback = create_callback(
+            {"lr_decay": {"decay_every": 10, "factor": 0.5}}
+        )
+        trainer.run(
+            max_steps=25,
+            num_evaluations=25,
+            callbacks=[decay_callback, record_lr],  # decay first
+            show_progress=False,
+        )
+
+        assert all(abs(lr - 0.1) < 1e-9 for lr in lrs[:10])
+        assert all(abs(lr - 0.05) < 1e-9 for lr in lrs[10:20])
+        assert all(abs(lr - 0.025) < 1e-9 for lr in lrs[20:])

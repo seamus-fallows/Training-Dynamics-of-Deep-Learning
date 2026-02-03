@@ -124,7 +124,7 @@ Three seeds control reproducibility:
 | Seed | Location | Controls |
 |------|----------|----------|
 | `data.data_seed` | Data config | Dataset generation (teacher matrix, train/test split) |
-| `model.seed` | Model config | Weight initialization |
+| `model.model_seed` | Model config | Weight initialization |
 | `training.batch_seed` | Training config | Batch shuffling order |
 
 ### Data Modes
@@ -152,7 +152,7 @@ training:
 
 ### Available Metrics
 
-**Model metrics** (require `metric_data` config):
+Metrics are computed on the test set at each evaluation step.
 
 | Metric | Description |
 |--------|-------------|
@@ -165,21 +165,6 @@ training:
 |--------|-------------|
 | `param_distance` | L2 distance between model parameters |
 | `param_cosine_sim` | Cosine similarity between model parameters |
-
-### Metric Data
-
-Metrics that compute gradients require input data. Configure via `metric_data`:
-
-```yaml
-# Use full training set
-metric_data:
-  mode: "population"
-
-# Use fixed subset (required for online mode)
-metric_data:
-  mode: "estimator"
-  holdout_size: 50
-```
 
 ### Callbacks
 
