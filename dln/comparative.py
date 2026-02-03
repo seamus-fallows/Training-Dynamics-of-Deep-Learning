@@ -1,6 +1,5 @@
 from typing import Any, Callable
 from tqdm import tqdm
-from torch import Tensor
 from dln.train import Trainer
 from dln.utils import rows_to_columns
 from metrics import compute_metrics, compute_comparative_metrics
