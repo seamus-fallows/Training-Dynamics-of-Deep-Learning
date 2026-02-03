@@ -40,6 +40,7 @@ training:
   criterion: MSELoss       # string: loss class name from torch.nn
                            #   MSELoss, L1Loss, CrossEntropyLoss, etc.
   batch_seed: 0            # int: random seed for batch shuffling
+  track_train_loss: false  # bool: track loss on full training set (offline mode only)
 
 # -----------------------------------------------------------------------------
 # Data

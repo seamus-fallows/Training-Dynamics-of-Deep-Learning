@@ -35,6 +35,7 @@ shared:
     optimizer_params: null
     criterion: MSELoss
     batch_seed: 0
+    track_train_loss: false
 
 # -----------------------------------------------------------------------------
 # Model A and B

@@ -21,6 +21,7 @@ class Trainer:
         self.model = model.to(device)
         self.dataset = dataset
         self.batch_size = cfg.batch_size
+        self.track_train_loss = cfg.track_train_loss
 
         self._batch_generator = t.Generator()
         self._batch_generator.manual_seed(cfg.batch_seed)
@@ -150,7 +151,14 @@ class Trainer:
         with t.inference_mode():
             test_loss = self.criterion(self.model(test_inputs), test_targets).item()
 
-        record = {"step": step, "test_loss": test_loss}
+            record = {"step": step, "test_loss": test_loss}
+
+            if self.track_train_loss:
+                train_inputs, train_targets = self.train_data
+                train_loss = self.criterion(
+                    self.model(train_inputs), train_targets
+                ).item()
+                record["train_loss"] = train_loss
 
         if metrics:
             record.update(

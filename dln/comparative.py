@@ -52,13 +52,23 @@ class ComparativeTrainer:
                 test_inputs, test_targets = self.trainer_a.test_data
 
                 with t.inference_mode():
-                    test_inputs, test_targets = self.trainer_a.test_data
                     record["test_loss_a"] = self.trainer_a.criterion(
                         self.trainer_a.model(test_inputs), test_targets
                     ).item()
                     record["test_loss_b"] = self.trainer_b.criterion(
                         self.trainer_b.model(test_inputs), test_targets
                     ).item()
+
+                    if self.trainer_a.track_train_loss:
+                        train_inputs, train_targets = self.trainer_a.train_data
+                        record["train_loss_a"] = self.trainer_a.criterion(
+                            self.trainer_a.model(train_inputs), train_targets
+                        ).item()
+                    if self.trainer_b.track_train_loss:
+                        train_inputs, train_targets = self.trainer_b.train_data
+                        record["train_loss_b"] = self.trainer_b.criterion(
+                            self.trainer_b.model(train_inputs), train_targets
+                        ).item()
 
                 if metrics:
                     metrics_a = compute_metrics(

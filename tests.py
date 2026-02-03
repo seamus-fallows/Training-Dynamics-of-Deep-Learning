@@ -60,6 +60,7 @@ def make_training_config(**overrides):
         optimizer_params=None,
         criterion="MSELoss",
         batch_seed=0,
+        track_train_loss=False,
     )
     defaults.update(overrides)
     return OmegaConf.create(defaults)
@@ -769,6 +770,25 @@ class TestTrainer:
 
         batch_x, _ = next(trainer.train_iterator)
         assert batch_x.shape[0] == 50
+
+    def test_train_loss_tracked_when_enabled(self):
+        """train_loss appears in history when track_train_loss=True."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(track_train_loss=True),
+            dataset=dataset,
+            device=device,
+        )
+
+        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+
+        assert "train_loss" in history
+        assert len(history["train_loss"]) == 5
 
 
 # ===========================================================================

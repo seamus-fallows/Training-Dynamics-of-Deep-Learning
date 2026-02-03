@@ -88,12 +88,19 @@ def validate_config(cfg: DictConfig, config_type: str = "single") -> None:
         _validate_training_config(cfg.training)
         _validate_data_config(cfg.data)
 
+        if cfg.training.track_train_loss and cfg.data.online:
+            raise ValueError("Cannot track train loss with online data generation.")
+
     elif config_type == "comparative":
         _validate_model_config(cfg.model_a)
         _validate_model_config(cfg.model_b)
         _validate_training_config(cfg.training_a)
         _validate_training_config(cfg.training_b)
         _validate_data_config(cfg.data)
+        if (
+            cfg.training_a.track_train_loss or cfg.training_b.track_train_loss
+        ) and cfg.data.online:
+            raise ValueError("Cannot track train loss with online data generation.")
 
 
 def _validate_model_config(model_cfg: DictConfig) -> None:
