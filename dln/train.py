@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from tqdm import tqdm
 import torch as t
 from torch import Tensor
@@ -16,7 +16,6 @@ class Trainer:
         cfg: DictConfig,
         dataset: Dataset,
         device: t.device,
-        metric_data: tuple[Tensor, Tensor] | None = None,
     ):
         self.device = device
         self.model = model.to(device)
@@ -27,10 +26,15 @@ class Trainer:
         self._batch_generator.manual_seed(cfg.batch_seed)
 
         self.test_data = to_device(dataset.test_data, device)
-        self.train_data = to_device(dataset.train_data, device)
-        self.train_iterator = dataset.get_train_iterator(
-            self.batch_size, device, self._batch_generator
-        )
+
+        if dataset.online:
+            self.train_data = None
+            self._teacher_matrix = dataset.teacher_matrix.to(device)
+        else:
+            self.train_data = to_device(dataset.train_data, device)
+            self._teacher_matrix = None
+
+        self._init_iterator()
 
         optimizer_cls = get_optimizer_cls(cfg.optimizer)
         criterion_cls = get_criterion_cls(cfg.criterion)
@@ -41,14 +45,64 @@ class Trainer:
 
         self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
-        self._metric_data = to_device(metric_data, device)
         self.history: list[dict[str, Any]] = []
 
     def set_batch_size(self, batch_size: int | None) -> None:
         self.batch_size = batch_size
-        self.train_iterator = self.dataset.get_train_iterator(
-            batch_size, self.device, self._batch_generator
-        )
+        self._init_iterator()
+
+    def _init_iterator(self) -> None:
+        if self.dataset.online:
+            if self.batch_size is None:
+                raise ValueError("Online mode requires explicit batch_size")
+            self.train_iterator = self._online_iterator()
+        else:
+            self.train_iterator = self._offline_iterator()
+
+    def _offline_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
+        x, y = self.train_data
+        n_samples = len(x)
+
+        if self.batch_size is None or self.batch_size >= n_samples:
+            while True:
+                yield x, y
+
+        while True:
+            indices = t.randperm(n_samples, generator=self._batch_generator).to(
+                self.device
+            )
+            for start_idx in range(0, n_samples - self.batch_size + 1, self.batch_size):
+                batch_idx = indices[start_idx : start_idx + self.batch_size]
+                yield x[batch_idx], y[batch_idx]
+
+    def _online_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
+        n_pregenerate = 1000
+
+        while True:
+            # Generate on CPU for reproducibility
+            inputs_all = t.randn(
+                n_pregenerate,
+                self.batch_size,
+                self.dataset.in_dim,
+                generator=self._batch_generator,
+            )
+
+            inputs_all = inputs_all.to(self.device)
+            targets_all = inputs_all @ self._teacher_matrix.T
+
+            if self.dataset.noise_std > 0:
+                noise_all = t.randn(
+                    n_pregenerate,
+                    self.batch_size,
+                    self.dataset.out_dim,
+                    generator=self._batch_generator,
+                )
+                targets_all = (
+                    targets_all + noise_all.to(self.device) * self.dataset.noise_std
+                )
+
+            for i in range(n_pregenerate):
+                yield inputs_all[i], targets_all[i]
 
     def run(
         self,
@@ -105,22 +159,14 @@ class Trainer:
                 ).item()
                 record["test_loss"] = test_loss
 
-            if self.train_data is not None:
-                train_inputs, train_targets = self.train_data
-                train_loss = self.criterion(
-                    self.model(train_inputs),
-                    train_targets,
-                ).item()
-                record["train_loss"] = train_loss
-
-        if metrics:
-            metric_inputs, metric_targets = self._metric_data or (None, None)
+        if metrics and self.test_data is not None:
+            test_inputs, test_targets = self.test_data
             record.update(
                 compute_metrics(
                     self.model,
                     metrics,
-                    metric_inputs,
-                    metric_targets,
+                    test_inputs,
+                    test_targets,
                     self.criterion,
                 )
             )

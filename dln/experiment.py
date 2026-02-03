@@ -6,7 +6,7 @@ from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 
 from .utils import resolve_device, seed_rng, save_history
-from .data import Dataset, create_metric_data
+from .data import Dataset
 from .factory import create_trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
@@ -22,7 +22,6 @@ def run_experiment(
     save_results: bool = True,
     device: str = "cuda",
 ) -> RunResult:
-    """Run a single training experiment."""
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, output_dir / "config.yaml")
@@ -35,7 +34,6 @@ def run_experiment(
         in_dim=cfg.model.in_dim,
         out_dim=cfg.model.out_dim,
     )
-    metric_data = create_metric_data(dataset, cfg.metric_data)
     callbacks = create_callbacks(cfg.callbacks)
 
     trainer = create_trainer(
@@ -43,7 +41,6 @@ def run_experiment(
         training_cfg=cfg.training,
         dataset=dataset,
         device=device,
-        metric_data=metric_data,
     )
 
     history = trainer.run(
@@ -59,13 +56,8 @@ def run_experiment(
 
     result = RunResult(history=history, config=cfg, output_dir=output_dir)
 
-    if cfg.plotting.enabled and save_results:
-        auto_plot(
-            result,
-            show=show_plots,
-            save=cfg.plotting.save,
-            show_test=cfg.plotting.show_test,
-        )
+    if cfg.plot_history and save_results:
+        auto_plot(result, show=show_plots)
 
     return result
 
@@ -78,8 +70,6 @@ def run_comparative_experiment(
     save_results: bool = True,
     device: str = "cuda",
 ) -> RunResult:
-    """Run a comparative training experiment (two models side by side)."""
-
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, output_dir / "config.yaml")
@@ -92,7 +82,6 @@ def run_comparative_experiment(
         in_dim=cfg.model_a.in_dim,
         out_dim=cfg.model_a.out_dim,
     )
-    metric_data = create_metric_data(dataset, cfg.metric_data)
     callbacks_a = create_callbacks(cfg.callbacks_a)
     callbacks_b = create_callbacks(cfg.callbacks_b)
 
@@ -109,11 +98,7 @@ def run_comparative_experiment(
         device=device,
     )
 
-    comparative_trainer = ComparativeTrainer(
-        trainer_a,
-        trainer_b,
-        metric_data=metric_data,
-    )
+    comparative_trainer = ComparativeTrainer(trainer_a, trainer_b)
 
     history = comparative_trainer.run(
         max_steps=cfg.max_steps,
@@ -124,17 +109,13 @@ def run_comparative_experiment(
         callbacks_b=callbacks_b,
         show_progress=show_progress,
     )
+
     if save_results:
         save_history(history, output_dir)
 
     result = RunResult(history=history, config=cfg, output_dir=output_dir)
 
-    if cfg.plotting.enabled and save_results:
-        auto_plot(
-            result,
-            show=show_plots,
-            save=cfg.plotting.save,
-            show_test=cfg.plotting.show_test,
-        )
+    if cfg.plot_history and save_results:
+        auto_plot(result, show=show_plots)
 
     return result

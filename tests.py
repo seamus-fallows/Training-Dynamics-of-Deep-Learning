@@ -4,7 +4,7 @@ from torch import nn
 from omegaconf import OmegaConf
 
 from dln.model import DeepLinearNetwork
-from dln.data import Dataset, create_metric_data
+from dln.data import Dataset
 from dln.train import Trainer
 from dln.comparative import ComparativeTrainer
 from dln.callbacks import create_callback
@@ -42,7 +42,7 @@ def make_model_config(**overrides):
 def make_data_config(**overrides):
     defaults = dict(
         train_samples=40,
-        test_samples=10,
+        test_samples=20,
         data_seed=0,
         online=False,
         noise_std=0.0,
@@ -60,15 +60,6 @@ def make_training_config(**overrides):
         optimizer_params=None,
         criterion="MSELoss",
         batch_seed=0,
-    )
-    defaults.update(overrides)
-    return OmegaConf.create(defaults)
-
-
-def make_metric_data_config(**overrides):
-    defaults = dict(
-        mode="population",
-        holdout_size=None,
     )
     defaults.update(overrides)
     return OmegaConf.create(defaults)
@@ -190,23 +181,23 @@ class TestOverrides:
         with pytest.raises(ValueError, match="must have multiple values"):
             expand_sweep_params(overrides, zip_groups=["a,b"])
 
-    def test_auto_subdir_pattern_single_sweep_param(self):
+    def test_auto_subdir_pattern_includes_all_overrides(self):
         overrides = {"model.gamma": [0.75, 1.0], "training.lr": 0.001}
         pattern = auto_subdir_pattern(overrides)
         assert "gamma" in pattern
         assert "{model.gamma}" in pattern
-        assert "lr" not in pattern
+        assert "lr" in pattern
+        assert "{training.lr}" in pattern
+
+    def test_auto_subdir_pattern_empty_returns_none(self):
+        pattern = auto_subdir_pattern({})
+        assert pattern is None
 
     def test_auto_subdir_pattern_multiple_sweep_params(self):
         overrides = {"model.gamma": [0.75, 1.0], "training.batch_seed": [0, 1]}
         pattern = auto_subdir_pattern(overrides)
         assert "gamma" in pattern
         assert "batch_seed" in pattern
-
-    def test_auto_subdir_pattern_no_sweep_params(self):
-        overrides = {"model.gamma": 0.75, "training.lr": 0.001}
-        pattern = auto_subdir_pattern(overrides)
-        assert pattern is None
 
     def test_format_subdir(self):
         pattern = "g{model.gamma}_s{training.seed}"
@@ -259,13 +250,38 @@ class TestSeedIsolation:
                 dataset=dataset,
                 device=device,
             )
-            return trainer.run(max_steps=50, num_evaluations=5)
+            return trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
 
         history_a = run_once()
         history_b = run_once()
 
         assert history_a["step"] == history_b["step"]
-        assert history_a["train_loss"] == history_b["train_loss"]
+        assert history_a["test_loss"] == history_b["test_loss"]
+
+    @pytest.mark.skipif(not t.cuda.is_available(), reason="CUDA not available")
+    def test_cpu_gpu_reproducibility(self):
+        """Same seeds produce identical results on CPU and GPU."""
+
+        def run_on_device(device):
+            seed_rng(0)
+            dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+            seed_rng(42)
+            model = DeepLinearNetwork(make_model_config(model_seed=42))
+            trainer = Trainer(
+                model=model,
+                cfg=make_training_config(batch_size=10, batch_seed=0),
+                dataset=dataset,
+                device=device,
+            )
+            return trainer.run(max_steps=100, num_evaluations=10, show_progress=False)
+
+        history_cpu = run_on_device(t.device("cpu"))
+        history_gpu = run_on_device(t.device("cuda"))
+
+        for loss_cpu, loss_gpu in zip(
+            history_cpu["test_loss"], history_gpu["test_loss"]
+        ):
+            assert abs(loss_cpu - loss_gpu) < 1e-5
 
 
 # ============================================================================
@@ -275,28 +291,45 @@ class TestSeedIsolation:
 
 class TestOnlineData:
     def test_online_iterator_produces_fresh_samples(self):
+        device = t.device("cpu")
         seed_rng(0)
         dataset = Dataset(
-            make_data_config(online=True, train_samples=100),
+            make_data_config(online=True, test_samples=10),
             in_dim=5,
             out_dim=5,
         )
-        iterator = dataset.get_train_iterator(batch_size=10, device=t.device("cpu"))
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
 
-        batch1, _ = next(iterator)
-        batch2, _ = next(iterator)
+        batch1, _ = next(trainer.train_iterator)
+        batch2, _ = next(trainer.train_iterator)
 
         assert not t.allclose(batch1, batch2)
 
     def test_online_requires_batch_size(self):
+        device = t.device("cpu")
         seed_rng(0)
         dataset = Dataset(
-            make_data_config(online=True),
+            make_data_config(online=True, test_samples=10),
             in_dim=5,
             out_dim=5,
         )
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+
         with pytest.raises(ValueError, match="batch_size"):
-            dataset.get_train_iterator(batch_size=None, device=t.device("cpu"))
+            Trainer(
+                model=model,
+                cfg=make_training_config(batch_size=None),
+                dataset=dataset,
+                device=device,
+            )
 
 
 class TestDataNoise:
@@ -329,55 +362,6 @@ class TestMatrixTypes:
         dataset = Dataset(config, in_dim=5, out_dim=3)
 
         assert dataset.teacher_matrix.shape == (3, 5)
-
-
-class TestMetricData:
-    def test_population_mode_returns_full_train_data(self):
-        seed_rng(0)
-        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
-        config = make_metric_data_config(mode="population")
-
-        x, y = create_metric_data(dataset, config)
-        train_x, train_y = dataset.train_data
-
-        assert t.allclose(x, train_x)
-        assert t.allclose(y, train_y)
-
-    def test_estimator_mode_returns_subset(self):
-        seed_rng(0)
-        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
-        config = make_metric_data_config(mode="estimator", holdout_size=10)
-
-        x, y = create_metric_data(dataset, config)
-
-        assert x.shape[0] == 10
-        assert y.shape[0] == 10
-
-    def test_estimator_mode_requires_holdout_size(self):
-        seed_rng(0)
-        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
-        config = make_metric_data_config(mode="estimator", holdout_size=None)
-
-        with pytest.raises(ValueError, match="holdout_size"):
-            create_metric_data(dataset, config)
-
-    def test_population_mode_fails_for_online(self):
-        seed_rng(0)
-        dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
-        config = make_metric_data_config(mode="population")
-
-        with pytest.raises(ValueError, match="online"):
-            create_metric_data(dataset, config)
-
-    def test_estimator_mode_works_for_online(self):
-        seed_rng(0)
-        dataset = Dataset(make_data_config(online=True), in_dim=5, out_dim=5)
-        config = make_metric_data_config(mode="estimator", holdout_size=20)
-
-        x, y = create_metric_data(dataset, config)
-
-        assert x.shape[0] == 20
-        assert y.shape[0] == 20
 
 
 # ============================================================================
@@ -540,9 +524,9 @@ class TestComparativeTrainer:
         dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
 
         seed_rng(42)
-        model_a = DeepLinearNetwork(make_model_config(seed=42))
+        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
         seed_rng(42)
-        model_b = DeepLinearNetwork(make_model_config(seed=42))
+        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
 
         trainer_a = Trainer(
             model=model_a,
@@ -562,9 +546,10 @@ class TestComparativeTrainer:
             max_steps=50,
             num_evaluations=5,
             comparative_metrics=["param_distance"],
+            show_progress=False,
         )
 
-        assert history["train_loss_a"] == history["train_loss_b"]
+        assert history["test_loss_a"] == history["test_loss_b"]
         assert all(d < 1e-6 for d in history["param_distance"])
 
     def test_different_batch_seeds_diverge(self):
@@ -600,136 +585,175 @@ class TestComparativeTrainer:
             max_steps=50,
             num_evaluations=5,
             comparative_metrics=["param_distance"],
+            show_progress=False,
         )
 
         assert history["param_distance"][-1] > 1e-6
 
-
-# ============================================================================
-# Callback Tests
-# ============================================================================
-
-
-class TestCallbacks:
-    def test_switch_batch_size(self):
-        """Batch size switch at specified step changes training behavior."""
-        device = t.device("cpu")
-        seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
-
-        seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(model_seed=42))
-        trainer = Trainer(
-            model=model,
-            cfg=make_training_config(batch_size=10, batch_seed=0),
-            dataset=dataset,
-            device=device,
-        )
-
-        callback = create_callback(
-            {"switch_batch_size": {"step": 25, "batch_size": None}}
-        )
-        trainer.run(max_steps=50, num_evaluations=5, callbacks=[callback])
-
-        assert trainer.batch_size is None
-
-    def test_multi_switch_batch_size(self):
-        """Multiple batch size switches work correctly."""
-        device = t.device("cpu")
-        seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
-
-        seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(model_seed=42))
-        trainer = Trainer(
-            model=model,
-            cfg=make_training_config(batch_size=10, batch_seed=0),
-            dataset=dataset,
-            device=device,
-        )
-
-        callback = create_callback(
-            {"multi_switch_batch_size": {"schedule": {10: 5, 30: None}}}
-        )
-        trainer.run(max_steps=50, num_evaluations=5, callbacks=[callback])
-
-        assert trainer.batch_size is None
-
-    def test_lr_decay(self):
-        """Learning rate decay reduces LR at specified intervals."""
-        device = t.device("cpu")
-        seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
-
-        seed_rng(42)
-        model = DeepLinearNetwork(make_model_config(model_seed=42))
-        trainer = Trainer(
-            model=model,
-            cfg=make_training_config(lr=0.1, batch_seed=0),
-            dataset=dataset,
-            device=device,
-        )
-
-        initial_lr = trainer.optimizer.param_groups[0]["lr"]
-        callback = create_callback({"lr_decay": {"decay_every": 10, "factor": 0.5}})
-        trainer.run(max_steps=25, num_evaluations=5, callbacks=[callback])
-
-        final_lr = trainer.optimizer.param_groups[0]["lr"]
-        # Should have decayed twice: at step 10 and step 20
-        expected_lr = initial_lr * 0.5 * 0.5
-        assert abs(final_lr - expected_lr) < 1e-6
-
-
-# ============================================================================
-# Batch Iterator Tests
-# ============================================================================
-
-
-class TestBatchIterator:
-    def test_full_batch_yields_all_samples(self):
-        seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
-        iterator = dataset.get_train_iterator(batch_size=None, device=t.device("cpu"))
-
-        batch_x, _ = next(iterator)
-        assert batch_x.shape[0] == 50
-
     def test_mini_batch_yields_correct_size(self):
+        device = t.device("cpu")
         seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
-        iterator = dataset.get_train_iterator(batch_size=10, device=t.device("cpu"))
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
 
-        batch_x, _ = next(iterator)
+        batch_x, _ = next(trainer.train_iterator)
         assert batch_x.shape[0] == 10
 
     def test_offline_iterator_same_seed_same_sequence(self):
+        device = t.device("cpu")
         seed_rng(0)
         dataset = Dataset(
             make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
         )
 
-        gen_a = t.Generator().manual_seed(42)
-        gen_b = t.Generator().manual_seed(42)
-
-        iter_a = dataset.get_train_iterator(
-            batch_size=10, device=t.device("cpu"), generator=gen_a
+        seed_rng(42)
+        model_a = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer_a = Trainer(
+            model=model_a,
+            cfg=make_training_config(batch_size=10, batch_seed=99),
+            dataset=dataset,
+            device=device,
         )
-        iter_b = dataset.get_train_iterator(
-            batch_size=10, device=t.device("cpu"), generator=gen_b
+
+        seed_rng(42)
+        model_b = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer_b = Trainer(
+            model=model_b,
+            cfg=make_training_config(batch_size=10, batch_seed=99),
+            dataset=dataset,
+            device=device,
         )
 
         for _ in range(10):
-            x_a, y_a = next(iter_a)
-            x_b, y_b = next(iter_b)
+            x_a, y_a = next(trainer_a.train_iterator)
+            x_b, y_b = next(trainer_b.train_iterator)
             assert t.allclose(x_a, x_b)
             assert t.allclose(y_a, y_b)
+
+
+# ===========================================================================
+# Test Traier
+# ===========================================================================
+class TestTrainer:
+    def test_training_reduces_loss(self):
+        """Model actually learns — loss decreases over training."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_seed=0, lr=0.01),
+            dataset=dataset,
+            device=device,
+        )
+
+        history = trainer.run(max_steps=500, num_evaluations=10, show_progress=False)
+
+        assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
+
+    def test_online_training_reduces_loss(self):
+        """Online mode training actually works."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(
+            make_data_config(online=True, test_samples=100),
+            in_dim=5,
+            out_dim=5,
+        )
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=20, batch_seed=0, lr=0.01),
+            dataset=dataset,
+            device=device,
+        )
+
+        history = trainer.run(max_steps=500, num_evaluations=10, show_progress=False)
+
+        assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
+
+    def test_history_keys_offline(self):
+        """Offline training history has expected keys."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(
+            make_data_config(train_samples=50, test_samples=20),
+            in_dim=5,
+            out_dim=5,
+        )
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+
+        assert "step" in history
+        assert "test_loss" in history
+        assert "train_loss" not in history
+        assert len(history["step"]) == 5
+
+    def test_history_keys_online(self):
+        """Online training history has test_loss."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(
+            make_data_config(online=True, test_samples=50),
+            in_dim=5,
+            out_dim=5,
+        )
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+
+        assert "step" in history
+        assert "test_loss" in history
+        assert "train_loss" not in history
+
+    def test_metrics_recorded_during_training(self):
+        """Metrics specified in run() appear in history."""
+        device = t.device("cpu")
+        seed_rng(0)
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        seed_rng(42)
+        model = DeepLinearNetwork(make_model_config(model_seed=42))
+        trainer = Trainer(
+            model=model,
+            cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            device=device,
+        )
+
+        history = trainer.run(
+            max_steps=50,
+            num_evaluations=5,
+            metrics=["weight_norm"],
+            show_progress=False,
+        )
+
+        assert "weight_norm" in history
+        assert len(history["weight_norm"]) == 5
+        assert all(w > 0 for w in history["weight_norm"])

@@ -8,10 +8,7 @@
 experiment:
   name: my_comparative_experiment
 
-plotting:
-  enabled: true
-  save: true
-  show_test: false
+plot_history: false
 
 # -----------------------------------------------------------------------------
 # Shared defaults
@@ -95,8 +92,6 @@ num_evaluations: 250
 metrics: []
 comparative_metrics:
   - param_distance
-
-metric_data: null
 
 # -----------------------------------------------------------------------------
 # Callbacks (separate for each model)

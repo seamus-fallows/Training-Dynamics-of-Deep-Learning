@@ -2,7 +2,7 @@ from typing import Any, Callable
 from tqdm import tqdm
 from torch import Tensor
 from dln.train import Trainer
-from dln.utils import to_device, rows_to_columns
+from dln.utils import rows_to_columns
 from metrics import compute_metrics, compute_comparative_metrics
 import torch as t
 
@@ -12,14 +12,10 @@ class ComparativeTrainer:
         self,
         trainer_a: Trainer,
         trainer_b: Trainer,
-        metric_data: tuple[Tensor, Tensor] | None = None,
     ):
         self.trainer_a = trainer_a
         self.trainer_b = trainer_b
         self.history: list[dict[str, Any]] = []
-
-        device = trainer_a.device
-        self._metric_data = to_device(metric_data, device)
 
     def run(
         self,
@@ -55,15 +51,6 @@ class ComparativeTrainer:
                 record = {"step": step}
 
                 with t.inference_mode():
-                    if self.trainer_a.train_data is not None:
-                        train_inputs, train_targets = self.trainer_a.train_data
-                        record["train_loss_a"] = self.trainer_a.criterion(
-                            self.trainer_a.model(train_inputs), train_targets
-                        ).item()
-                        record["train_loss_b"] = self.trainer_b.criterion(
-                            self.trainer_b.model(train_inputs), train_targets
-                        ).item()
-
                     if self.trainer_a.test_data is not None:
                         test_inputs, test_targets = self.trainer_a.test_data
                         record["test_loss_a"] = self.trainer_a.criterion(
@@ -73,20 +60,20 @@ class ComparativeTrainer:
                             self.trainer_b.model(test_inputs), test_targets
                         ).item()
 
-                if metrics:
-                    metric_inputs, metric_targets = self._metric_data or (None, None)
+                if metrics and self.trainer_a.test_data is not None:
+                    test_inputs, test_targets = self.trainer_a.test_data
                     metrics_a = compute_metrics(
                         self.trainer_a.model,
                         metrics,
-                        metric_inputs,
-                        metric_targets,
+                        test_inputs,
+                        test_targets,
                         self.trainer_a.criterion,
                     )
                     metrics_b = compute_metrics(
                         self.trainer_b.model,
                         metrics,
-                        metric_inputs,
-                        metric_targets,
+                        test_inputs,
+                        test_targets,
                         self.trainer_b.criterion,
                     )
 
@@ -104,10 +91,10 @@ class ComparativeTrainer:
 
                 self.history.append(record)
 
-                train_loss_a = record.get("train_loss_a")
+                test_loss_a = record.get("test_loss_a")
 
-                if train_loss_a is not None:
-                    progress_bar.set_postfix({"loss_a": f"{train_loss_a:.4f}"})
+                if test_loss_a is not None:
+                    progress_bar.set_postfix({"loss_a": f"{test_loss_a:.4f}"})
 
             self.trainer_a._training_step(inputs_a, targets_a)
             self.trainer_b._training_step(inputs_b, targets_b)

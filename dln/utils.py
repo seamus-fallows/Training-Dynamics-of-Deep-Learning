@@ -61,7 +61,7 @@ def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
     """Save training history to JSON file (columnar format)."""
     history_path = output_dir / "history.json"
     with history_path.open("w") as f:
-        json.dump(history, f, indent=2)
+        json.dump(history, f)
 
 
 def load_history(output_dir: Path) -> dict[str, list[Any]]:
@@ -87,7 +87,6 @@ def validate_config(cfg: DictConfig, config_type: str = "single") -> None:
         _validate_model_config(cfg.model)
         _validate_training_config(cfg.training)
         _validate_data_config(cfg.data)
-        _validate_metric_data_config(cfg.metric_data, cfg.data.online)
 
     elif config_type == "comparative":
         _validate_model_config(cfg.model_a)
@@ -95,7 +94,6 @@ def validate_config(cfg: DictConfig, config_type: str = "single") -> None:
         _validate_training_config(cfg.training_a)
         _validate_training_config(cfg.training_b)
         _validate_data_config(cfg.data)
-        _validate_metric_data_config(cfg.metric_data, cfg.data.online)
 
 
 def _validate_model_config(model_cfg: DictConfig) -> None:
@@ -121,23 +119,6 @@ def _validate_data_config(data_cfg: DictConfig) -> None:
 
     if data_cfg.online and data_cfg.test_samples is None:
         raise ValueError("Online mode requires test_samples for loss tracking")
-
-
-def _validate_metric_data_config(metric_cfg: DictConfig | None, online: bool) -> None:
-    if metric_cfg is None:
-        return
-
-    if metric_cfg.mode == "population":
-        if online:
-            raise ValueError("Population mode not available in online mode")
-    elif metric_cfg.mode == "estimator":
-        if metric_cfg.holdout_size is None:
-            raise ValueError("Estimator mode requires holdout_size")
-        assert metric_cfg.holdout_size > 0, "holdout_size must be positive"
-    else:
-        raise ValueError(
-            f"metric_data.mode must be 'population' or 'estimator', got {metric_cfg.mode}"
-        )
 
 
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"
