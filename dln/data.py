@@ -63,9 +63,6 @@ class Dataset:
         self.test_data = self.sample(cfg.test_samples) if cfg.test_samples else None
         self.train_data = None if self.online else self.sample(cfg.train_samples)
 
-        if self.online and self.test_data is None:
-            raise ValueError("Online mode requires test_samples for loss tracking")
-
     def sample(
         self, n: int, generator: t.Generator | None = None
     ) -> tuple[Tensor, Tensor]:

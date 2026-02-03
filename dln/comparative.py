@@ -49,19 +49,18 @@ class ComparativeTrainer:
 
             if step % evaluate_every == 0:
                 record = {"step": step}
+                test_inputs, test_targets = self.trainer_a.test_data
 
                 with t.inference_mode():
-                    if self.trainer_a.test_data is not None:
-                        test_inputs, test_targets = self.trainer_a.test_data
-                        record["test_loss_a"] = self.trainer_a.criterion(
-                            self.trainer_a.model(test_inputs), test_targets
-                        ).item()
-                        record["test_loss_b"] = self.trainer_b.criterion(
-                            self.trainer_b.model(test_inputs), test_targets
-                        ).item()
-
-                if metrics and self.trainer_a.test_data is not None:
                     test_inputs, test_targets = self.trainer_a.test_data
+                    record["test_loss_a"] = self.trainer_a.criterion(
+                        self.trainer_a.model(test_inputs), test_targets
+                    ).item()
+                    record["test_loss_b"] = self.trainer_b.criterion(
+                        self.trainer_b.model(test_inputs), test_targets
+                    ).item()
+
+                if metrics:
                     metrics_a = compute_metrics(
                         self.trainer_a.model,
                         metrics,

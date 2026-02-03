@@ -65,7 +65,7 @@ training_b: {}
 # -----------------------------------------------------------------------------
 data:
   train_samples: 500
-  test_samples: null
+  test_samples: 500
   data_seed: 0
   online: false
   noise_std: 0.0

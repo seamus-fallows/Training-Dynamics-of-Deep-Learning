@@ -113,12 +113,8 @@ def _validate_training_config(training_cfg: DictConfig) -> None:
 
 def _validate_data_config(data_cfg: DictConfig) -> None:
     assert data_cfg.train_samples > 0, "train_samples must be positive"
-    if data_cfg.test_samples is not None:
-        assert data_cfg.test_samples > 0, "test_samples must be positive"
+    assert data_cfg.test_samples > 0, "test_samples must be positive"
     assert data_cfg.noise_std >= 0, "noise_std must be non-negative"
-
-    if data_cfg.online and data_cfg.test_samples is None:
-        raise ValueError("Online mode requires test_samples for loss tracking")
 
 
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"

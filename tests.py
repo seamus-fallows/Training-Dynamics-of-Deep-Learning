@@ -712,9 +712,7 @@ class TestTrainer:
     def test_mini_batch_yields_correct_size(self):
         device = t.device("cpu")
         seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
+        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
         seed_rng(42)
         model = DeepLinearNetwork(make_model_config(model_seed=42))
         trainer = Trainer(
@@ -730,9 +728,7 @@ class TestTrainer:
     def test_offline_iterator_same_seed_same_sequence(self):
         device = t.device("cpu")
         seed_rng(0)
-        dataset = Dataset(
-            make_data_config(train_samples=50, test_samples=None), in_dim=5, out_dim=5
-        )
+        dataset = Dataset(make_data_config(train_samples=50), in_dim=5, out_dim=5)
 
         seed_rng(42)
         model_a = DeepLinearNetwork(make_model_config(model_seed=42))

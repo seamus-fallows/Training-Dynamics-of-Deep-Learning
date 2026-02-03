@@ -135,6 +135,7 @@ Three seeds control reproducibility:
 data:
   online: false
   train_samples: 100
+  test_samples: 100
 
 training:
   batch_size: null    # full batch

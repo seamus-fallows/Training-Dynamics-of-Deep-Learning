@@ -130,8 +130,7 @@ class Trainer:
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)
                 self.history.append(record)
-                if "test_loss" in record:
-                    progress_bar.set_postfix({"loss": f"{record['test_loss']:.4f}"})
+                progress_bar.set_postfix({"loss": f"{record['test_loss']:.4f}"})
 
             self._training_step(inputs, targets)
 
@@ -146,19 +145,14 @@ class Trainer:
         return loss
 
     def _evaluate(self, step: int, metrics: list | None) -> dict[str, Any]:
-        record = {"step": step}
+        test_inputs, test_targets = self.test_data
 
         with t.inference_mode():
-            if self.test_data is not None:
-                test_inputs, test_targets = self.test_data
-                test_loss = self.criterion(
-                    self.model(test_inputs),
-                    test_targets,
-                ).item()
-                record["test_loss"] = test_loss
+            test_loss = self.criterion(self.model(test_inputs), test_targets).item()
 
-        if metrics and self.test_data is not None:
-            test_inputs, test_targets = self.test_data
+        record = {"step": step, "test_loss": test_loss}
+
+        if metrics:
             record.update(
                 compute_metrics(
                     self.model,
