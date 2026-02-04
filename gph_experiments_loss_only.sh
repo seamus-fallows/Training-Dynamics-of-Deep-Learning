@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-WORKERS=400
-OUTPUT=outputs/gph_sweep
+WORKERS=300
+OUTPUT=outputs/gph_sweep_2
 
 echo "=== Full Batch Training ==="
 python sweep.py -cn=gph \
@@ -25,7 +25,7 @@ python sweep.py -cn=gph \
     model.model_seed=0,1 \
     data.noise_std=0.0,0.2 \
     training.batch_size=1,2,5,10,50 \
-    training.batch_seed=0..10000 \
+    training.batch_seed=0..1000 \
     --workers=$WORKERS \
     --device=cpu \
     --output=$OUTPUT
@@ -38,7 +38,7 @@ python sweep.py -cn=gph \
     model.model_seed=0,1 \
     data.noise_std=0.0,0.2 \
     training.batch_size=1,2,5,10,50 \
-    training.batch_seed=0..10000 \
+    training.batch_seed=0..1000 \
     --workers=$WORKERS \
     --device=cpu \
     --output=$OUTPUT

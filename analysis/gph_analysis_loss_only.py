@@ -2,7 +2,7 @@
 GPH Sweep Analysis
 
 Analyzes results from the GPH experiment sweep with:
-- Parallel data loading across 164 CPU cores
+- Parallel data loading across CPU cores
 - Caching of computed statistics for fast plot iteration
 - Three plot types: loss comparison, loss ratio, min/max spread
 """
@@ -23,9 +23,9 @@ from scipy import stats as scipy_stats
 # Configuration
 # =============================================================================
 
-BASE_PATH = Path("outputs/gph_sweep")
-CACHE_PATH = Path("cache/gph_sweep_stats.pkl")
-FIGURES_PATH = Path("figures/gph_sweep")
+BASE_PATH = Path("outputs/gph_sweep_2")
+CACHE_PATH = Path("cache/gph_sweep_2_stats.pkl")
+FIGURES_PATH = Path("figures/gph_sweep_2")
 
 WIDTHS = [10, 50, 100]
 GAMMAS = [0.75, 1.0, 1.5]
@@ -37,6 +37,7 @@ GAMMA_MAX_STEPS = {0.75: 4000, 1.0: 6000, 1.5: 25000}
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 
 N_WORKERS = 164
+MAX_BATCH_SEED = 1000
 
 
 # =============================================================================
@@ -44,7 +45,6 @@ N_WORKERS = 164
 # =============================================================================
 
 
-# Global cache for directory listing (populated once)
 def get_gd_dir_name(width: int, gamma: float, noise: float, model_seed: int) -> str:
     max_steps = GAMMA_MAX_STEPS[gamma]
     return f"noise_std{noise}_max_steps{max_steps}_gamma{gamma}_hidden_dim{width}_model_seed{model_seed}_batch_sizeNone"
@@ -67,14 +67,8 @@ def find_sgd_dirs(
     """Find all SGD run directories by constructing paths directly."""
     max_steps = GAMMA_MAX_STEPS[gamma]
 
-    # Determine batch_seed range based on gamma
-    if gamma == 1.5:
-        max_batch_seed = 1000
-    else:
-        max_batch_seed = 10000
-
     dirs = []
-    for batch_seed in range(max_batch_seed):
+    for batch_seed in range(MAX_BATCH_SEED):
         name = f"noise_std{noise}_max_steps{max_steps}_gamma{gamma}_hidden_dim{width}_model_seed{model_seed}_batch_seed{batch_seed}_batch_size{batch_size}"
         path = BASE_PATH / name
         if path.exists():
@@ -139,15 +133,15 @@ def compute_stats_for_config(
     sgd_losses = []
     for path in sgd_dirs:
         hist = load_history(path)
-        if hist and "train_loss" in hist:
-            sgd_losses.append(np.array(hist["train_loss"]))
+        if hist and "test_loss" in hist:
+            sgd_losses.append(np.array(hist["test_loss"]))
 
     if not sgd_losses:
         return None
 
     # Compute statistics
     steps = np.array(gd_hist["step"])
-    gd_loss = np.array(gd_hist["train_loss"])
+    gd_loss = np.array(gd_hist["test_loss"])
 
     sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_losses)
     sgd_arr = np.stack(sgd_losses)
@@ -317,7 +311,7 @@ def plot_loss_ratio(
                 ax_ratio.set_xlabel("Step")
                 ax_ratio.set_ylabel("SGD / GD")
                 ax_loss.set_xlabel("Step")
-                ax_loss.set_ylabel("Train Loss")
+                ax_loss.set_ylabel("Test Loss")
                 continue
 
             s = stats[key]
@@ -379,7 +373,7 @@ def plot_loss_ratio(
 
             ax_loss.set_yscale("log")
             ax_loss.set_xlabel("Step")
-            ax_loss.set_ylabel("Train Loss")
+            ax_loss.set_ylabel("Test Loss")
             ax_loss.legend(loc="upper right", fontsize=6)
 
     fig.suptitle(
@@ -411,7 +405,7 @@ def plot_loss_spread(
             if key not in stats:
                 ax.set_title(f"w={width}, seed={model_seed}\n(no data)")
                 ax.set_xlabel("Step")
-                ax.set_ylabel("Train Loss")
+                ax.set_ylabel("Test Loss")
                 continue
 
             s = stats[key]
@@ -430,7 +424,7 @@ def plot_loss_spread(
 
             ax.set_yscale("log")
             ax.set_xlabel("Step")
-            ax.set_ylabel("Train Loss")
+            ax.set_ylabel("Test Loss")
             ax.set_title(f"w={width}, seed={model_seed}")
             ax.legend(loc="upper right", fontsize=8)
 
@@ -471,7 +465,7 @@ def plot_loss_variance(
                 ax_cv.set_xlabel("Step")
                 ax_cv.set_ylabel("CV")
                 ax_loss.set_xlabel("Step")
-                ax_loss.set_ylabel("Train Loss")
+                ax_loss.set_ylabel("Test Loss")
                 continue
 
             s = stats[key]
@@ -513,7 +507,7 @@ def plot_loss_variance(
 
             ax_loss.set_yscale("log")
             ax_loss.set_xlabel("Step")
-            ax_loss.set_ylabel("Train Loss")
+            ax_loss.set_ylabel("Test Loss")
             ax_loss.legend(loc="upper right", fontsize=6)
 
     fig.suptitle(
