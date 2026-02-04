@@ -56,7 +56,5 @@ python sweep.py -cn=gph \
     --device=cpu \
     --output=$OUTPUT
 
-echo "=== Compressing Results ==="
-tar -czvf gph_sweep_results.tar.gz -C outputs gph_sweep
 
 echo "=== Done ==="
