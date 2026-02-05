@@ -40,7 +40,7 @@ from dln.overrides import (
     make_job_subdir,
     check_subdir_uniqueness,
 )
-from dln.utils import load_config
+from dln.utils import load_base_config, resolve_config
 import torch as t
 
 
@@ -134,22 +134,20 @@ def init_worker(num_workers: int) -> None:
 
 
 def run_single_job(
-    config_name: str,
+    base_config: dict,
     config_dir: str,
     overrides: dict[str, Any],
     output_dir: Path,
-    show_progress: bool = False,
     device: str | None = None,
 ) -> tuple[bool, str | None]:
     """Run a single experiment job. Returns (success, error_message)."""
     try:
-        cfg = load_config(config_name, config_dir, overrides)
+        cfg = resolve_config(base_config, config_dir, overrides)
 
         if config_dir == "comparative":
             run_comparative_experiment(
                 cfg,
                 output_dir=output_dir,
-                show_progress=show_progress,
                 show_plots=False,
                 device=device,
             )
@@ -157,7 +155,6 @@ def run_single_job(
             run_experiment(
                 cfg,
                 output_dir=output_dir,
-                show_progress=show_progress,
                 show_plots=False,
                 device=device,
             )
@@ -167,7 +164,7 @@ def run_single_job(
 
 
 def run_jobs_sequential(
-    config_name: str,
+    base_config: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
@@ -200,7 +197,7 @@ def run_jobs_sequential(
             print(f"[{i + 1}/{len(jobs)}] {subdir}")
 
         success, error = run_single_job(
-            config_name, config_dir, job, job_dir, show_progress=True, device=device
+            base_config, config_dir, job, job_dir, device=device
         )
 
         if success:
@@ -216,7 +213,7 @@ def run_jobs_sequential(
 
 
 def run_jobs_parallel(
-    config_name: str,
+    base_config: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
@@ -257,14 +254,12 @@ def run_jobs_parallel(
     ) as executor:
         futures = {}
         for idx, (i, job, job_dir) in enumerate(jobs_to_run):
-            show_progress = idx == 0
             future = executor.submit(
                 run_single_job,
-                config_name,
+                base_config,
                 config_dir,
                 job,
                 job_dir,
-                show_progress,
                 device,
             )
             futures[future] = (i, job)
@@ -299,8 +294,8 @@ def run_jobs_parallel(
 
 
 def run_sweep(
-    config_name: str,
-    comparative: bool,
+    base_config: dict,
+    config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
     subdir_pattern: str | None,
@@ -311,8 +306,6 @@ def run_sweep(
 ) -> None:
     """Run a sweep of jobs."""
     start_time = time.time()
-
-    config_dir = "comparative" if comparative else "single"
 
     # Count existing jobs upfront
     if skip_existing:
@@ -332,7 +325,7 @@ def run_sweep(
 
     if workers == 1:
         completed, skipped, failed, errors = run_jobs_sequential(
-            config_name,
+            base_config,
             config_dir,
             jobs,
             output_dir,
@@ -344,7 +337,7 @@ def run_sweep(
         )
     else:
         completed, skipped, failed, errors = run_jobs_parallel(
-            config_name,
+            base_config,
             config_dir,
             jobs,
             output_dir,
@@ -391,7 +384,8 @@ if __name__ == "__main__":
     check_subdir_uniqueness(jobs, subdir_pattern)
 
     config_dir = "comparative" if args.comparative else "single"
-    cfg = load_config(args.config_name, config_dir)
+    base_config = load_base_config(args.config_name, config_dir)
+    cfg = resolve_config(base_config, config_dir)
     experiment_name = cfg.experiment.name
 
     if args.save_results:
@@ -404,8 +398,8 @@ if __name__ == "__main__":
 
     try:
         run_sweep(
-            config_name=args.config_name,
-            comparative=args.comparative,
+            base_config=base_config,
+            config_dir=config_dir,
             jobs=jobs,
             output_dir=output_dir,
             subdir_pattern=subdir_pattern,

@@ -43,13 +43,12 @@ def run(
     overrides: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     output_root: Path = Path("outputs/runs"),
-    show_progress: bool = True,
     show_plots: bool = True,
     device: str = "cuda",
 ) -> RunResult:
     cfg = load_config(config_name, "single", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    return run_experiment(cfg, output_dir, show_progress, show_plots, device)
+    return run_experiment(cfg, output_dir, show_plots, device)
 
 
 def run_comparative(
@@ -57,15 +56,12 @@ def run_comparative(
     overrides: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     output_root: Path = Path("outputs/runs"),
-    show_progress: bool = True,
     show_plots: bool = True,
     device: str = "cuda",
 ) -> RunResult:
     cfg = load_config(config_name, "comparative", overrides)
     output_dir = output_dir or _make_output_dir(config_name, output_root)
-    return run_comparative_experiment(
-        cfg, output_dir, show_progress, show_plots, device
-    )
+    return run_comparative_experiment(cfg, output_dir, show_plots, device)
 
 
 def run_sweep(
@@ -74,7 +70,6 @@ def run_sweep(
     values: list[Any],
     overrides: dict[str, Any] | None = None,
     output_root: Path = Path("outputs/sweeps"),
-    show_progress: bool = False,
     show_plots: bool = False,
     device: str = "cuda",
 ) -> SweepResult:
@@ -92,7 +87,6 @@ def run_sweep(
             config_name,
             overrides=run_overrides,
             output_dir=output_dir,
-            show_progress=show_progress,
             show_plots=show_plots,
             device=device,
         )
@@ -106,7 +100,6 @@ def run_comparative_sweep(
     values: list[Any],
     overrides: dict[str, Any] | None = None,
     output_root: Path = Path("outputs/sweeps"),
-    show_progress: bool = False,
     show_plots: bool = False,
     device: str = "cuda",
 ) -> SweepResult:
@@ -124,7 +117,6 @@ def run_comparative_sweep(
             config_name,
             overrides=run_overrides,
             output_dir=output_dir,
-            show_progress=show_progress,
             show_plots=show_plots,
             device=device,
         )
@@ -137,7 +129,6 @@ def run_sweep_multi(
     overrides: dict[str, Any],
     zip_groups: list[str] | None = None,
     output_root: Path = Path("outputs/sweeps"),
-    show_progress: bool = False,
     show_plots: bool = False,
     device: str | None = None,
 ) -> dict[str, RunResult]:
@@ -157,7 +148,6 @@ def run_sweep_multi(
             config_name,
             overrides=job_overrides,
             output_dir=job_dir,
-            show_progress=show_progress,
             show_plots=show_plots,
             device=device,
         )

@@ -1,5 +1,4 @@
 from typing import Any, Callable, Iterator
-from tqdm import tqdm
 import torch as t
 from torch import Tensor
 from dln.data import Dataset
@@ -111,18 +110,14 @@ class Trainer:
         num_evaluations: int,
         metrics: list | None = None,
         callbacks: list[Callable] | None = None,
-        show_progress: bool = True,
     ) -> dict[str, list[Any]]:
         evaluate_every = max(1, max_steps // num_evaluations)
 
         self.model.train()
         self.history = []
         callbacks = callbacks or []
-        progress_bar = tqdm(
-            range(max_steps), desc="Training", disable=not show_progress
-        )
 
-        for step in progress_bar:
+        for step in range(max_steps):
             for callback in callbacks:
                 callback(step, self)
 
@@ -131,7 +126,6 @@ class Trainer:
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)
                 self.history.append(record)
-                progress_bar.set_postfix({"loss": f"{record['test_loss']:.4f}"})
 
             self._training_step(inputs, targets)
 

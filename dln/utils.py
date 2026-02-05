@@ -127,20 +127,25 @@ def _validate_data_config(data_cfg: DictConfig) -> None:
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"
 
 
-def load_config(
-    config_name: str,
+def load_base_config(config_name: str, config_dir: str = "single") -> dict:
+    """Load a YAML config file and return as a plain dict (no overrides, no resolution)."""
+    config_path = CONFIG_ROOT / config_dir / f"{config_name}.yaml"
+    cfg = OmegaConf.load(config_path)
+    return OmegaConf.to_container(cfg)
+
+
+def resolve_config(
+    base_config: dict,
     config_dir: str = "single",
     overrides: dict[str, Any] | None = None,
 ) -> DictConfig:
-    """Load a YAML config and apply overrides."""
-    config_path = CONFIG_ROOT / config_dir / f"{config_name}.yaml"
-    cfg = OmegaConf.load(config_path)
+    """Apply overrides, merge shared configs, resolve, and validate. No file I/O."""
+    cfg = OmegaConf.create(base_config)
 
     if overrides:
         for key, value in overrides.items():
             OmegaConf.update(cfg, key, value, merge=True)
 
-    # Merge shared into a/b configs for comparative experiments
     if config_dir == "comparative" and "shared" in cfg:
         if "model" in cfg.shared:
             cfg.model_a = OmegaConf.merge(cfg.shared.model, cfg.get("model_a") or {})
@@ -154,7 +159,15 @@ def load_config(
             )
 
     OmegaConf.resolve(cfg)
-
     validate_config(cfg, config_dir)
-
     return cfg
+
+
+def load_config(
+    config_name: str,
+    config_dir: str = "single",
+    overrides: dict[str, Any] | None = None,
+) -> DictConfig:
+    """Load a YAML config and apply overrides."""
+    base = load_base_config(config_name, config_dir)
+    return resolve_config(base, config_dir, overrides)
