@@ -1,10 +1,7 @@
 experiment:
   name: "gph"
 
-plotting:
-  enabled: false
-  save: false
-  show_test: false
+plot_history: false
 
 model:
   in_dim: 5
@@ -22,6 +19,7 @@ training:
   optimizer_params: null
   criterion: "MSELoss"
   batch_seed: 0
+  track_train_loss: false
 
 data:
   train_samples: 500
@@ -36,10 +34,6 @@ data:
 metrics:
   # - trace_covariances:
   #     chunks: 1
-
-metric_data:
-  mode: "population"
-  holdout_size: null
 
 max_steps: 10000
 num_evaluations: 250

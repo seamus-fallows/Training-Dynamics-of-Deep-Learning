@@ -81,7 +81,7 @@ def plot(
     | list[RunResult]
     | SweepResult
     | dict[str, RunResult | list[RunResult]],
-    metric: str = "train_loss",
+    metric: str = "test_loss",
     ylabel: str | None = None,
     ci: float = 0.95,
     smoothing: int | None = None,
@@ -142,7 +142,7 @@ def plot(
 
 def plot_comparative(
     runs: RunResult | SweepResult | dict[str, RunResult | list[RunResult]],
-    metric: str = "train_loss",
+    metric: str = "test_loss",
     suffixes: tuple[str, str] = ("A", "B"),
     ci: float = 0.95,
     smoothing: int | None = None,
@@ -229,16 +229,11 @@ def plot_comparative(
     return ax
 
 
-def plot_run(
-    result: RunResult, metrics: list[str] | None = None, show_test: bool = True
-) -> None:
+def plot_run(result: RunResult, metrics: list[str] | None = None) -> None:
     """Quick visualization of a single run: loss + all tracked metrics."""
     if metrics is None:
-        metrics = [
-            m for m in result.metric_names() if m not in ("train_loss", "test_loss")
-        ]
+        metrics = [m for m in result.metric_names() if m != "test_loss"]
 
-    has_test = show_test and result.has("test_loss")
     n_panels = 1 + len(metrics)
     n_cols = min(n_panels, 2)
     n_rows = (n_panels + n_cols - 1) // n_cols
@@ -250,9 +245,7 @@ def plot_run(
 
     steps = result["step"]
 
-    axes[0].plot(steps, result["train_loss"], label="train")
-    if has_test:
-        axes[0].plot(steps, result["test_loss"], label="test")
+    axes[0].plot(steps, result["test_loss"], label="test")
     axes[0].set_yscale("log")
     axes[0].set_xlabel("Step")
     axes[0].set_ylabel("Loss")
@@ -269,20 +262,18 @@ def plot_run(
     fig.tight_layout()
 
 
-def auto_plot(
-    result: RunResult, show: bool = True, save: bool = True, show_test: bool = True
-) -> None:
-    """Auto-generate plots for a run. Called by run.py after training."""
-    is_comparative = result.has("train_loss_a")
+def auto_plot(result: RunResult, show: bool = True) -> None:
+    """Auto-generate plots for a run."""
+    is_comparative = result.has("test_loss_a")
 
     if is_comparative:
         fig, ax = plt.subplots()
         plot_comparative(result, ax=ax)
     else:
-        plot_run(result, show_test=show_test)
+        plot_run(result)
         fig = plt.gcf()
 
-    if save and result.output_dir:
+    if result.output_dir:
         fig.savefig(result.output_dir / "plots.png", dpi=150, bbox_inches="tight")
 
     if not show:
@@ -297,7 +288,7 @@ def auto_plot(
 def subtract_baseline(
     baseline: RunResult,
     runs: list[RunResult],
-    metric: str = "train_loss",
+    metric: str = "test_loss",
 ) -> list[np.ndarray]:
     """Compute runs[i][metric] - baseline[metric] for each run."""
     base = np.array(baseline[metric])
