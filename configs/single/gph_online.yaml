@@ -1,0 +1,40 @@
+experiment:
+  name: "gph"
+
+plot_history: false
+
+model:
+  in_dim: 5
+  out_dim: 5
+  num_hidden: 3
+  hidden_dim: 100
+  gamma: 1.0
+  bias: false
+  model_seed: 0
+
+training:
+  lr: 0.0001
+  batch_size: null
+  optimizer: "SGD"
+  optimizer_params: null
+  criterion: "MSELoss"
+  batch_seed: 0
+  track_train_loss: false
+
+data:
+  train_samples: 500
+  test_samples: 500
+  data_seed: 0
+  online: true
+  noise_std: 0.0
+  params:
+    matrix: "diagonal"
+    scale: 10.0
+    
+metrics:
+  # - trace_covariances:
+  #     chunks: 1
+
+max_steps: 10000
+num_evaluations: 250
+callbacks: []
