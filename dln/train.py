@@ -24,6 +24,7 @@ class Trainer:
 
         self._batch_generator = t.Generator()
         self._batch_generator.manual_seed(cfg.batch_seed)
+        self._noise_generator = t.Generator().manual_seed(cfg.batch_seed + 1)
 
         self.test_data = to_device(dataset.test_data, device)
 
@@ -95,7 +96,7 @@ class Trainer:
                     n_pregenerate,
                     self.batch_size,
                     self.dataset.out_dim,
-                    generator=self._batch_generator,
+                    generator=self._noise_generator,
                 )
                 targets_all = (
                     targets_all + noise_all.to(self.device) * self.dataset.noise_std

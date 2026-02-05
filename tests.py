@@ -251,7 +251,7 @@ class TestSeedIsolation:
                 dataset=dataset,
                 device=device,
             )
-            return trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+            return trainer.run(max_steps=50, num_evaluations=5)
 
         history_a = run_once()
         history_b = run_once()
@@ -274,7 +274,7 @@ class TestSeedIsolation:
                 dataset=dataset,
                 device=device,
             )
-            return trainer.run(max_steps=100, num_evaluations=10, show_progress=False)
+            return trainer.run(max_steps=100, num_evaluations=10)
 
         history_cpu = run_on_device(t.device("cpu"))
         history_gpu = run_on_device(t.device("cuda"))
@@ -292,12 +292,7 @@ class TestSeedIsolation:
         seed_rng(0)
         noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
 
-        clean_x, _ = clean.train_data
-        noisy_x, _ = noisy.train_data
-
-        assert t.allclose(clean_x, noisy_x), (
-            "Train inputs differ when noise_std changes"
-        )
+        assert t.allclose(clean.train_data[0], noisy.train_data[0])
 
     def test_test_inputs_same_regardless_of_noise_std(self):
         """Test inputs should be identical whether noise is applied or not."""
@@ -307,28 +302,78 @@ class TestSeedIsolation:
         seed_rng(0)
         noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
 
-        clean_x, _ = clean.test_data
-        noisy_x, _ = noisy.test_data
+        assert t.allclose(clean.test_data[0], noisy.test_data[0])
 
-        assert t.allclose(clean_x, noisy_x), "Test inputs differ when noise_std changes"
-
-    def test_clean_targets_match_noisy_targets_minus_noise(self):
-        """Noisy targets should equal clean targets plus some noise."""
+    def test_online_inputs_same_regardless_of_noise_std(self):
+        """Online training inputs should be identical whether noise is applied or not."""
         seed_rng(0)
-        clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
-
-        seed_rng(0)
-        noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
-
-        _, clean_y = clean.train_data
-        noisy_x, noisy_y = noisy.train_data
-
-        # Recompute what targets should be without noise
-        expected_clean_y = noisy_x @ noisy.teacher_matrix.T
-
-        assert t.allclose(expected_clean_y, clean_y), (
-            "Clean targets should match noisy inputs @ teacher"
+        clean_dataset = Dataset(
+            make_data_config(noise_std=0.0, online=True), in_dim=5, out_dim=5
         )
+        seed_rng(42)
+        clean_trainer = Trainer(
+            model=DeepLinearNetwork(make_model_config(model_seed=42)),
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=clean_dataset,
+            device=t.device("cpu"),
+        )
+
+        seed_rng(0)
+        noisy_dataset = Dataset(
+            make_data_config(noise_std=0.2, online=True), in_dim=5, out_dim=5
+        )
+        seed_rng(42)
+        noisy_trainer = Trainer(
+            model=DeepLinearNetwork(make_model_config(model_seed=42)),
+            cfg=make_training_config(batch_size=10, batch_seed=0),
+            dataset=noisy_dataset,
+            device=t.device("cpu"),
+        )
+
+        for _ in range(20):
+            clean_x, _ = next(clean_trainer.train_iterator)
+            noisy_x, _ = next(noisy_trainer.train_iterator)
+            assert t.allclose(clean_x, noisy_x)
+
+    def test_online_reproducibility(self):
+        """Same seeds produce identical online training sequences."""
+
+        def get_batches(batch_seed):
+            seed_rng(0)
+            dataset = Dataset(
+                make_data_config(noise_std=0.2, online=True), in_dim=5, out_dim=5
+            )
+            seed_rng(42)
+            model = DeepLinearNetwork(make_model_config(model_seed=42))
+            trainer = Trainer(
+                model=model,
+                cfg=make_training_config(batch_size=10, batch_seed=batch_seed),
+                dataset=dataset,
+                device=t.device("cpu"),
+            )
+            return [next(trainer.train_iterator) for _ in range(20)]
+
+        batches_a = get_batches(batch_seed=0)
+        batches_b = get_batches(batch_seed=0)
+
+        for (xa, ya), (xb, yb) in zip(batches_a, batches_b):
+            assert t.allclose(xa, xb)
+            assert t.allclose(ya, yb)
+
+    def test_test_set_same_between_online_and_offline(self):
+        """Test set should be identical for online and offline with same data_seed."""
+        seed_rng(0)
+        offline = Dataset(
+            make_data_config(data_seed=0, online=False), in_dim=5, out_dim=5
+        )
+
+        seed_rng(0)
+        online = Dataset(
+            make_data_config(data_seed=0, online=True), in_dim=5, out_dim=5
+        )
+
+        assert t.allclose(offline.test_data[0], online.test_data[0])
+        assert t.allclose(offline.test_data[1], online.test_data[1])
 
 
 # ============================================================================
@@ -590,10 +635,7 @@ class TestComparativeTrainer:
 
         comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
         history = comp_trainer.run(
-            max_steps=50,
-            num_evaluations=5,
-            comparative_metrics=["param_distance"],
-            show_progress=False,
+            max_steps=50, num_evaluations=5, comparative_metrics=["param_distance"]
         )
 
         assert history["test_loss_a"] == history["test_loss_b"]
@@ -629,10 +671,7 @@ class TestComparativeTrainer:
 
         comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
         history = comp_trainer.run(
-            max_steps=50,
-            num_evaluations=5,
-            comparative_metrics=["param_distance"],
-            show_progress=False,
+            max_steps=50, num_evaluations=5, comparative_metrics=["param_distance"]
         )
 
         assert history["param_distance"][-1] > 1e-6
@@ -656,7 +695,7 @@ class TestTrainer:
             device=device,
         )
 
-        history = trainer.run(max_steps=500, num_evaluations=10, show_progress=False)
+        history = trainer.run(max_steps=500, num_evaluations=10)
 
         assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
 
@@ -678,7 +717,7 @@ class TestTrainer:
             device=device,
         )
 
-        history = trainer.run(max_steps=500, num_evaluations=10, show_progress=False)
+        history = trainer.run(max_steps=500, num_evaluations=10)
 
         assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
 
@@ -700,7 +739,7 @@ class TestTrainer:
             device=device,
         )
 
-        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+        history = trainer.run(max_steps=50, num_evaluations=5)
 
         assert "step" in history
         assert "test_loss" in history
@@ -725,7 +764,7 @@ class TestTrainer:
             device=device,
         )
 
-        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+        history = trainer.run(max_steps=50, num_evaluations=5)
 
         assert "step" in history
         assert "test_loss" in history
@@ -745,12 +784,7 @@ class TestTrainer:
             device=device,
         )
 
-        history = trainer.run(
-            max_steps=50,
-            num_evaluations=5,
-            metrics=["weight_norm"],
-            show_progress=False,
-        )
+        history = trainer.run(max_steps=50, num_evaluations=5, metrics=["weight_norm"])
 
         assert "weight_norm" in history
         assert len(history["weight_norm"]) == 5
@@ -831,7 +865,7 @@ class TestTrainer:
             device=device,
         )
 
-        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+        history = trainer.run(max_steps=50, num_evaluations=5)
 
         assert "train_loss" in history
         assert len(history["train_loss"]) == 5
@@ -869,7 +903,6 @@ class TestCallbacks:
             max_steps=50,
             num_evaluations=50,
             callbacks=[switch_callback, record_batch_size],  # switch first
-            show_progress=False,
         )
 
         assert all(bs == 10 for bs in batch_sizes[:25])
@@ -903,7 +936,6 @@ class TestCallbacks:
             max_steps=60,
             num_evaluations=60,
             callbacks=[switch_callback, record_batch_size],  # switch first
-            show_progress=False,
         )
 
         assert all(bs == 10 for bs in batch_sizes[:20])
@@ -934,10 +966,7 @@ class TestCallbacks:
             {"lr_decay": {"decay_every": 10, "factor": 0.5}}
         )
         trainer.run(
-            max_steps=25,
-            num_evaluations=25,
-            callbacks=[decay_callback, record_lr],  # decay first
-            show_progress=False,
+            max_steps=25, num_evaluations=25, callbacks=[decay_callback, record_lr]
         )
 
         assert all(abs(lr - 0.1) < 1e-9 for lr in lrs[:10])
