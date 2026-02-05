@@ -284,6 +284,52 @@ class TestSeedIsolation:
         ):
             assert abs(loss_cpu - loss_gpu) < 1e-5
 
+    def test_train_inputs_same_regardless_of_noise_std(self):
+        """Train inputs should be identical whether noise is applied or not."""
+        seed_rng(0)
+        clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
+
+        seed_rng(0)
+        noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
+
+        clean_x, _ = clean.train_data
+        noisy_x, _ = noisy.train_data
+
+        assert t.allclose(clean_x, noisy_x), (
+            "Train inputs differ when noise_std changes"
+        )
+
+    def test_test_inputs_same_regardless_of_noise_std(self):
+        """Test inputs should be identical whether noise is applied or not."""
+        seed_rng(0)
+        clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
+
+        seed_rng(0)
+        noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
+
+        clean_x, _ = clean.test_data
+        noisy_x, _ = noisy.test_data
+
+        assert t.allclose(clean_x, noisy_x), "Test inputs differ when noise_std changes"
+
+    def test_clean_targets_match_noisy_targets_minus_noise(self):
+        """Noisy targets should equal clean targets plus some noise."""
+        seed_rng(0)
+        clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
+
+        seed_rng(0)
+        noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
+
+        _, clean_y = clean.train_data
+        noisy_x, noisy_y = noisy.train_data
+
+        # Recompute what targets should be without noise
+        expected_clean_y = noisy_x @ noisy.teacher_matrix.T
+
+        assert t.allclose(expected_clean_y, clean_y), (
+            "Clean targets should match noisy inputs @ teacher"
+        )
+
 
 # ============================================================================
 # Data Tests

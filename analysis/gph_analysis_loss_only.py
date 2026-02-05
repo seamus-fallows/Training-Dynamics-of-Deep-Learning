@@ -23,9 +23,9 @@ from scipy import stats as scipy_stats
 # Configuration
 # =============================================================================
 
-BASE_PATH = Path("outputs/gph_sweep_2")
-CACHE_PATH = Path("cache/gph_sweep_2_stats.pkl")
-FIGURES_PATH = Path("figures/gph_sweep_2")
+BASE_PATH = Path("outputs/gph_offline")
+CACHE_PATH = Path("cache/gph_offline.pkl")
+FIGURES_PATH = Path("figures/gph_offline")
 
 WIDTHS = [10, 50, 100]
 GAMMAS = [0.75, 1.0, 1.5]
@@ -33,11 +33,11 @@ NOISE_LEVELS = [0.0, 0.2]
 MODEL_SEEDS = [0, 1]
 BATCH_SIZES = [1, 2, 5, 10, 50]
 
-GAMMA_MAX_STEPS = {0.75: 4000, 1.0: 6000, 1.5: 25000}
+GAMMA_MAX_STEPS = {0.75: 6000, 1.0: 9000, 1.5: 27000}
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 
-N_WORKERS = 164
-MAX_BATCH_SEED = 1000
+N_WORKERS = 192
+MAX_BATCH_SEED = 10000
 
 
 # =============================================================================

@@ -60,6 +60,7 @@ class Dataset:
 
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
+        self._noise_gen = t.Generator().manual_seed(cfg.data_seed + 1)
         self.test_data = self.sample(cfg.test_samples) if cfg.test_samples else None
         self.train_data = None if self.online else self.sample(cfg.train_samples)
 
@@ -70,6 +71,6 @@ class Dataset:
         inputs = t.randn(n, self.in_dim, generator=generator)
         targets = inputs @ self.teacher_matrix.T
         if self.noise_std > 0:
-            noise = t.randn(targets.shape, generator=generator)
+            noise = t.randn(targets.shape, generator=self._noise_gen)
             targets = targets + noise * self.noise_std
         return inputs, targets
