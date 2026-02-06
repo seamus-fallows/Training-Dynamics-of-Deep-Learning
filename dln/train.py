@@ -1,12 +1,11 @@
 from typing import Any, Callable, Iterator
-from tqdm import tqdm
 import torch as t
 from torch import Tensor
 from dln.data import Dataset
 from dln.model import DeepLinearNetwork
 from omegaconf import DictConfig
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
-from metrics import compute_metrics
+from dln.metrics import compute_metrics
 
 
 class Trainer:
@@ -25,6 +24,7 @@ class Trainer:
 
         self._batch_generator = t.Generator()
         self._batch_generator.manual_seed(cfg.batch_seed)
+        self._noise_generator = t.Generator().manual_seed(cfg.batch_seed + 1)
 
         self.test_data = to_device(dataset.test_data, device)
 
@@ -72,11 +72,14 @@ class Trainer:
             indices = t.randperm(n_samples, generator=self._batch_generator).to(
                 self.device
             )
+
+            # Drops remainder samples that don't fill a complete batch
             for start_idx in range(0, n_samples - self.batch_size + 1, self.batch_size):
                 batch_idx = indices[start_idx : start_idx + self.batch_size]
                 yield x[batch_idx], y[batch_idx]
 
     def _online_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
+        # Pregenerate batches in bulk to amortize CPU→GPU transfer overhead
         n_pregenerate = 1000
 
         while True:
@@ -96,7 +99,7 @@ class Trainer:
                     n_pregenerate,
                     self.batch_size,
                     self.dataset.out_dim,
-                    generator=self._batch_generator,
+                    generator=self._noise_generator,
                 )
                 targets_all = (
                     targets_all + noise_all.to(self.device) * self.dataset.noise_std
@@ -111,18 +114,14 @@ class Trainer:
         num_evaluations: int,
         metrics: list | None = None,
         callbacks: list[Callable] | None = None,
-        show_progress: bool = True,
     ) -> dict[str, list[Any]]:
         evaluate_every = max(1, max_steps // num_evaluations)
 
         self.model.train()
         self.history = []
         callbacks = callbacks or []
-        progress_bar = tqdm(
-            range(max_steps), desc="Training", disable=not show_progress
-        )
 
-        for step in progress_bar:
+        for step in range(max_steps):
             for callback in callbacks:
                 callback(step, self)
 
@@ -131,7 +130,6 @@ class Trainer:
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)
                 self.history.append(record)
-                progress_bar.set_postfix({"loss": f"{record['test_loss']:.4f}"})
 
             self._training_step(inputs, targets)
 

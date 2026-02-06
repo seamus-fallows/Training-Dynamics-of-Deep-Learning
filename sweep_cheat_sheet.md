@@ -81,10 +81,9 @@ python sweep.py -cn=gph training.batch_seed=0..10 model.gamma=0.75,1.0 \
 ## Resuming Failed Sweeps
 
 ```bash
-# Requires --output so path is stable
+# Requires --output so path is stable; existing jobs are skipped by default
 python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 \
-    --output=outputs/gph_study \
-    --skip-existing
+    --output=outputs/gph_study
 ```
 
 ## Error Handling

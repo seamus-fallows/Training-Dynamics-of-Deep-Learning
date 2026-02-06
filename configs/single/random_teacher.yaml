@@ -1,10 +1,7 @@
 experiment:
   name: "random_teacher"
 
-plotting:
-  enabled: true
-  save: true
-  show_test: false
+plot_history: false
 
 model:
   in_dim: 5
@@ -22,10 +19,11 @@ training:
   optimizer_params: null
   criterion: "MSELoss"
   batch_seed: 0
+  track_train_loss: false
 
 data:
   train_samples: 100
-  test_samples: null
+  test_samples: 100
   data_seed: 0
   online: false
   noise_std: 0.0
@@ -38,5 +36,4 @@ metrics: []
       
 max_steps: 2000
 num_evaluations: 250
-metric_data: null
 callbacks: []

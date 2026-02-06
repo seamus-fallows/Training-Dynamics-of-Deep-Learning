@@ -204,7 +204,9 @@ def format_subdir(pattern: str, overrides: dict[str, Any]) -> str:
     for key, value in overrides.items():
         placeholder = "{" + key + "}"
         if placeholder in result:
-            result = result.replace(placeholder, str(value))
+            result = result.replace(
+                placeholder, "null" if value is None else str(value)
+            )
     return result
 
 

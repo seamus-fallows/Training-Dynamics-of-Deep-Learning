@@ -21,8 +21,6 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 
 * **`runner.py`**: Programmatic API for running experiments.
 * **`sweep.py`**: CLI entry point for single runs and parallel sweeps.
-* **`metrics.py`**: Model and comparative metrics.
-* **`experiment_examples.py`**: Usage examples.
 * **`dln/`**: Core library.
   * `model.py`: `DeepLinearNetwork` architecture.
   * `data.py`: Synthetic data generators.
@@ -30,7 +28,7 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models.
   * `callbacks.py`: Callback system for mid-training interventions.
   * `results.py`: `RunResult` and `SweepResult` dataclasses.
-  * `config.py`: Dataclass definitions for experiment configurations.
+  * `metrics.py`: Model and comparative metrics.
   * `factory.py`: Creates a Trainer from configs.
   * `overrides.py`: CLI parsing and sweep expansion utilities.
   * `plotting.py`: Visualization functions.
@@ -59,10 +57,8 @@ plot(sweep, legend_title="lr")
 
 # Average over seeds with confidence intervals
 sweep = run_sweep("diagonal_teacher", param="training.batch_seed", values=range(5))
-plot(sweep.to_average("SGD"))
+plot(sweep, average="SGD")
 ```
-
-See `experiment_examples.py` for comprehensive examples.
 
 ### Command Line
 
@@ -88,8 +84,8 @@ python sweep.py -cn=diagonal_teacher training.lr=0.001,0.01 model.num_hidden=2,3
 # Run sweep with 40 parallel workers
 python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 
-# Skip already-completed jobs
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40 --skip-existing
+# Overwrite already-completed jobs (default is to skip them)
+python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40 --overwrite
 ```
 
 #### Covarying Parameters (Zip Groups)
@@ -124,7 +120,7 @@ Three seeds control reproducibility:
 | Seed | Location | Controls |
 |------|----------|----------|
 | `data.data_seed` | Data config | Dataset generation (teacher matrix, train/test split) |
-| `model.seed` | Model config | Weight initialization |
+| `model.model_seed` | Model config | Weight initialization |
 | `training.batch_seed` | Training config | Batch shuffling order |
 
 ### Data Modes
@@ -135,6 +131,7 @@ Three seeds control reproducibility:
 data:
   online: false
   train_samples: 100
+  test_samples: 100
 
 training:
   batch_size: null    # full batch
@@ -152,7 +149,7 @@ training:
 
 ### Available Metrics
 
-**Model metrics** (require `metric_data` config):
+Metrics are computed on the test set at each evaluation step.
 
 | Metric | Description |
 |--------|-------------|
@@ -165,21 +162,6 @@ training:
 |--------|-------------|
 | `param_distance` | L2 distance between model parameters |
 | `param_cosine_sim` | Cosine similarity between model parameters |
-
-### Metric Data
-
-Metrics that compute gradients require input data. Configure via `metric_data`:
-
-```yaml
-# Use full training set
-metric_data:
-  mode: "population"
-
-# Use fixed subset (required for online mode)
-metric_data:
-  mode: "estimator"
-  holdout_size: 50
-```
 
 ### Callbacks
 
@@ -201,25 +183,27 @@ callbacks:
 
 ### Comparative Config Structure
 
-Comparative configs use `shared` with interpolation:
+Comparative configs use `shared` defaults that are merged into each model/training config:
 
 ```yaml
 shared:
   model:
-    seed: 0
+    model_seed: 0
   training:
     lr: 0.0005
 
-model_a:
-  seed: ${shared.model.seed}
+# Empty = inherit all shared values
+model_a: {}
+model_b: {}
 
-model_b:
-  seed: ${shared.model.seed}
+# Override specific values for one model:
+# model_b:
+#   model_seed: 999
 ```
 
 Override shared values: `shared.training.lr=0.01`
 
-Override individual values: `model_b.seed=999`
+Override individual values: `model_b.model_seed=999`
 
 ## Outputs
 
@@ -234,7 +218,7 @@ Each run creates a directory containing:
 ### Adding New Metrics
 
 ```python
-# metrics.py
+# dln/metrics.py
 
 @metric("my_metric")
 def my_metric(model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs) -> float:

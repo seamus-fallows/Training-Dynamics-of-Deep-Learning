@@ -17,7 +17,6 @@ from .plotting import auto_plot
 def run_experiment(
     cfg: DictConfig,
     output_dir: Path,
-    show_progress: bool = True,
     show_plots: bool = True,
     save_results: bool = True,
     device: str = "cuda",
@@ -48,7 +47,6 @@ def run_experiment(
         num_evaluations=cfg.num_evaluations,
         metrics=cfg.metrics,
         callbacks=callbacks,
-        show_progress=show_progress,
     )
 
     if save_results:
@@ -65,7 +63,6 @@ def run_experiment(
 def run_comparative_experiment(
     cfg: DictConfig,
     output_dir: Path,
-    show_progress: bool = True,
     show_plots: bool = True,
     save_results: bool = True,
     device: str = "cuda",
@@ -107,7 +104,6 @@ def run_comparative_experiment(
         comparative_metrics=cfg.comparative_metrics,
         callbacks_a=callbacks_a,
         callbacks_b=callbacks_b,
-        show_progress=show_progress,
     )
 
     if save_results:

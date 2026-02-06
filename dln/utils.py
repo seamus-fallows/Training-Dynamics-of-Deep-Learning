@@ -12,6 +12,12 @@ from omegaconf import OmegaConf, DictConfig
 
 
 def seed_rng(seed: int) -> None:
+    """Seed all global RNGs.
+
+    Each experiment entry point (run_experiment, run_comparative_experiment) calls this
+    before using the global RNG, so prior global state never leaks between jobs.
+    Parallel workers are safe because they run in separate processes.
+    """
     random.seed(seed)
     np.random.seed(seed)
     t.manual_seed(seed)
@@ -104,43 +110,56 @@ def validate_config(cfg: DictConfig, config_type: str = "single") -> None:
 
 
 def _validate_model_config(model_cfg: DictConfig) -> None:
-    assert model_cfg.in_dim > 0, "in_dim must be positive"
-    assert model_cfg.out_dim > 0, "out_dim must be positive"
-    assert model_cfg.num_hidden >= 0, "num_hidden must be non-negative"
-    assert model_cfg.hidden_dim > 0, "hidden_dim must be positive"
-    if model_cfg.gamma is not None:
-        assert model_cfg.gamma > 0, "gamma must be positive"
+    if model_cfg.in_dim <= 0:
+        raise ValueError("in_dim must be positive")
+    if model_cfg.out_dim <= 0:
+        raise ValueError("out_dim must be positive")
+    if model_cfg.num_hidden < 0:
+        raise ValueError("num_hidden must be non-negative")
+    if model_cfg.hidden_dim <= 0:
+        raise ValueError("hidden_dim must be positive")
+    if model_cfg.gamma is not None and model_cfg.gamma <= 0:
+        raise ValueError("gamma must be positive")
 
 
 def _validate_training_config(training_cfg: DictConfig) -> None:
-    assert training_cfg.lr > 0, "lr must be positive"
-    if training_cfg.batch_size is not None:
-        assert training_cfg.batch_size > 0, "batch_size must be positive"
+    if training_cfg.lr <= 0:
+        raise ValueError("lr must be positive")
+    if training_cfg.batch_size is not None and training_cfg.batch_size <= 0:
+        raise ValueError("batch_size must be positive")
 
 
 def _validate_data_config(data_cfg: DictConfig) -> None:
-    assert data_cfg.train_samples > 0, "train_samples must be positive"
-    assert data_cfg.test_samples > 0, "test_samples must be positive"
-    assert data_cfg.noise_std >= 0, "noise_std must be non-negative"
+    if data_cfg.train_samples <= 0:
+        raise ValueError("train_samples must be positive")
+    if data_cfg.test_samples <= 0:
+        raise ValueError("test_samples must be positive")
+    if data_cfg.noise_std < 0:
+        raise ValueError("noise_std must be non-negative")
 
 
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"
 
 
-def load_config(
-    config_name: str,
+def load_base_config(config_name: str, config_dir: str = "single") -> dict:
+    """Load a YAML config file and return as a plain dict (no overrides, no resolution)."""
+    config_path = CONFIG_ROOT / config_dir / f"{config_name}.yaml"
+    cfg = OmegaConf.load(config_path)
+    return OmegaConf.to_container(cfg)
+
+
+def resolve_config(
+    base_config: dict,
     config_dir: str = "single",
     overrides: dict[str, Any] | None = None,
 ) -> DictConfig:
-    """Load a YAML config and apply overrides."""
-    config_path = CONFIG_ROOT / config_dir / f"{config_name}.yaml"
-    cfg = OmegaConf.load(config_path)
+    """Apply overrides, merge shared configs, resolve, and validate. No file I/O."""
+    cfg = OmegaConf.create(base_config)
 
     if overrides:
         for key, value in overrides.items():
             OmegaConf.update(cfg, key, value, merge=True)
 
-    # Merge shared into a/b configs for comparative experiments
     if config_dir == "comparative" and "shared" in cfg:
         if "model" in cfg.shared:
             cfg.model_a = OmegaConf.merge(cfg.shared.model, cfg.get("model_a") or {})
@@ -154,7 +173,15 @@ def load_config(
             )
 
     OmegaConf.resolve(cfg)
-
     validate_config(cfg, config_dir)
-
     return cfg
+
+
+def load_config(
+    config_name: str,
+    config_dir: str = "single",
+    overrides: dict[str, Any] | None = None,
+) -> DictConfig:
+    """Load a YAML config and apply overrides."""
+    base = load_base_config(config_name, config_dir)
+    return resolve_config(base, config_dir, overrides)

@@ -11,10 +11,7 @@ experiment:
 # -----------------------------------------------------------------------------
 # Plotting
 # -----------------------------------------------------------------------------
-plotting:
-  enabled: true      # bool: whether to generate plots after training
-  save: true         # bool: save plots to output directory
-  show_test: true    # bool: include test loss in plots (if test_samples set)
+plot_history: false    # bool: if true, plot training history at end of experiment
 
 # -----------------------------------------------------------------------------
 # Model
@@ -43,13 +40,14 @@ training:
   criterion: MSELoss       # string: loss class name from torch.nn
                            #   MSELoss, L1Loss, CrossEntropyLoss, etc.
   batch_seed: 0            # int: random seed for batch shuffling
+  track_train_loss: false  # bool: track loss on full training set (offline mode only)
 
 # -----------------------------------------------------------------------------
 # Data
 # -----------------------------------------------------------------------------
 data:
   train_samples: 500    # int: number of training samples
-  test_samples: null    # int or null: number of test samples (null = no test set)
+  test_samples: 500    # int or null: number of test samples (null = no test set)
   data_seed: 0          # int: random seed for data generation
   online: false         # bool: if true, sample fresh data each batch (infinite data)
                         #   requires batch_size to be set
@@ -74,7 +72,7 @@ num_evaluations: 250    # int: number of times to evaluate/log metrics
 # -----------------------------------------------------------------------------
 # Metrics
 # -----------------------------------------------------------------------------
-# Metrics are computed on metric_data at each evaluation step.
+# Metrics are computed on test_set at each evaluation step.
 # Two formats:
 #   - string: "metric_name" (uses defaults)
 #   - dict: {metric_name: {param: value}} (with custom params)
@@ -91,13 +89,6 @@ metrics: []
 #     - trace_covariances:
 #         chunks: 10
 
-metric_data:            # dict or null: data source for metric computation
-  mode: population      # string: "population" or "estimator"
-                        #   population - use full training set (not available in online mode)
-                        #   estimator - use fixed holdout subset
-  holdout_size: null    # int or null: number of samples for estimator mode (required if mode=estimator)
-# Set to null if not tracking any metrics that need data:
-# metric_data: null
 
 # -----------------------------------------------------------------------------
 # Callbacks

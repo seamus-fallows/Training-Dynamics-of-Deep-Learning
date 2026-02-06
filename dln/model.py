@@ -12,7 +12,7 @@ class DeepLinearNetwork(nn.Module):
         super().__init__()
 
         sizes = [cfg.in_dim] + [cfg.hidden_dim] * cfg.num_hidden + [cfg.out_dim]
-        self.model = nn.Sequential(
+        self.layers = nn.Sequential(
             *[
                 nn.Linear(sizes[i], sizes[i + 1], bias=cfg.bias)
                 for i in range(len(sizes) - 1)
@@ -25,9 +25,9 @@ class DeepLinearNetwork(nn.Module):
 
     def _init_weights(self, std: float) -> None:
         with t.no_grad():
-            for m in self.model.modules():
+            for m in self.layers.modules():
                 if isinstance(m, nn.Linear):
                     nn.init.normal_(m.weight, mean=0.0, std=std)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.model(x)
+        return self.layers(x)

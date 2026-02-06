@@ -8,10 +8,7 @@
 experiment:
   name: my_comparative_experiment
 
-plotting:
-  enabled: true
-  save: true
-  show_test: false
+plot_history: false
 
 # -----------------------------------------------------------------------------
 # Shared defaults
@@ -38,6 +35,7 @@ shared:
     optimizer_params: null
     criterion: MSELoss
     batch_seed: 0
+    track_train_loss: false
 
 # -----------------------------------------------------------------------------
 # Model A and B
@@ -68,7 +66,7 @@ training_b: {}
 # -----------------------------------------------------------------------------
 data:
   train_samples: 500
-  test_samples: null
+  test_samples: 500
   data_seed: 0
   online: false
   noise_std: 0.0
@@ -95,8 +93,6 @@ num_evaluations: 250
 metrics: []
 comparative_metrics:
   - param_distance
-
-metric_data: null
 
 # -----------------------------------------------------------------------------
 # Callbacks (separate for each model)

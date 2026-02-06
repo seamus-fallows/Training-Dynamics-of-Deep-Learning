@@ -1,8 +1,7 @@
 from typing import Any, Callable
-from tqdm import tqdm
 from dln.train import Trainer
 from dln.utils import rows_to_columns
-from metrics import compute_metrics, compute_comparative_metrics
+from dln.metrics import compute_metrics, compute_comparative_metrics
 import torch as t
 
 
@@ -14,6 +13,9 @@ class ComparativeTrainer:
     ):
         self.trainer_a = trainer_a
         self.trainer_b = trainer_b
+        assert trainer_a.test_data[0].data_ptr() == trainer_b.test_data[0].data_ptr(), (
+            "ComparativeTrainer requires both trainers to share the same dataset"
+        )
         self.history: list[dict[str, Any]] = []
 
     def run(
@@ -24,7 +26,6 @@ class ComparativeTrainer:
         comparative_metrics: list[str] | None = None,
         callbacks_a: list[Callable] | None = None,
         callbacks_b: list[Callable] | None = None,
-        show_progress: bool = True,
     ) -> dict[str, list[Any]]:
         evaluate_every = max(1, max_steps // num_evaluations)
 
@@ -33,11 +34,8 @@ class ComparativeTrainer:
         self.history = []
         callbacks_a = callbacks_a or []
         callbacks_b = callbacks_b or []
-        progress_bar = tqdm(
-            range(max_steps), desc="Training", disable=not show_progress
-        )
 
-        for step in progress_bar:
+        for step in range(max_steps):
             for callback in callbacks_a:
                 callback(step, self.trainer_a)
             for callback in callbacks_b:
@@ -98,11 +96,6 @@ class ComparativeTrainer:
                     )
 
                 self.history.append(record)
-
-                test_loss_a = record.get("test_loss_a")
-
-                if test_loss_a is not None:
-                    progress_bar.set_postfix({"loss_a": f"{test_loss_a:.4f}"})
 
             self.trainer_a._training_step(inputs_a, targets_a)
             self.trainer_b._training_step(inputs_b, targets_b)
