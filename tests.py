@@ -274,11 +274,7 @@ class TestSeedIsolation:
                 dataset=dataset,
                 device=device,
             )
-<<<<<<< HEAD
-            return trainer.run(max_steps=100, num_evaluations=10, show_progress=False)
-=======
             return trainer.run(max_steps=100, num_evaluations=10)
->>>>>>> online_refactor
 
         history_cpu = run_on_device(t.device("cpu"))
         history_gpu = run_on_device(t.device("cuda"))
@@ -296,16 +292,7 @@ class TestSeedIsolation:
         seed_rng(0)
         noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
 
-<<<<<<< HEAD
-        clean_x, _ = clean.train_data
-        noisy_x, _ = noisy.train_data
-
-        assert t.allclose(clean_x, noisy_x), (
-            "Train inputs differ when noise_std changes"
-        )
-=======
         assert t.allclose(clean.train_data[0], noisy.train_data[0])
->>>>>>> online_refactor
 
     def test_test_inputs_same_regardless_of_noise_std(self):
         """Test inputs should be identical whether noise is applied or not."""
@@ -315,30 +302,6 @@ class TestSeedIsolation:
         seed_rng(0)
         noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
 
-<<<<<<< HEAD
-        clean_x, _ = clean.test_data
-        noisy_x, _ = noisy.test_data
-
-        assert t.allclose(clean_x, noisy_x), "Test inputs differ when noise_std changes"
-
-    def test_clean_targets_match_noisy_targets_minus_noise(self):
-        """Noisy targets should equal clean targets plus some noise."""
-        seed_rng(0)
-        clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
-
-        seed_rng(0)
-        noisy = Dataset(make_data_config(noise_std=0.2), in_dim=5, out_dim=5)
-
-        _, clean_y = clean.train_data
-        noisy_x, noisy_y = noisy.train_data
-
-        # Recompute what targets should be without noise
-        expected_clean_y = noisy_x @ noisy.teacher_matrix.T
-
-        assert t.allclose(expected_clean_y, clean_y), (
-            "Clean targets should match noisy inputs @ teacher"
-        )
-=======
         assert t.allclose(clean.test_data[0], noisy.test_data[0])
 
     def test_online_inputs_same_regardless_of_noise_std(self):
@@ -411,7 +374,6 @@ class TestSeedIsolation:
 
         assert t.allclose(offline.test_data[0], online.test_data[0])
         assert t.allclose(offline.test_data[1], online.test_data[1])
->>>>>>> online_refactor
 
 
 # ============================================================================
@@ -673,14 +635,7 @@ class TestComparativeTrainer:
 
         comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
         history = comp_trainer.run(
-<<<<<<< HEAD
-            max_steps=50,
-            num_evaluations=5,
-            comparative_metrics=["param_distance"],
-            show_progress=False,
-=======
             max_steps=50, num_evaluations=5, comparative_metrics=["param_distance"]
->>>>>>> online_refactor
         )
 
         assert history["test_loss_a"] == history["test_loss_b"]
@@ -716,14 +671,7 @@ class TestComparativeTrainer:
 
         comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
         history = comp_trainer.run(
-<<<<<<< HEAD
-            max_steps=50,
-            num_evaluations=5,
-            comparative_metrics=["param_distance"],
-            show_progress=False,
-=======
             max_steps=50, num_evaluations=5, comparative_metrics=["param_distance"]
->>>>>>> online_refactor
         )
 
         assert history["param_distance"][-1] > 1e-6
@@ -747,11 +695,7 @@ class TestTrainer:
             device=device,
         )
 
-<<<<<<< HEAD
-        history = trainer.run(max_steps=500, num_evaluations=10, show_progress=False)
-=======
         history = trainer.run(max_steps=500, num_evaluations=10)
->>>>>>> online_refactor
 
         assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
 
@@ -773,11 +717,7 @@ class TestTrainer:
             device=device,
         )
 
-<<<<<<< HEAD
-        history = trainer.run(max_steps=500, num_evaluations=10, show_progress=False)
-=======
         history = trainer.run(max_steps=500, num_evaluations=10)
->>>>>>> online_refactor
 
         assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
 
@@ -799,11 +739,7 @@ class TestTrainer:
             device=device,
         )
 
-<<<<<<< HEAD
-        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
-=======
         history = trainer.run(max_steps=50, num_evaluations=5)
->>>>>>> online_refactor
 
         assert "step" in history
         assert "test_loss" in history
@@ -828,11 +764,7 @@ class TestTrainer:
             device=device,
         )
 
-<<<<<<< HEAD
-        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
-=======
         history = trainer.run(max_steps=50, num_evaluations=5)
->>>>>>> online_refactor
 
         assert "step" in history
         assert "test_loss" in history
@@ -852,16 +784,7 @@ class TestTrainer:
             device=device,
         )
 
-<<<<<<< HEAD
-        history = trainer.run(
-            max_steps=50,
-            num_evaluations=5,
-            metrics=["weight_norm"],
-            show_progress=False,
-        )
-=======
         history = trainer.run(max_steps=50, num_evaluations=5, metrics=["weight_norm"])
->>>>>>> online_refactor
 
         assert "weight_norm" in history
         assert len(history["weight_norm"]) == 5
@@ -942,11 +865,7 @@ class TestTrainer:
             device=device,
         )
 
-<<<<<<< HEAD
-        history = trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
-=======
         history = trainer.run(max_steps=50, num_evaluations=5)
->>>>>>> online_refactor
 
         assert "train_loss" in history
         assert len(history["train_loss"]) == 5
@@ -984,10 +903,6 @@ class TestCallbacks:
             max_steps=50,
             num_evaluations=50,
             callbacks=[switch_callback, record_batch_size],  # switch first
-<<<<<<< HEAD
-            show_progress=False,
-=======
->>>>>>> online_refactor
         )
 
         assert all(bs == 10 for bs in batch_sizes[:25])
@@ -1021,10 +936,6 @@ class TestCallbacks:
             max_steps=60,
             num_evaluations=60,
             callbacks=[switch_callback, record_batch_size],  # switch first
-<<<<<<< HEAD
-            show_progress=False,
-=======
->>>>>>> online_refactor
         )
 
         assert all(bs == 10 for bs in batch_sizes[:20])
@@ -1055,14 +966,7 @@ class TestCallbacks:
             {"lr_decay": {"decay_every": 10, "factor": 0.5}}
         )
         trainer.run(
-<<<<<<< HEAD
-            max_steps=25,
-            num_evaluations=25,
-            callbacks=[decay_callback, record_lr],  # decay first
-            show_progress=False,
-=======
             max_steps=25, num_evaluations=25, callbacks=[decay_callback, record_lr]
->>>>>>> online_refactor
         )
 
         assert all(abs(lr - 0.1) < 1e-9 for lr in lrs[:10])
