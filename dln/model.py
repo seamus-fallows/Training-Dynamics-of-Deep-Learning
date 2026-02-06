@@ -25,9 +25,8 @@ class DeepLinearNetwork(nn.Module):
 
     def _init_weights(self, std: float) -> None:
         with t.no_grad():
-            for m in self.layers.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.normal_(m.weight, mean=0.0, std=std)
+            for layer in self.layers:
+                nn.init.normal_(layer.weight, mean=0.0, std=std)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)

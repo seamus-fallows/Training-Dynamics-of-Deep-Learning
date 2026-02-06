@@ -16,7 +16,6 @@ class ComparativeTrainer:
         assert trainer_a.test_data[0].data_ptr() == trainer_b.test_data[0].data_ptr(), (
             "ComparativeTrainer requires both trainers to share the same dataset"
         )
-        self.history: list[dict[str, Any]] = []
 
     def run(
         self,
@@ -31,7 +30,7 @@ class ComparativeTrainer:
 
         self.trainer_a.model.train()
         self.trainer_b.model.train()
-        self.history = []
+        history = []
         callbacks_a = callbacks_a or []
         callbacks_b = callbacks_b or []
 
@@ -95,7 +94,7 @@ class ComparativeTrainer:
                         )
                     )
 
-                self.history.append(record)
+                history.append(record)
 
             self.trainer_a._training_step(inputs_a, targets_a)
             self.trainer_b._training_step(inputs_b, targets_b)

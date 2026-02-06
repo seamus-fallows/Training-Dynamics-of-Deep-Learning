@@ -162,15 +162,11 @@ def resolve_config(
 
     if config_dir == "comparative" and "shared" in cfg:
         if "model" in cfg.shared:
-            cfg.model_a = OmegaConf.merge(cfg.shared.model, cfg.get("model_a") or {})
-            cfg.model_b = OmegaConf.merge(cfg.shared.model, cfg.get("model_b") or {})
+            cfg.model_a = OmegaConf.merge(cfg.shared.model, cfg.model_a)
+            cfg.model_b = OmegaConf.merge(cfg.shared.model, cfg.model_b)
         if "training" in cfg.shared:
-            cfg.training_a = OmegaConf.merge(
-                cfg.shared.training, cfg.get("training_a") or {}
-            )
-            cfg.training_b = OmegaConf.merge(
-                cfg.shared.training, cfg.get("training_b") or {}
-            )
+            cfg.training_a = OmegaConf.merge(cfg.shared.training, cfg.training_a)
+            cfg.training_b = OmegaConf.merge(cfg.shared.training, cfg.training_b)
 
     OmegaConf.resolve(cfg)
     validate_config(cfg, config_dir)

@@ -46,7 +46,6 @@ class Trainer:
 
         self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
-        self.history: list[dict[str, Any]] = []
 
     def set_batch_size(self, batch_size: int | None) -> None:
         self.batch_size = batch_size
@@ -118,7 +117,7 @@ class Trainer:
         evaluate_every = max(1, max_steps // num_evaluations)
 
         self.model.train()
-        self.history = []
+        history = []
         callbacks = callbacks or []
 
         for step in range(max_steps):
@@ -129,19 +128,18 @@ class Trainer:
 
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)
-                self.history.append(record)
+                history.append(record)
 
             self._training_step(inputs, targets)
 
-        return rows_to_columns(self.history)
+        return rows_to_columns(history)
 
-    def _training_step(self, inputs: Tensor, targets: Tensor) -> Tensor:
+    def _training_step(self, inputs: Tensor, targets: Tensor) -> None:
         self.optimizer.zero_grad(set_to_none=True)
         output = self.model(inputs)
         loss = self.criterion(output, targets)
         loss.backward()
         self.optimizer.step()
-        return loss
 
     def _evaluate(self, step: int, metrics: list | None) -> dict[str, Any]:
         test_inputs, test_targets = self.test_data

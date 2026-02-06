@@ -229,7 +229,7 @@ def plot_comparative(
     return ax
 
 
-def plot_run(result: RunResult, metrics: list[str] | None = None) -> None:
+def plot_run(result: RunResult, metrics: list[str] | None = None) -> plt.Figure:
     """Quick visualization of a single run: loss + all tracked metrics."""
     if metrics is None:
         metrics = [m for m in result.metric_names() if m != "test_loss"]
@@ -261,6 +261,8 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> None:
 
     fig.tight_layout()
 
+    return fig
+
 
 def auto_plot(result: RunResult, show: bool = True) -> None:
     """Auto-generate plots for a run."""
@@ -270,8 +272,7 @@ def auto_plot(result: RunResult, show: bool = True) -> None:
         fig, ax = plt.subplots()
         plot_comparative(result, ax=ax)
     else:
-        plot_run(result)
-        fig = plt.gcf()
+        fig = plot_run(result)
 
     if result.output_dir:
         fig.savefig(result.output_dir / "plots.png", dpi=150, bbox_inches="tight")

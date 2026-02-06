@@ -251,7 +251,7 @@ class TestSeedIsolation:
                 dataset=dataset,
                 device=device,
             )
-            return trainer.run(max_steps=50, num_evaluations=5, show_progress=False)
+            return trainer.run(max_steps=50, num_evaluations=5)
 
         history_a = run_once()
         history_b = run_once()
