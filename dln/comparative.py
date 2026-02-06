@@ -1,7 +1,7 @@
 from typing import Any, Callable
 from dln.train import Trainer
 from dln.utils import rows_to_columns
-from metrics import compute_metrics, compute_comparative_metrics
+from dln.metrics import compute_metrics, compute_comparative_metrics
 import torch as t
 
 
@@ -13,6 +13,9 @@ class ComparativeTrainer:
     ):
         self.trainer_a = trainer_a
         self.trainer_b = trainer_b
+        assert trainer_a.test_data[0].data_ptr() == trainer_b.test_data[0].data_ptr(), (
+            "ComparativeTrainer requires both trainers to share the same dataset"
+        )
         self.history: list[dict[str, Any]] = []
 
     def run(

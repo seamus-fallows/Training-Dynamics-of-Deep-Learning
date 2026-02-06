@@ -5,7 +5,7 @@ from dln.data import Dataset
 from dln.model import DeepLinearNetwork
 from omegaconf import DictConfig
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
-from metrics import compute_metrics
+from dln.metrics import compute_metrics
 
 
 class Trainer:
@@ -72,11 +72,14 @@ class Trainer:
             indices = t.randperm(n_samples, generator=self._batch_generator).to(
                 self.device
             )
+
+            # Drops remainder samples that don't fill a complete batch
             for start_idx in range(0, n_samples - self.batch_size + 1, self.batch_size):
                 batch_idx = indices[start_idx : start_idx + self.batch_size]
                 yield x[batch_idx], y[batch_idx]
 
     def _online_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
+        # Pregenerate batches in bulk to amortize CPU→GPU transfer overhead
         n_pregenerate = 1000
 
         while True:

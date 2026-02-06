@@ -23,6 +23,7 @@ def load_run(path: Path) -> RunResult:
     return RunResult(history=history, config=config, output_dir=path)
 
 
+# TODO: Overwrites duplicate param values — seed sweeps lose all but the last run. - Fix!
 def load_sweep(path: Path, sweep_param: str) -> SweepResult:
     """Load results from a sweep directory."""
     runs: dict[str, RunResult] = {}

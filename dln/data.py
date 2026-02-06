@@ -61,14 +61,15 @@ class Dataset:
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
         self._noise_gen = t.Generator().manual_seed(cfg.data_seed + 1)
+
+        # TODO: Use dedicated generators for test/train to decouple from ordering.
+        # Currently order matters for reproducibility: test set must be generated first.
         self.test_data = self.sample(cfg.test_samples) if cfg.test_samples else None
         self.train_data = None if self.online else self.sample(cfg.train_samples)
 
-    def sample(
-        self, n: int, generator: t.Generator | None = None
-    ) -> tuple[Tensor, Tensor]:
+    def sample(self, n: int) -> tuple[Tensor, Tensor]:
         """Generate n samples from the teacher matrix."""
-        inputs = t.randn(n, self.in_dim, generator=generator)
+        inputs = t.randn(n, self.in_dim)
         targets = inputs @ self.teacher_matrix.T
         if self.noise_std > 0:
             noise = t.randn(targets.shape, generator=self._noise_gen)

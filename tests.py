@@ -17,7 +17,7 @@ from dln.overrides import (
     format_subdir,
     check_subdir_uniqueness,
 )
-import metrics
+import dln.metrics as metrics
 
 
 # ============================================================================
