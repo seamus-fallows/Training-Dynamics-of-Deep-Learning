@@ -1,5 +1,6 @@
-import json
 import os
+import yaml
+import json
 import random
 from pathlib import Path
 from typing import Any, Type
@@ -64,17 +65,77 @@ def get_criterion_cls(name: str) -> Type[nn.Module]:
 
 
 def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
-    """Save training history to JSON file (columnar format)."""
-    history_path = output_dir / "history.json"
-    with history_path.open("w") as f:
-        json.dump(history, f)
+    """Save training history as compressed numpy archive."""
+    history_path = output_dir / "history.npz"
+    np.savez(history_path, **{k: np.array(v) for k, v in history.items()})
 
 
-def load_history(output_dir: Path) -> dict[str, list[Any]]:
-    """Load training history from JSON file (columnar format)."""
-    history_path = output_dir / "history.json"
-    with history_path.open("r") as f:
-        return json.load(f)
+def load_history(output_dir: Path) -> dict[str, np.ndarray]:
+    """Load training history from numpy archive."""
+    history_path = output_dir / "history.npz"
+    data = np.load(history_path)
+    return {k: data[k] for k in data.files}
+
+
+def save_config(cfg: dict, path: Path) -> None:
+    """Save config as YAML."""
+
+    with path.open("w") as f:
+        yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+
+def save_overrides(overrides: dict, path: Path) -> None:
+    """Save per-job overrides as JSON."""
+    with path.open("w") as f:
+        json.dump(overrides, f)
+
+
+def save_base_config(config: dict, output_dir: Path) -> None:
+    """Save base config at sweep root, verifying consistency if already exists."""
+    path = output_dir / "config.yaml"
+    if path.exists():
+        with path.open("r") as f:
+            existing = yaml.safe_load(f)
+        if existing != config:
+            raise ValueError(
+                f"Base config mismatch in {output_dir}. "
+                f"Cannot write results from different base configs to the same directory."
+            )
+        return
+    save_config(config, path)
+
+
+def load_run(path: Path) -> dict:
+    """Load a single run's history and config."""
+    history = load_history(path)
+    config_path = path / "config.yaml"
+    config = None
+    if config_path.exists():
+        with config_path.open("r") as f:
+            config = yaml.safe_load(f)
+    return {"history": history, "config": config}
+
+
+def load_sweep(sweep_dir: Path) -> list[dict]:
+    """Load all results from a sweep directory.
+
+    Returns list of dicts with 'history', 'overrides', and 'subdir' keys.
+    """
+    results = []
+    for history_path in sorted(sweep_dir.rglob("history.npz")):
+        job_dir = history_path.parent
+        entry = {
+            "subdir": str(job_dir.relative_to(sweep_dir)),
+            "history": load_history(job_dir),
+        }
+        overrides_path = job_dir / "overrides.json"
+        if overrides_path.exists():
+            with overrides_path.open("r") as f:
+                entry["overrides"] = json.load(f)
+        else:
+            entry["overrides"] = {}
+        results.append(entry)
+    return results
 
 
 def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:

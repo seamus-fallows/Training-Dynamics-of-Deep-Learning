@@ -53,6 +53,7 @@ class Dataset:
 
     def __init__(self, cfg: DictConfig, in_dim: int, out_dim: int):
         self.in_dim = in_dim
+        self.out_dim = out_dim
         self.online = cfg.online
         self.noise_std = cfg.noise_std
 

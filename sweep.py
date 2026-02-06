@@ -41,7 +41,7 @@ from dln.overrides import (
     make_job_subdir,
     check_subdir_uniqueness,
 )
-from dln.utils import load_base_config, resolve_config
+from dln.utils import load_base_config, resolve_config, save_base_config, save_overrides
 import torch as t
 
 
@@ -159,6 +159,7 @@ def run_single_job(
                 show_plots=False,
                 device=device,
             )
+        save_overrides(overrides, output_dir / "overrides.json")
         return True, None
     except Exception:
         return False, traceback.format_exc()
@@ -188,7 +189,7 @@ def run_jobs_sequential(
         subdir = make_job_subdir(i, job, subdir_pattern)
         job_dir = output_dir / subdir
 
-        if skip_existing and (job_dir / "history.json").exists():
+        if skip_existing and (job_dir / "history.npz").exists():
             skipped += 1
             continue
 
@@ -235,7 +236,7 @@ def run_jobs_parallel(
         subdir = make_job_subdir(i, job, subdir_pattern)
         job_dir = output_dir / subdir
 
-        if skip_existing and (job_dir / "history.json").exists():
+        if skip_existing and (job_dir / "history.npz").exists():
             skipped += 1
             continue
 
@@ -314,7 +315,7 @@ def run_sweep(
             1
             for i, job in enumerate(jobs)
             if (
-                output_dir / make_job_subdir(i, job, subdir_pattern) / "history.json"
+                output_dir / make_job_subdir(i, job, subdir_pattern) / "history.npz"
             ).exists()
         )
         if existing:
@@ -392,6 +393,7 @@ if __name__ == "__main__":
     if args.save_results:
         output_dir = get_output_dir(experiment_name, overrides, args.output)
         output_dir.mkdir(parents=True, exist_ok=True)
+        save_base_config(base_config, output_dir)
         temp_dir_context = None
     else:
         temp_dir_context = tempfile.TemporaryDirectory()

@@ -3,7 +3,7 @@ Core experiment execution functions.
 """
 
 from pathlib import Path
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from .utils import resolve_device, seed_rng, save_history
 from .data import Dataset
@@ -23,7 +23,6 @@ def run_experiment(
 ) -> RunResult:
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
-        OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = resolve_device(device)
 
@@ -69,7 +68,6 @@ def run_comparative_experiment(
 ) -> RunResult:
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
-        OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = resolve_device(device)
 

@@ -18,7 +18,18 @@ from dln.overrides import (
     check_subdir_uniqueness,
 )
 import dln.metrics as metrics
-
+import tempfile
+from pathlib import Path
+from dln.utils import (
+    save_history,
+    load_history,
+    save_overrides,
+    save_base_config,
+    load_sweep,
+    load_base_config,
+    resolve_config,
+)
+from dln.experiment import run_experiment
 
 # ============================================================================
 # Helpers
@@ -74,6 +85,113 @@ def create_model(model_seed: int = 0, **kwargs) -> DeepLinearNetwork:
 
 def get_all_params(model: nn.Module) -> t.Tensor:
     return t.cat([p.detach().flatten() for p in model.parameters()])
+
+
+# ============================================================================
+# Test saving/loading
+# ============================================================================
+
+
+class TestIO:
+    def test_history_save_load_roundtrip(self):
+        history = {
+            "step": [0, 10, 20],
+            "test_loss": [1.5, 0.8, 0.3],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_history(history, Path(tmpdir))
+            loaded = load_history(Path(tmpdir))
+
+            assert list(loaded.keys()) == list(history.keys())
+            for key in history:
+                assert list(loaded[key]) == pytest.approx(history[key])
+
+    def test_sweep_saves_base_config_and_overrides(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            base_config = load_base_config("diagonal_teacher", "single")
+            fast = {
+                "max_steps": 10,
+                "num_evaluations": 5,
+                "model.hidden_dim": 5,
+                "data.train_samples": 20,
+                "data.test_samples": 20,
+            }
+
+            jobs = [
+                {"training.batch_seed": 0},
+                {"training.batch_seed": 1},
+            ]
+
+            for i, job in enumerate(jobs):
+                job_dir = output_dir / str(i)
+                job_dir.mkdir(parents=True)
+                cfg = resolve_config(base_config, "single", {**job, **fast})
+                run_experiment(cfg, output_dir=job_dir, show_plots=False, device="cpu")
+                save_overrides(job, job_dir / "overrides.json")
+
+            save_base_config(base_config, output_dir)
+
+            assert (output_dir / "config.yaml").exists()
+            assert (output_dir / "0" / "history.npz").exists()
+            assert (output_dir / "0" / "overrides.json").exists()
+            assert (output_dir / "1" / "history.npz").exists()
+            assert (output_dir / "1" / "overrides.json").exists()
+            assert not (output_dir / "0" / "config.yaml").exists()
+
+    def test_config_reconstructable_from_base_and_overrides(self):
+        base_config = load_base_config("diagonal_teacher", "single")
+        overrides = {"training.batch_seed": 42, "training.lr": 0.01}
+
+        original_cfg = resolve_config(base_config, "single", overrides)
+        reconstructed_cfg = resolve_config(base_config, "single", overrides)
+
+        assert original_cfg == reconstructed_cfg
+
+    def test_save_base_config_rejects_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+
+            config_a = load_base_config("diagonal_teacher", "single")
+            save_base_config(config_a, output_dir)
+
+            config_b = load_base_config("random_teacher", "single")
+            with pytest.raises(ValueError, match="Base config mismatch"):
+                save_base_config(config_b, output_dir)
+
+    def test_save_base_config_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+
+            config = load_base_config("diagonal_teacher", "single")
+            save_base_config(config, output_dir)
+            save_base_config(config, output_dir)
+
+    def test_load_sweep(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            base_config = load_base_config("diagonal_teacher", "single")
+            fast = {
+                "max_steps": 10,
+                "num_evaluations": 5,
+                "model.hidden_dim": 5,
+                "data.train_samples": 20,
+                "data.test_samples": 20,
+            }
+
+            for seed in [0, 1]:
+                overrides = {"training.batch_seed": seed}
+                job_dir = output_dir / f"seed{seed}"
+                job_dir.mkdir()
+                cfg = resolve_config(base_config, "single", {**overrides, **fast})
+                run_experiment(cfg, output_dir=job_dir, show_plots=False, device="cpu")
+                save_overrides(overrides, job_dir / "overrides.json")
+
+            results = load_sweep(output_dir)
+            assert len(results) == 2
+            assert all("history" in r for r in results)
+            assert all("overrides" in r for r in results)
+            assert all("step" in r["history"] for r in results)
 
 
 # ============================================================================

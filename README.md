@@ -19,7 +19,6 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 
 ## Project Structure
 
-* **`runner.py`**: Programmatic API for running experiments.
 * **`sweep.py`**: CLI entry point for single runs and parallel sweeps.
 * **`dln/`**: Core library.
   * `model.py`: `DeepLinearNetwork` architecture.
@@ -38,29 +37,14 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 
 ## Usage
 
-### Programmatic API
-
-```python
-from runner import run, run_comparative, run_sweep
-from dln.plotting import plot, plot_comparative
-
-# Single run
-result = run("diagonal_teacher")
-result = run("diagonal_teacher", overrides={"training.lr": 0.01, "max_steps": 5000})
-
-# Comparative run
-result = run_comparative("diagonal_teacher", overrides={"training_b.batch_size": 10})
-
-# Parameter sweep
-sweep = run_sweep("diagonal_teacher", param="training.lr", values=[0.0005, 0.001])
-plot(sweep, legend_title="lr")
-
-# Average over seeds with confidence intervals
-sweep = run_sweep("diagonal_teacher", param="training.batch_seed", values=range(5))
-plot(sweep, average="SGD")
-```
-
 ### Command Line
+
+#### Single Run
+
+```bash
+python sweep.py -cn=diagonal_teacher
+python sweep.py -cn=diagonal_teacher training.lr=0.001 model.gamma=1.5
+```
 
 #### Parameter Sweeps
 
@@ -109,6 +93,40 @@ python sweep.py -cn=diagonal_teacher --output=outputs/my_experiment
 # Custom subdirectory pattern
 python sweep.py -cn=diagonal_teacher training.batch_seed=0..10 \
     --subdir='seed{training.batch_seed}'
+```
+
+### Loading Results
+
+```python
+from pathlib import Path
+from dln.utils import load_run, load_sweep, load_history
+
+# Load a single run
+result = load_run(Path("outputs/my_experiment/seed0"))
+history = result["history"]  # dict of numpy arrays
+config = result["config"]    # dict (or None if no config.yaml)
+
+# Load all results from a sweep directory
+results = load_sweep(Path("outputs/my_experiment"))
+for r in results:
+    print(r["subdir"], r["overrides"], r["history"]["test_loss"][-1])
+
+# Load just the history from a single job
+history = load_history(Path("outputs/my_experiment/seed0"))
+```
+
+### Plotting
+
+```python
+from dln.plotting import plot, plot_comparative
+from dln.results import RunResult, SweepResult
+
+# Plot from a RunResult
+result = RunResult(history=history, config=config)
+plot(result)
+
+# Plot with averaging and confidence intervals
+plot(sweep_result, average="SGD")
 ```
 
 ## Configuration
@@ -207,11 +225,27 @@ Override individual values: `model_b.model_seed=999`
 
 ## Outputs
 
-Each run creates a directory containing:
+### Single Run
 
-* `history.json`: Training metrics (columnar format)
-* `config.yaml`: Resolved configuration
-* `plots.png`: Auto-generated plots (if enabled)
+```
+outputs/experiment_name/timestamp/
+  config.yaml       # Full resolved configuration
+  history.npz       # Training metrics (numpy archive)
+  plots.png         # Auto-generated plots (if enabled)
+```
+
+### Sweep
+
+```
+outputs/my_sweep/
+  config.yaml       # Base configuration (saved once)
+  seed0/
+    history.npz     # Training metrics
+    overrides.json  # Per-job parameter overrides
+  seed1/
+    history.npz
+    overrides.json
+```
 
 ## Extending the Codebase
 
