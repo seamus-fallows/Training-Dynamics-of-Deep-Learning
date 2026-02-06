@@ -14,7 +14,7 @@ model:
 
 training:
   lr: 0.0001
-  batch_size: null
+  batch_size: 50
   optimizer: "SGD"
   optimizer_params: null
   criterion: "MSELoss"

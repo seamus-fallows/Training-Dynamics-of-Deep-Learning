@@ -207,6 +207,9 @@ def format_subdir(pattern: str, overrides: dict[str, Any]) -> str:
             result = result.replace(
                 placeholder, "null" if value is None else str(value)
             )
+    unmatched = re.findall(r"\{[^}]+\}", result)
+    if unmatched:
+        raise ValueError(f"Unmatched placeholders in subdir pattern: {unmatched}")
     return result
 
 

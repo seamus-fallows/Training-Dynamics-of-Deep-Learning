@@ -99,4 +99,4 @@ class ComparativeTrainer:
             self.trainer_a._training_step(inputs_a, targets_a)
             self.trainer_b._training_step(inputs_b, targets_b)
 
-        return rows_to_columns(self.history)
+        return rows_to_columns(history)

@@ -30,6 +30,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 import tempfile
+import traceback
 
 from dln.experiment import run_experiment, run_comparative_experiment
 from dln.overrides import (
@@ -159,8 +160,8 @@ def run_single_job(
                 device=device,
             )
         return True, None
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+    except Exception:
+        return False, traceback.format_exc()
 
 
 def run_jobs_sequential(

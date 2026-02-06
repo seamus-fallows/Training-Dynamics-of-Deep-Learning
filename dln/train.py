@@ -18,7 +18,10 @@ class Trainer:
     ):
         self.device = device
         self.model = model.to(device)
-        self.dataset = dataset
+        self.online = dataset.online
+        self.in_dim = dataset.in_dim
+        self.out_dim = dataset.out_dim
+        self.noise_std = dataset.noise_std
         self.batch_size = cfg.batch_size
         self.track_train_loss = cfg.track_train_loss
 
@@ -52,7 +55,7 @@ class Trainer:
         self._init_iterator()
 
     def _init_iterator(self) -> None:
-        if self.dataset.online:
+        if self.online:
             if self.batch_size is None:
                 raise ValueError("Online mode requires explicit batch_size")
             self.train_iterator = self._online_iterator()
@@ -86,23 +89,21 @@ class Trainer:
             inputs_all = t.randn(
                 n_pregenerate,
                 self.batch_size,
-                self.dataset.in_dim,
+                self.in_dim,
                 generator=self._batch_generator,
             )
 
             inputs_all = inputs_all.to(self.device)
             targets_all = inputs_all @ self._teacher_matrix.T
 
-            if self.dataset.noise_std > 0:
+            if self.noise_std > 0:
                 noise_all = t.randn(
                     n_pregenerate,
                     self.batch_size,
-                    self.dataset.out_dim,
+                    self.out_dim,
                     generator=self._noise_generator,
                 )
-                targets_all = (
-                    targets_all + noise_all.to(self.device) * self.dataset.noise_std
-                )
+                targets_all = targets_all + noise_all.to(self.device) * self.noise_std
 
             for i in range(n_pregenerate):
                 yield inputs_all[i], targets_all[i]

@@ -58,7 +58,7 @@ class Dataset:
 
         matrix_type = cfg.params["matrix"]
         self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
-        self._noise_gen = t.Generator().manual_seed(cfg.data_seed + 1)
+        self._noise_generator = t.Generator().manual_seed(cfg.data_seed + 1)
 
         # TODO: Use dedicated generators for test/train to decouple from ordering.
         # Currently order matters for reproducibility: test set must be generated first.
@@ -70,6 +70,6 @@ class Dataset:
         inputs = t.randn(n, self.in_dim)
         targets = inputs @ self.teacher_matrix.T
         if self.noise_std > 0:
-            noise = t.randn(targets.shape, generator=self._noise_gen)
+            noise = t.randn(targets.shape, generator=self._noise_generator)
             targets = targets + noise * self.noise_std
         return inputs, targets
