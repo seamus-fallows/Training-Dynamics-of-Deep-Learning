@@ -65,7 +65,7 @@ class Trainer:
         return rows_to_columns(history)
 
     def _training_step(self, inputs: Tensor, targets: Tensor) -> None:
-        self.optimizer.zero_grad(set_to_none=True)
+        self.optimizer.zero_grad()
         output = self.model(inputs)
         loss = self.criterion(output, targets)
         loss.backward()

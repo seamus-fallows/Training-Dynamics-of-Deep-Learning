@@ -129,9 +129,8 @@ def parse_args() -> argparse.Namespace:
 
 def init_worker(num_workers: int) -> None:
     """Initialize worker process with proper thread configuration."""
-    if num_workers > 1:
-        t.set_num_threads(1)
-        t.set_num_interop_threads(1)
+    t.set_num_threads(1)
+    t.set_num_interop_threads(1)
 
 
 def run_single_job(
