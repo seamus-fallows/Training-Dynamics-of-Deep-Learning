@@ -67,14 +67,13 @@ def get_criterion_cls(name: str) -> Type[nn.Module]:
 def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
     """Save training history as compressed numpy archive."""
     history_path = output_dir / "history.npz"
-    np.savez(history_path, **{k: np.array(v) for k, v in history.items()})
+    np.savez_compressed(history_path, **{k: np.array(v) for k, v in history.items()})
 
 
 def load_history(output_dir: Path) -> dict[str, np.ndarray]:
     """Load training history from numpy archive."""
-    history_path = output_dir / "history.npz"
-    data = np.load(history_path)
-    return {k: data[k] for k in data.files}
+    with np.load(output_dir / "history.npz") as data:
+        return {k: data[k] for k in data.files}
 
 
 def save_config(cfg: dict, path: Path) -> None:

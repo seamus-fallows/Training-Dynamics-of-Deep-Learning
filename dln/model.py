@@ -10,7 +10,10 @@ class DeepLinearNetwork(nn.Module):
 
         sizes = [cfg.in_dim] + [cfg.hidden_dim] * cfg.num_hidden + [cfg.out_dim]
         self.layers = nn.Sequential(
-            *[nn.Linear(sizes[i], sizes[i + 1], bias=0) for i in range(len(sizes) - 1)]
+            *[
+                nn.Linear(sizes[i], sizes[i + 1], bias=False)
+                for i in range(len(sizes) - 1)
+            ]
         )
 
         if cfg.gamma is not None:
