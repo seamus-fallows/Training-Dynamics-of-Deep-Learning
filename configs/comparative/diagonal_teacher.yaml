@@ -10,7 +10,6 @@ shared:
     num_hidden: 3
     hidden_dim: 100
     gamma: 1.5
-    bias: false
     model_seed: 0
   training:
     lr: 0.0001

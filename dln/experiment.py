@@ -3,9 +3,9 @@ Core experiment execution functions.
 """
 
 from pathlib import Path
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
-from .utils import resolve_device, seed_rng, save_history
+from .utils import resolve_device, save_history, to_device
 from .data import Dataset
 from .factory import create_trainer
 from .callbacks import create_callbacks
@@ -23,21 +23,19 @@ def run_experiment(
 ) -> RunResult:
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = resolve_device(device)
 
-    seed_rng(cfg.data.data_seed)
-    dataset = Dataset(
-        cfg.data,
-        in_dim=cfg.model.in_dim,
-        out_dim=cfg.model.out_dim,
-    )
+    dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
+    test_data = to_device(dataset.test_data, device)
     callbacks = create_callbacks(cfg.callbacks)
 
     trainer = create_trainer(
         model_cfg=cfg.model,
         training_cfg=cfg.training,
         dataset=dataset,
+        test_data=test_data,
         device=device,
     )
 
@@ -68,15 +66,12 @@ def run_comparative_experiment(
 ) -> RunResult:
     if save_results:
         output_dir.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = resolve_device(device)
 
-    seed_rng(cfg.data.data_seed)
-    dataset = Dataset(
-        cfg.data,
-        in_dim=cfg.model_a.in_dim,
-        out_dim=cfg.model_a.out_dim,
-    )
+    dataset = Dataset(cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim)
+    test_data = to_device(dataset.test_data, device)
     callbacks_a = create_callbacks(cfg.callbacks_a)
     callbacks_b = create_callbacks(cfg.callbacks_b)
 
@@ -84,12 +79,14 @@ def run_comparative_experiment(
         model_cfg=cfg.model_a,
         training_cfg=cfg.training_a,
         dataset=dataset,
+        test_data=test_data,
         device=device,
     )
     trainer_b = create_trainer(
         model_cfg=cfg.model_b,
         training_cfg=cfg.training_b,
         dataset=dataset,
+        test_data=test_data,
         device=device,
     )
 

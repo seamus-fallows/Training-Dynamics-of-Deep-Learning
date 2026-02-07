@@ -1,10 +1,10 @@
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
 import torch as t
 from torch import Tensor
-from dln.data import Dataset
+from dln.data import TrainLoader
 from dln.model import DeepLinearNetwork
 from omegaconf import DictConfig
-from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns, to_device
+from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns
 from dln.metrics import compute_metrics
 
 
@@ -13,32 +13,15 @@ class Trainer:
         self,
         model: DeepLinearNetwork,
         cfg: DictConfig,
-        dataset: Dataset,
+        train_loader: TrainLoader,
+        test_data: tuple[Tensor, Tensor],
         device: t.device,
     ):
         self.device = device
         self.model = model.to(device)
-        self.online = dataset.online
-        self.in_dim = dataset.in_dim
-        self.out_dim = dataset.out_dim
-        self.noise_std = dataset.noise_std
-        self.batch_size = cfg.batch_size
+        self.train_loader = train_loader
+        self.test_data = test_data
         self.track_train_loss = cfg.track_train_loss
-
-        self._batch_generator = t.Generator()
-        self._batch_generator.manual_seed(cfg.batch_seed)
-        self._noise_generator = t.Generator().manual_seed(cfg.batch_seed + 1)
-
-        self.test_data = to_device(dataset.test_data, device)
-
-        if dataset.online:
-            self.train_data = None
-            self._teacher_matrix = dataset.teacher_matrix.to(device)
-        else:
-            self.train_data = to_device(dataset.train_data, device)
-            self._teacher_matrix = None
-
-        self._init_iterator()
 
         optimizer_cls = get_optimizer_cls(cfg.optimizer)
         criterion_cls = get_criterion_cls(cfg.criterion)
@@ -50,63 +33,9 @@ class Trainer:
         self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
 
-    def set_batch_size(self, batch_size: int | None) -> None:
-        self.batch_size = batch_size
-        self._init_iterator()
-
-    def _init_iterator(self) -> None:
-        if self.online:
-            if self.batch_size is None:
-                raise ValueError("Online mode requires explicit batch_size")
-            self.train_iterator = self._online_iterator()
-        else:
-            self.train_iterator = self._offline_iterator()
-
-    def _offline_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
-        x, y = self.train_data
-        n_samples = len(x)
-
-        if self.batch_size is None or self.batch_size >= n_samples:
-            while True:
-                yield x, y
-
-        while True:
-            indices = t.randperm(n_samples, generator=self._batch_generator).to(
-                self.device
-            )
-
-            # Drops remainder samples that don't fill a complete batch
-            for start_idx in range(0, n_samples - self.batch_size + 1, self.batch_size):
-                batch_idx = indices[start_idx : start_idx + self.batch_size]
-                yield x[batch_idx], y[batch_idx]
-
-    def _online_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
-        # Pregenerate batches in bulk to amortize CPU→GPU transfer overhead
-        n_pregenerate = 1000
-
-        while True:
-            # Generate on CPU for reproducibility
-            inputs_all = t.randn(
-                n_pregenerate,
-                self.batch_size,
-                self.in_dim,
-                generator=self._batch_generator,
-            )
-
-            inputs_all = inputs_all.to(self.device)
-            targets_all = inputs_all @ self._teacher_matrix.T
-
-            if self.noise_std > 0:
-                noise_all = t.randn(
-                    n_pregenerate,
-                    self.batch_size,
-                    self.out_dim,
-                    generator=self._noise_generator,
-                )
-                targets_all = targets_all + noise_all.to(self.device) * self.noise_std
-
-            for i in range(n_pregenerate):
-                yield inputs_all[i], targets_all[i]
+    @property
+    def train_data(self) -> tuple[Tensor, Tensor]:
+        return self.train_loader.train_data
 
     def run(
         self,
@@ -125,7 +54,7 @@ class Trainer:
             for callback in callbacks:
                 callback(step, self)
 
-            inputs, targets = next(self.train_iterator)
+            inputs, targets = next(self.train_loader)
 
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)

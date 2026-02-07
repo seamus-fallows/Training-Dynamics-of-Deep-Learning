@@ -24,7 +24,6 @@ model:
   gamma: 1.0         # float: initialization scaling exponent
                      #   std = hidden_dim^(-gamma/2)
                      #   0.5 = standard, 0.75 = NTK, 1.0 = mean-field, 1.5+ = saddle-to-saddle
-  bias: false        # bool: include bias terms
   model_seed: 0            # int: random seed for weight initialization
 
 # -----------------------------------------------------------------------------

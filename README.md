@@ -22,7 +22,7 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 * **`sweep.py`**: CLI entry point for single runs and parallel sweeps.
 * **`dln/`**: Core library.
   * `model.py`: `DeepLinearNetwork` architecture.
-  * `data.py`: Synthetic data generators.
+  * `data.py`: Synthetic data generators and `TrainLoader` for batch iteration.
   * `train.py`: `Trainer` class and training loop.
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models.
   * `callbacks.py`: Callback system for mid-training interventions.

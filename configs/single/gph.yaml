@@ -9,7 +9,6 @@ model:
   num_hidden: 3
   hidden_dim: 100
   gamma: 1.0
-  bias: false
   model_seed: 0
 
 training:

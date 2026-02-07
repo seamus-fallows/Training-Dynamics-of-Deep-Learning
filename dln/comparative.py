@@ -13,9 +13,6 @@ class ComparativeTrainer:
     ):
         self.trainer_a = trainer_a
         self.trainer_b = trainer_b
-        assert trainer_a.test_data[0].data_ptr() == trainer_b.test_data[0].data_ptr(), (
-            "ComparativeTrainer requires both trainers to share the same dataset"
-        )
 
     def run(
         self,
@@ -40,8 +37,8 @@ class ComparativeTrainer:
             for callback in callbacks_b:
                 callback(step, self.trainer_b)
 
-            inputs_a, targets_a = next(self.trainer_a.train_iterator)
-            inputs_b, targets_b = next(self.trainer_b.train_iterator)
+            inputs_a, targets_a = next(self.trainer_a.train_loader)
+            inputs_b, targets_b = next(self.trainer_b.train_loader)
 
             if step % evaluate_every == 0:
                 record = {"step": step}
@@ -51,6 +48,7 @@ class ComparativeTrainer:
                     record["test_loss_a"] = self.trainer_a.criterion(
                         self.trainer_a.model(test_inputs), test_targets
                     ).item()
+
                     record["test_loss_b"] = self.trainer_b.criterion(
                         self.trainer_b.model(test_inputs), test_targets
                     ).item()
@@ -60,6 +58,7 @@ class ComparativeTrainer:
                         record["train_loss_a"] = self.trainer_a.criterion(
                             self.trainer_a.model(train_inputs), train_targets
                         ).item()
+
                     if self.trainer_b.track_train_loss:
                         train_inputs, train_targets = self.trainer_b.train_data
                         record["train_loss_b"] = self.trainer_b.criterion(
