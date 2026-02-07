@@ -229,8 +229,9 @@ Override individual values: `model_b.model_seed=999`
 
 ```
 outputs/experiment_name/timestamp/
-  config.yaml       # Full resolved configuration
+  config.yaml       # Base configuration
   history.npz       # Training metrics (numpy archive)
+  overrides.json    # Parameter overrides (empty for defaults)
   plots.png         # Auto-generated plots (if enabled)
 ```
 
