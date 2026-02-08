@@ -23,6 +23,11 @@ Usage:
         --subdir='g{model.gamma}_s{training.batch_seed}'
 """
 
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import torch as t
 import argparse
 import time
@@ -38,6 +43,7 @@ from dln.experiment import run_experiment, run_comparative_experiment
 from dln.utils import (
     load_base_config,
     resolve_config,
+    resolve_device,
     save_sweep_config,
     save_overrides,
     save_history,
@@ -130,6 +136,36 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+# =============================================================================
+# Worker Pool
+# =============================================================================
+
+_worker_state = {}
+
+
+def _worker_init(resolved_base, config_dir, device):
+    """Called once per worker process at pool creation."""
+    t.set_num_threads(1)
+    _worker_state.update(
+        resolved_base=resolved_base,
+        config_dir=config_dir,
+        device=device,
+    )
+    if device == "cuda":
+        dev = resolve_device(device)
+        t.zeros(1, device=dev)
+
+
+def _worker_run_job(job_overrides, output_dir):
+    return run_single_job(
+        _worker_state["resolved_base"],
+        _worker_state["config_dir"],
+        job_overrides,
+        output_dir,
+        _worker_state["device"],
+    )
 
 
 # =============================================================================
@@ -242,17 +278,14 @@ def run_jobs_parallel(
     total = len(jobs_to_run)
     start_time = time.time()
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    with ProcessPoolExecutor(
+        max_workers=num_workers,
+        initializer=_worker_init,
+        initargs=(resolved_base, config_dir, device),
+    ) as executor:
         futures = {}
         for i, job, job_dir in jobs_to_run:
-            future = executor.submit(
-                run_single_job,
-                resolved_base,
-                config_dir,
-                job,
-                job_dir,
-                device,
-            )
+            future = executor.submit(_worker_run_job, job, job_dir)
             futures[future] = (i, job)
 
         for future in as_completed(futures):
