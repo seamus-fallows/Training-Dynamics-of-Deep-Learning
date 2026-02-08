@@ -1,8 +1,6 @@
 experiment:
   name: "gph"
 
-plot_history: false
-
 model:
   in_dim: 5
   out_dim: 5

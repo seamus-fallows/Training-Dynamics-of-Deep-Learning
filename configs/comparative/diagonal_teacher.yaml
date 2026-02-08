@@ -1,8 +1,6 @@
 experiment:
   name: diagonal_teacher_comparative
 
-plot_history: false
-
 shared:
   model:
     in_dim: 5

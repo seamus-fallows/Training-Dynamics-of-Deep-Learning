@@ -4,3 +4,5 @@ figures/
 cache/
 test.sh
 *.tar.gz*
+*CLAUDE*
+*claude*

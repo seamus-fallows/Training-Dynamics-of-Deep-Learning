@@ -20,8 +20,7 @@ Usage:
         --workers=40 \\
         --device=cuda \\
         --output=outputs/my_experiment \\
-        --subdir='g{model.gamma}_s{training.batch_seed}' \\
-        --skip-existing
+        --subdir='g{model.gamma}_s{training.batch_seed}'
 """
 
 import torch as t
@@ -33,18 +32,21 @@ from typing import Any
 import tempfile
 import traceback
 
+from omegaconf import OmegaConf
+
 from dln.experiment import run_experiment, run_comparative_experiment
 from dln.utils import (
     load_base_config,
     resolve_config,
-    save_base_config,
+    save_sweep_config,
     save_overrides,
+    save_history,
 )
 from dln.overrides import (
     parse_overrides,
+    split_overrides,
     expand_sweep_params,
     get_output_dir,
-    auto_subdir_pattern,
     make_job_subdir,
     check_subdir_uniqueness,
 )
@@ -99,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="Output directory (default: outputs/{experiment_name}/{timestamp}_{sweep_params})",
+        help="Output directory (default: outputs/{experiment_name}/{timestamp})",
     )
     parser.add_argument(
         "--subdir",
@@ -137,38 +139,31 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_single_job(
-    base_config: dict,
+    resolved_base: dict,
     config_dir: str,
-    overrides: dict[str, Any],
+    job_overrides: dict[str, Any],
     output_dir: Path,
     device: str,
 ) -> tuple[bool, str | None]:
     """Run a single experiment job. Returns (success, error_message)."""
     try:
-        cfg = resolve_config(base_config, config_dir, overrides)
+        save_overrides(job_overrides, output_dir)
+
+        cfg = resolve_config(resolved_base, config_dir, job_overrides)
 
         if config_dir == "comparative":
-            run_comparative_experiment(
-                cfg,
-                output_dir=output_dir,
-                show_plots=False,
-                device=device,
-            )
+            result = run_comparative_experiment(cfg, device=device)
         else:
-            run_experiment(
-                cfg,
-                output_dir=output_dir,
-                show_plots=False,
-                device=device,
-            )
-        save_overrides(overrides, output_dir / "overrides.json")
+            result = run_experiment(cfg, device=device)
+
+        save_history(result.history, output_dir)
         return True, None
     except Exception:
         return False, traceback.format_exc()
 
 
 def run_jobs_sequential(
-    base_config: dict,
+    resolved_base: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
@@ -185,8 +180,8 @@ def run_jobs_sequential(
     errors = []
 
     for i, job in enumerate(jobs):
-        subdir = make_job_subdir(i, job, subdir_pattern)
-        job_dir = output_dir / subdir
+        subdir = make_job_subdir(job, subdir_pattern)
+        job_dir = output_dir / subdir if subdir else output_dir
 
         if skip_existing and (job_dir / "history.npz").exists():
             skipped += 1
@@ -198,7 +193,7 @@ def run_jobs_sequential(
             print(f"[{i + 1}/{len(jobs)}] {subdir}")
 
         success, error = run_single_job(
-            base_config, config_dir, job, job_dir, device=device
+            resolved_base, config_dir, job, job_dir, device=device
         )
 
         if success:
@@ -214,7 +209,7 @@ def run_jobs_sequential(
 
 
 def run_jobs_parallel(
-    base_config: dict,
+    resolved_base: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
@@ -232,8 +227,8 @@ def run_jobs_parallel(
 
     jobs_to_run = []
     for i, job in enumerate(jobs):
-        subdir = make_job_subdir(i, job, subdir_pattern)
-        job_dir = output_dir / subdir
+        subdir = make_job_subdir(job, subdir_pattern)
+        job_dir = output_dir / subdir if subdir else output_dir
 
         if skip_existing and (job_dir / "history.npz").exists():
             skipped += 1
@@ -253,7 +248,7 @@ def run_jobs_parallel(
         for idx, (i, job, job_dir) in enumerate(jobs_to_run):
             future = executor.submit(
                 run_single_job,
-                base_config,
+                resolved_base,
                 config_dir,
                 job,
                 job_dir,
@@ -291,7 +286,7 @@ def run_jobs_parallel(
 
 
 def run_sweep(
-    base_config: dict,
+    resolved_base: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
     output_dir: Path,
@@ -304,25 +299,13 @@ def run_sweep(
     """Run a sweep of jobs."""
     start_time = time.time()
 
-    # Count existing jobs upfront
-    if skip_existing:
-        existing = sum(
-            1
-            for i, job in enumerate(jobs)
-            if (
-                output_dir / make_job_subdir(i, job, subdir_pattern) / "history.npz"
-            ).exists()
-        )
-        if existing:
-            print(f"Found {existing} existing jobs, will skip")
-
     print(f"Running {len(jobs)} jobs (workers={workers}, device={device})")
     print(f"Output: {output_dir}")
     print()
 
     if workers == 1:
         completed, skipped, failed, errors = run_jobs_sequential(
-            base_config,
+            resolved_base,
             config_dir,
             jobs,
             output_dir,
@@ -333,7 +316,7 @@ def run_sweep(
         )
     else:
         completed, skipped, failed, errors = run_jobs_parallel(
-            base_config,
+            resolved_base,
             config_dir,
             jobs,
             output_dir,
@@ -362,6 +345,7 @@ def run_sweep(
             print(f"  ... and {len(errors) - 10} more")
 
 
+
 # =============================================================================
 # Entry Point
 # =============================================================================
@@ -371,23 +355,25 @@ if __name__ == "__main__":
     args = parse_args()
 
     overrides = parse_overrides(args.overrides)
-    jobs = expand_sweep_params(overrides, args.zip_groups)
+    fixed_overrides, sweep_overrides = split_overrides(overrides)
+
+    jobs = expand_sweep_params(sweep_overrides, args.zip_groups)
 
     subdir_pattern = args.subdir
-    if subdir_pattern is None and len(jobs) > 1:
-        subdir_pattern = auto_subdir_pattern(overrides)
-
     check_subdir_uniqueness(jobs, subdir_pattern)
 
     config_dir = "comparative" if args.comparative else "single"
     base_config = load_base_config(args.config_name, config_dir)
-    cfg = resolve_config(base_config, config_dir)
-    experiment_name = cfg.experiment.name
+
+    # Resolve base config with fixed overrides baked in
+    effective_cfg = resolve_config(base_config, config_dir, fixed_overrides)
+    experiment_name = effective_cfg.experiment.name
+    resolved_base = OmegaConf.to_container(effective_cfg, resolve=True)
 
     if args.save_results:
-        output_dir = get_output_dir(experiment_name, overrides, args.output)
+        output_dir = get_output_dir(experiment_name, args.output)
         output_dir.mkdir(parents=True, exist_ok=True)
-        save_base_config(base_config, output_dir)
+        save_sweep_config(resolved_base, output_dir)
         temp_dir_context = None
     else:
         temp_dir_context = tempfile.TemporaryDirectory()
@@ -395,7 +381,7 @@ if __name__ == "__main__":
 
     try:
         run_sweep(
-            base_config=base_config,
+            resolved_base=resolved_base,
             config_dir=config_dir,
             jobs=jobs,
             output_dir=output_dir,

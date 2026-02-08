@@ -9,7 +9,6 @@ Register new callbacks with the @register_callback decorator.
 
 from typing import Callable
 
-# Registry
 CALLBACKS: dict[str, Callable[..., Callable]] = {}
 
 

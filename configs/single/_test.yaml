@@ -1,17 +1,17 @@
 experiment:
-  name: "gph"
+  name: "test"
 
 model:
-  in_dim: 5
-  out_dim: 5
-  num_hidden: 3
-  hidden_dim: 100
+  in_dim: 3
+  out_dim: 3
+  num_hidden: 1
+  hidden_dim: 5
   gamma: 1.0
   model_seed: 0
 
 training:
-  lr: 0.0001
-  batch_size: 50
+  lr: 0.01
+  batch_size: null
   optimizer: "SGD"
   optimizer_params: null
   criterion: "MSELoss"
@@ -19,19 +19,17 @@ training:
   track_train_loss: false
 
 data:
-  train_samples: 500
-  test_samples: 500
+  train_samples: 20
+  test_samples: 10
   data_seed: 0
-  online: true
+  online: false
   noise_std: 0.0
   params:
     matrix: "diagonal"
-    scale: 10.0
-    
-metrics:
-  # - trace_covariances:
-  #     chunks: 1
+    scale: 1.0
 
-max_steps: 10000
-num_evaluations: 250
+metrics:
+
+max_steps: 10
+num_evaluations: 2
 callbacks: []

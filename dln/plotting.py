@@ -264,23 +264,6 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> plt.Figure:
     return fig
 
 
-def auto_plot(result: RunResult, show: bool = True) -> None:
-    """Auto-generate plots for a run."""
-    is_comparative = result.has("test_loss_a")
-
-    if is_comparative:
-        fig, ax = plt.subplots()
-        plot_comparative(result, ax=ax)
-    else:
-        fig = plot_run(result)
-
-    if result.output_dir:
-        fig.savefig(result.output_dir / "plots.png", dpi=150, bbox_inches="tight")
-
-    if not show:
-        plt.close(fig)
-
-
 # =============================================================================
 # Derived quantity helpers
 # =============================================================================

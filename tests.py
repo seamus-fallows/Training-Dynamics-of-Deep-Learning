@@ -1,4 +1,6 @@
+import json
 import pytest
+import yaml
 import torch as t
 from torch import nn
 from omegaconf import OmegaConf
@@ -12,11 +14,21 @@ from dln.overrides import (
     parse_value,
     parse_overrides,
     expand_sweep_params,
-    auto_subdir_pattern,
+    split_overrides,
+    hash_subdir,
     format_subdir,
     check_subdir_uniqueness,
 )
+from dln.utils import (
+    save_sweep_config,
+    load_history,
+    load_run,
+    load_sweep,
+    resolve_config,
+    load_base_config,
+)
 import dln.metrics as metrics
+from sweep import run_single_job, run_sweep, run_jobs_sequential
 
 
 # ============================================================================
@@ -161,18 +173,17 @@ class TestOverrides:
         with pytest.raises(ValueError, match="Invalid override format"):
             parse_overrides(["invalid_no_equals"])
 
-    def test_expand_sweep_params_single_values(self):
-        overrides = {"a": 1, "b": 2}
-        jobs = expand_sweep_params(overrides)
-        assert jobs == [{"a": 1, "b": 2}]
+    def test_expand_sweep_params_empty(self):
+        jobs = expand_sweep_params({})
+        assert jobs == [{}]
 
     def test_expand_sweep_params_one_list(self):
-        overrides = {"a": [1, 2, 3], "b": 99}
+        overrides = {"a": [1, 2, 3]}
         jobs = expand_sweep_params(overrides)
         assert len(jobs) == 3
-        assert {"a": 1, "b": 99} in jobs
-        assert {"a": 2, "b": 99} in jobs
-        assert {"a": 3, "b": 99} in jobs
+        assert {"a": 1} in jobs
+        assert {"a": 2} in jobs
+        assert {"a": 3} in jobs
 
     def test_expand_sweep_params_cartesian_product(self):
         overrides = {"a": [1, 2], "b": [3, 4]}
@@ -184,12 +195,12 @@ class TestOverrides:
         assert {"a": 2, "b": 4} in jobs
 
     def test_expand_sweep_params_with_zip(self):
-        overrides = {"a": [1, 2, 3], "b": [10, 20, 30], "c": 99}
+        overrides = {"a": [1, 2, 3], "b": [10, 20, 30]}
         jobs = expand_sweep_params(overrides, zip_groups=["a,b"])
         assert len(jobs) == 3
-        assert {"a": 1, "b": 10, "c": 99} in jobs
-        assert {"a": 2, "b": 20, "c": 99} in jobs
-        assert {"a": 3, "b": 30, "c": 99} in jobs
+        assert {"a": 1, "b": 10} in jobs
+        assert {"a": 2, "b": 20} in jobs
+        assert {"a": 3, "b": 30} in jobs
 
     def test_expand_sweep_params_zip_with_cartesian(self):
         overrides = {"a": [1, 2], "b": [10, 20], "c": [100, 200]}
@@ -215,23 +226,40 @@ class TestOverrides:
         with pytest.raises(ValueError, match="must have multiple values"):
             expand_sweep_params(overrides, zip_groups=["a,b"])
 
-    def test_auto_subdir_pattern_includes_all_overrides(self):
-        overrides = {"model.gamma": [0.75, 1.0], "training.lr": 0.001}
-        pattern = auto_subdir_pattern(overrides)
-        assert "gamma" in pattern
-        assert "{model.gamma}" in pattern
-        assert "lr" in pattern
-        assert "{training.lr}" in pattern
+    def test_split_overrides(self):
+        overrides = {"model.gamma": 0.75, "training.batch_seed": [0, 1, 2], "max_steps": 1000}
+        fixed, sweep = split_overrides(overrides)
+        assert fixed == {"model.gamma": 0.75, "max_steps": 1000}
+        assert sweep == {"training.batch_seed": [0, 1, 2]}
 
-    def test_auto_subdir_pattern_empty_returns_none(self):
-        pattern = auto_subdir_pattern({})
-        assert pattern is None
+    def test_split_overrides_all_fixed(self):
+        overrides = {"a": 1, "b": 2}
+        fixed, sweep = split_overrides(overrides)
+        assert fixed == overrides
+        assert sweep == {}
 
-    def test_auto_subdir_pattern_multiple_sweep_params(self):
-        overrides = {"model.gamma": [0.75, 1.0], "training.batch_seed": [0, 1]}
-        pattern = auto_subdir_pattern(overrides)
-        assert "gamma" in pattern
-        assert "batch_seed" in pattern
+    def test_split_overrides_all_sweep(self):
+        overrides = {"a": [1, 2], "b": [3, 4]}
+        fixed, sweep = split_overrides(overrides)
+        assert fixed == {}
+        assert sweep == overrides
+
+    def test_hash_subdir_deterministic(self):
+        overrides = {"training.batch_seed": 42, "model.gamma": 0.75}
+        h1 = hash_subdir(overrides)
+        h2 = hash_subdir(overrides)
+        assert h1 == h2
+        assert len(h1) == 12
+
+    def test_hash_subdir_different_inputs(self):
+        h1 = hash_subdir({"a": 1})
+        h2 = hash_subdir({"a": 2})
+        assert h1 != h2
+
+    def test_hash_subdir_order_independent(self):
+        h1 = hash_subdir({"a": 1, "b": 2})
+        h2 = hash_subdir({"b": 2, "a": 1})
+        assert h1 == h2
 
     def test_format_subdir(self):
         pattern = "g{model.gamma}_s{training.seed}"
@@ -840,3 +868,184 @@ class TestCallbacks:
         assert all(abs(lr - 0.1) < 1e-9 for lr in lrs[:10])
         assert all(abs(lr - 0.05) < 1e-9 for lr in lrs[10:20])
         assert all(abs(lr - 0.025) < 1e-9 for lr in lrs[20:])
+
+
+# ============================================================================
+# Save/Load Pipeline Tests
+# ============================================================================
+
+
+def make_resolved_base(fixed_overrides=None):
+    base = load_base_config("_test", "single")
+    cfg = resolve_config(base, "single", fixed_overrides)
+    return OmegaConf.to_container(cfg, resolve=True)
+
+
+class TestSaveLoadPipeline:
+    def test_single_run_saves_all_artifacts(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+        success, error = run_single_job(resolved, "single", {}, tmp_path, "cpu")
+
+        assert success, f"Job failed: {error}"
+        assert (tmp_path / "config.yaml").exists()
+        assert (tmp_path / "history.npz").exists()
+        assert (tmp_path / "overrides.json").exists()
+
+    def test_single_run_empty_overrides(self, tmp_path):
+        resolved = make_resolved_base()
+        run_single_job(resolved, "single", {}, tmp_path, "cpu")
+
+        with (tmp_path / "overrides.json").open() as f:
+            assert json.load(f) == {}
+
+    def test_history_contains_expected_keys(self, tmp_path):
+        resolved = make_resolved_base()
+        run_single_job(resolved, "single", {}, tmp_path, "cpu")
+
+        history = load_history(tmp_path)
+        assert "step" in history
+        assert "test_loss" in history
+        assert len(history["step"]) == 2
+
+    def test_no_tmp_files_remain(self, tmp_path):
+        resolved = make_resolved_base()
+        run_single_job(resolved, "single", {}, tmp_path, "cpu")
+
+        assert list(tmp_path.glob("*.tmp*")) == []
+
+    def test_sweep_creates_hash_subdirs(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+
+        for job in jobs:
+            job_dir = tmp_path / hash_subdir(job)
+            assert (job_dir / "history.npz").exists()
+            assert (job_dir / "overrides.json").exists()
+
+    def test_sweep_custom_subdir_pattern(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        run_sweep(
+            resolved, "single", jobs, tmp_path,
+            "seed{training.batch_seed}", True, False, 1, "cpu",
+        )
+
+        assert (tmp_path / "seed0" / "history.npz").exists()
+        assert (tmp_path / "seed1" / "history.npz").exists()
+
+    def test_per_job_overrides_contain_only_sweep_params(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+
+        for job in jobs:
+            with (tmp_path / hash_subdir(job) / "overrides.json").open() as f:
+                assert json.load(f) == job
+
+    def test_fixed_overrides_baked_into_config(self, tmp_path):
+        resolved = make_resolved_base({"model.gamma": 0.75})
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+
+        with (tmp_path / "config.yaml").open() as f:
+            config = yaml.safe_load(f)
+        assert config["model"]["gamma"] == 0.75
+
+        for job in jobs:
+            with (tmp_path / hash_subdir(job) / "overrides.json").open() as f:
+                saved = json.load(f)
+            assert "model.gamma" not in saved
+            assert "gamma" not in saved
+
+    def test_resume_skips_existing(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+
+        completed, skipped, failed, errors = run_jobs_sequential(
+            resolved, "single", jobs, tmp_path, None, True, False, "cpu",
+        )
+        assert completed == 0
+        assert skipped == 2
+        assert failed == 0
+
+    def test_overwrite_reruns_existing(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}]
+        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+
+        completed, skipped, failed, errors = run_jobs_sequential(
+            resolved, "single", jobs, tmp_path, None, False, False, "cpu",
+        )
+        assert completed == 1
+        assert skipped == 0
+
+    def test_config_mismatch_raises(self, tmp_path):
+        config_a = make_resolved_base({"model.gamma": 0.75})
+        config_b = make_resolved_base({"model.gamma": 1.5})
+
+        save_sweep_config(config_a, tmp_path)
+        with pytest.raises(ValueError, match="Config mismatch"):
+            save_sweep_config(config_b, tmp_path)
+
+    def test_config_identical_allowed(self, tmp_path):
+        config = make_resolved_base()
+        save_sweep_config(config, tmp_path)
+        save_sweep_config(config, tmp_path)
+
+    def test_load_run_single(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+        run_single_job(resolved, "single", {}, tmp_path, "cpu")
+
+        result = load_run(tmp_path)
+        assert "step" in result["history"]
+        assert "test_loss" in result["history"]
+        assert result["config"] is not None
+        assert result["overrides"] == {}
+
+    def test_load_run_finds_parent_config(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        job = {"training.batch_seed": 0}
+        job_dir = tmp_path / hash_subdir(job)
+        job_dir.mkdir()
+        run_single_job(resolved, "single", job, job_dir, "cpu")
+
+        result = load_run(job_dir)
+        assert result["config"] is not None
+        assert result["overrides"] == job
+
+    def test_load_sweep_loads_all_runs(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+
+        sweep = load_sweep(tmp_path)
+        assert sweep["config"] is not None
+        assert len(sweep["runs"]) == 2
+
+        subdirs = {r["subdir"] for r in sweep["runs"]}
+        for job in jobs:
+            assert hash_subdir(job) in subdirs
+
+        for run in sweep["runs"]:
+            assert "step" in run["history"]
+            assert "overrides" in run

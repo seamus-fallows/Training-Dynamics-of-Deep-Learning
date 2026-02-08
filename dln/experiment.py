@@ -2,23 +2,18 @@
 Core experiment execution functions.
 """
 
-from pathlib import Path
 from omegaconf import DictConfig
 
-from .utils import resolve_device, save_history, to_device
+from .utils import resolve_device, to_device
 from .data import Dataset
 from .factory import create_trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
 from .results import RunResult
-from .plotting import auto_plot
 
 
 def run_experiment(
     cfg: DictConfig,
-    output_dir: Path,
-    show_plots: bool = True,
-    save_results: bool = True,
     device: str = "cuda",
 ) -> RunResult:
 
@@ -43,22 +38,11 @@ def run_experiment(
         callbacks=callbacks,
     )
 
-    if save_results:
-        save_history(history, output_dir)
-
-    result = RunResult(history=history, config=cfg, output_dir=output_dir)
-
-    if cfg.plot_history and save_results:
-        auto_plot(result, show=show_plots)
-
-    return result
+    return RunResult(history=history, config=cfg)
 
 
 def run_comparative_experiment(
     cfg: DictConfig,
-    output_dir: Path,
-    show_plots: bool = True,
-    save_results: bool = True,
     device: str = "cuda",
 ) -> RunResult:
 
@@ -95,12 +79,4 @@ def run_comparative_experiment(
         callbacks_b=callbacks_b,
     )
 
-    if save_results:
-        save_history(history, output_dir)
-
-    result = RunResult(history=history, config=cfg, output_dir=output_dir)
-
-    if cfg.plot_history and save_results:
-        auto_plot(result, show=show_plots)
-
-    return result
+    return RunResult(history=history, config=cfg)

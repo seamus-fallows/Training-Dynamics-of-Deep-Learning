@@ -1,8 +1,6 @@
 experiment:
   name: diagonal_teacher
 
-plot_history: false
-
 model:
   in_dim: 5
   out_dim: 5

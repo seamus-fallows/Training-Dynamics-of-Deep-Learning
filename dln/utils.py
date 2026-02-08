@@ -51,10 +51,64 @@ def get_criterion_cls(name: str) -> Type[nn.Module]:
         raise ValueError(f"Unknown criterion: '{name}'") from e
 
 
+# =============================================================================
+# Saving
+# =============================================================================
+
+
 def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
-    """Save training history as compressed numpy archive."""
+    """Save training history as compressed numpy archive (atomic write)."""
     history_path = output_dir / "history.npz"
-    np.savez_compressed(history_path, **{k: np.array(v) for k, v in history.items()})
+    tmp_path = output_dir / "history.tmp.npz"
+    np.savez_compressed(tmp_path, **{k: np.array(v) for k, v in history.items()})
+    os.replace(tmp_path, history_path)
+
+
+def save_overrides(overrides: dict, output_dir: Path) -> None:
+    """Save per-job overrides as JSON."""
+    with (output_dir / "overrides.json").open("w") as f:
+        json.dump(overrides, f)
+
+
+def config_diff(existing: dict, new: dict, prefix: str = "") -> list[str]:
+    """Return human-readable differences between two config dicts."""
+    diffs = []
+    all_keys = sorted(existing.keys() | new.keys())
+    for key in all_keys:
+        full_key = f"{prefix}.{key}" if prefix else key
+        if key not in existing:
+            diffs.append(f"  + {full_key} = {new[key]!r}")
+        elif key not in new:
+            diffs.append(f"  - {full_key} = {existing[key]!r}")
+        elif isinstance(existing[key], dict) and isinstance(new[key], dict):
+            diffs.extend(config_diff(existing[key], new[key], full_key))
+        elif existing[key] != new[key]:
+            diffs.append(f"  {full_key}: {existing[key]!r} -> {new[key]!r}")
+    return diffs
+
+
+def save_sweep_config(config: dict, output_dir: Path) -> None:
+    """Save resolved config at sweep root, verifying consistency if already exists."""
+    path = output_dir / "config.yaml"
+    if path.exists():
+        with path.open("r") as f:
+            existing = yaml.safe_load(f)
+        if existing != config:
+            diffs = config_diff(existing, config)
+            diff_str = "\n".join(diffs)
+            raise ValueError(
+                f"Config mismatch in {output_dir}:\n{diff_str}\n\n"
+                f"If resuming, re-run with the original parameters.\n"
+                f"If this is a new experiment, use a different --output."
+            )
+        return
+    with path.open("w") as f:
+        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+# =============================================================================
+# Loading
+# =============================================================================
 
 
 def load_history(output_dir: Path) -> dict[str, np.ndarray]:
@@ -63,55 +117,49 @@ def load_history(output_dir: Path) -> dict[str, np.ndarray]:
         return {k: data[k] for k in data.files}
 
 
-def save_config(cfg: dict, path: Path) -> None:
-    """Save config as YAML."""
-
-    with path.open("w") as f:
-        yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
-
-
-def save_overrides(overrides: dict, path: Path) -> None:
-    """Save per-job overrides as JSON."""
-    with path.open("w") as f:
-        json.dump(overrides, f)
-
-
-def save_base_config(config: dict, output_dir: Path) -> None:
-    """Save base config at sweep root, verifying consistency if already exists."""
-    path = output_dir / "config.yaml"
-    if path.exists():
-        with path.open("r") as f:
-            existing = yaml.safe_load(f)
-        if existing != config:
-            raise ValueError(
-                f"Base config mismatch in {output_dir}. "
-                f"Cannot write results from different base configs to the same directory."
-            )
-        return
-    save_config(config, path)
-
-
 def load_run(path: Path) -> dict:
-    """Load a single run's history and config."""
+    """Load a single run's history, config, and overrides."""
     history = load_history(path)
-    config_path = path / "config.yaml"
+
     config = None
+    for config_dir in [path, path.parent]:
+        config_path = config_dir / "config.yaml"
+        if config_path.exists():
+            with config_path.open("r") as f:
+                config = yaml.safe_load(f)
+            break
+
+    overrides = {}
+    overrides_path = path / "overrides.json"
+    if overrides_path.exists():
+        with overrides_path.open("r") as f:
+            overrides = json.load(f)
+
+    return {"history": history, "config": config, "overrides": overrides}
+
+
+def load_sweep(sweep_dir: Path) -> dict:
+    """Load all results from a sweep directory.
+
+    Returns dict with 'config' and 'runs' keys.
+    Each run has 'history', 'overrides', and 'subdir' keys.
+    """
+    config = None
+    config_path = sweep_dir / "config.yaml"
     if config_path.exists():
         with config_path.open("r") as f:
             config = yaml.safe_load(f)
-    return {"history": history, "config": config}
 
-
-def load_sweep(sweep_dir: Path) -> list[dict]:
-    """Load all results from a sweep directory.
-
-    Returns list of dicts with 'history', 'overrides', and 'subdir' keys.
-    """
-    results = []
+    runs = []
     for history_path in sorted(sweep_dir.rglob("history.npz")):
         job_dir = history_path.parent
+        if job_dir == sweep_dir:
+            subdir = ""
+        else:
+            subdir = str(job_dir.relative_to(sweep_dir))
+
         entry = {
-            "subdir": str(job_dir.relative_to(sweep_dir)),
+            "subdir": subdir,
             "history": load_history(job_dir),
         }
         overrides_path = job_dir / "overrides.json"
@@ -120,8 +168,14 @@ def load_sweep(sweep_dir: Path) -> list[dict]:
                 entry["overrides"] = json.load(f)
         else:
             entry["overrides"] = {}
-        results.append(entry)
-    return results
+        runs.append(entry)
+
+    return {"config": config, "runs": runs}
+
+
+# =============================================================================
+# Config Resolution
+# =============================================================================
 
 
 def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
@@ -148,7 +202,7 @@ def resolve_config(
     config_dir: str = "single",
     overrides: dict[str, Any] | None = None,
 ) -> DictConfig:
-    """Apply overrides, merge shared configs and resolve"""
+    """Apply overrides, merge shared configs and resolve."""
     cfg = OmegaConf.create(base_config)
 
     if overrides:
@@ -165,13 +219,3 @@ def resolve_config(
 
     OmegaConf.resolve(cfg)
     return cfg
-
-
-def load_config(
-    config_name: str,
-    config_dir: str = "single",
-    overrides: dict[str, Any] | None = None,
-) -> DictConfig:
-    """Load a YAML config and apply overrides."""
-    base = load_base_config(config_name, config_dir)
-    return resolve_config(base, config_dir, overrides)

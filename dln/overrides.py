@@ -2,6 +2,8 @@
 Override parsing and sweep expansion utilities.
 """
 
+import hashlib
+import json
 import re
 from datetime import datetime
 from itertools import product
@@ -82,6 +84,15 @@ def parse_overrides(override_args: list[str]) -> dict[str, Any]:
     return overrides
 
 
+def split_overrides(
+    overrides: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split overrides into fixed (scalar) and sweep (list-valued)."""
+    fixed = {k: v for k, v in overrides.items() if not isinstance(v, list)}
+    sweep = {k: v for k, v in overrides.items() if isinstance(v, list)}
+    return fixed, sweep
+
+
 # =============================================================================
 # Job Expansion
 # =============================================================================
@@ -103,7 +114,7 @@ def _validate_zip_group(params: list[str], overrides: dict) -> None:
 
 
 def expand_sweep_params(
-    overrides: dict[str, Any],
+    overrides: dict[str, list[Any]],
     zip_groups: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -112,17 +123,18 @@ def expand_sweep_params(
     Takes cartesian product over sweep parameters, with optional zip groups
     that vary together instead of independently.
     """
+    if not overrides:
+        return [{}]
+
     zip_group_lists = [
         [p.strip() for p in group.split(",")] for group in (zip_groups or [])
     ]
     zipped_params = {p for group in zip_group_lists for p in group}
 
-    fixed = {k: v for k, v in overrides.items() if not isinstance(v, list)}
-
     dimensions = [
         ([k], [(v,) for v in vals])
         for k, vals in overrides.items()
-        if isinstance(vals, list) and k not in zipped_params
+        if k not in zipped_params
     ]
 
     for params in zip_group_lists:
@@ -130,15 +142,12 @@ def expand_sweep_params(
         values_per_param = [overrides[p] for p in params]
         dimensions.append((params, list(zip(*values_per_param))))
 
-    if not dimensions:
-        return [fixed.copy()]
-
     all_keys = [keys for keys, _ in dimensions]
     all_value_tuples = [vals for _, vals in dimensions]
 
     jobs = []
     for combo in product(*all_value_tuples):
-        job = fixed.copy()
+        job = {}
         for keys, value_tuple in zip(all_keys, combo):
             job.update(zip(keys, value_tuple))
         jobs.append(job)
@@ -151,51 +160,18 @@ def expand_sweep_params(
 # =============================================================================
 
 
-def get_sweep_params_suffix(overrides: dict[str, Any]) -> str:
-    """Generate suffix from sweep parameter names."""
-    sweep_keys = [k for k, v in overrides.items() if isinstance(v, list)]
-    if not sweep_keys:
-        return ""
-    short_names = [k.split(".")[-1] for k in sorted(sweep_keys)]
-    return "_" + "_".join(short_names)
-
-
-def get_output_dir(
-    experiment_name: str,
-    overrides: dict[str, Any],
-    output_arg: str | None,
-) -> Path:
-    """Return the output directory path for a sweep."""
+def get_output_dir(experiment_name: str, output_arg: str | None) -> Path:
+    """Return the output directory path."""
     if output_arg:
         return Path(output_arg)
-
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    suffix = get_sweep_params_suffix(overrides)
-
-    if suffix:
-        # Sweep: outputs/{exp_name}/{sweep_params}/{timestamp}/
-        return Path("outputs") / experiment_name / suffix.lstrip("_") / timestamp
-    else:
-        # Single run: outputs/{exp_name}/{timestamp}/
-        return Path("outputs") / experiment_name / timestamp
+    return Path("outputs") / experiment_name / timestamp
 
 
-def auto_subdir_pattern(overrides: dict[str, Any]) -> str | None:
-    """
-    Generate subdir pattern from ALL override parameters.
-
-    Includes all overrides (not just sweep parameters) to ensure uniqueness
-    across multiple sweep commands writing to the same output directory.
-    """
-    if not overrides:
-        return None
-
-    parts = []
-    for key in sorted(overrides.keys()):
-        short_name = key.split(".")[-1]
-        parts.append(f"{short_name}{{{key}}}")
-
-    return "_".join(parts)
+def hash_subdir(overrides: dict[str, Any]) -> str:
+    """Deterministic 12-char hex hash from override values."""
+    key = json.dumps(overrides, sort_keys=True, default=str)
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
 def format_subdir(pattern: str, overrides: dict[str, Any]) -> str:
@@ -214,26 +190,27 @@ def format_subdir(pattern: str, overrides: dict[str, Any]) -> str:
 
 
 def make_job_subdir(
-    job_index: int,
     job_overrides: dict[str, Any],
     subdir_pattern: str | None,
 ) -> str:
     """Generate subdirectory name for a job."""
     if subdir_pattern:
         return format_subdir(subdir_pattern, job_overrides)
-    return str(job_index)
+    if not job_overrides:
+        return ""
+    return hash_subdir(job_overrides)
 
 
 def check_subdir_uniqueness(
     jobs: list[dict[str, Any]], subdir_pattern: str | None
 ) -> None:
     """Verify all jobs produce unique subdirectory names."""
-    if subdir_pattern is None:
+    if len(jobs) <= 1:
         return
 
     subdirs = {}
     for i, job in enumerate(jobs):
-        subdir = format_subdir(subdir_pattern, job)
+        subdir = make_job_subdir(job, subdir_pattern)
         if subdir in subdirs:
             prev_job = subdirs[subdir]
             raise ValueError(

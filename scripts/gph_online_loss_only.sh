@@ -15,7 +15,7 @@ python sweep.py -cn=gph_online \
     training.batch_size=500,50,10,5,2,1 \
     --workers=$WORKERS \
     --device=cpu \
-    --output=$OUTPUT
+    --output=$OUTPUT/g0.75
 
 echo "=== Mini Batch Training (gamma=1.0) ==="
 python sweep.py -cn=gph_online \
@@ -28,7 +28,7 @@ python sweep.py -cn=gph_online \
     training.batch_size=500,50,10,5,2,1 \
     --workers=$WORKERS \
     --device=cpu \
-    --output=$OUTPUT
+    --output=$OUTPUT/g1.0
 
 echo "=== Mini Batch Training (gamma=1.5) ==="
 python sweep.py -cn=gph_online \
@@ -41,7 +41,7 @@ python sweep.py -cn=gph_online \
     training.batch_size=500,50,10,5,2,1 \
     --workers=$WORKERS \
     --device=cpu \
-    --output=$OUTPUT
+    --output=$OUTPUT/g1.5
 
 echo "=== Compressing results ==="
 tar -czf outputs/gph_online.tar.gz -C outputs gph_online

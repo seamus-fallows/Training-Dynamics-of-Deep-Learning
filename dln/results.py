@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig
@@ -11,7 +10,6 @@ class RunResult:
 
     history: dict[str, list[Any]]
     config: DictConfig
-    output_dir: Path | None = None
 
     def __getitem__(self, key: str) -> list[Any]:
         return self.history[key]
