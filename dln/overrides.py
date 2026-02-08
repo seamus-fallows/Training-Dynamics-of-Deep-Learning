@@ -17,7 +17,6 @@ from typing import Any
 
 
 def _parse_single_value(value_str: str) -> Any:
-    """Parse a single value string into Python type."""
     if value_str.lower() in ("null", "none"):
         return None
     if value_str.lower() == "true":
@@ -74,7 +73,6 @@ def parse_value(value_str: str) -> Any | list[Any]:
 
 
 def parse_overrides(override_args: list[str]) -> dict[str, Any]:
-    """Parse override arguments into a dictionary."""
     overrides = {}
     for arg in override_args:
         if "=" not in arg:
@@ -99,7 +97,6 @@ def split_overrides(
 
 
 def _validate_zip_group(params: list[str], overrides: dict) -> None:
-    """Validate that a zip group has matching lengths and all params exist."""
     for p in params:
         if p not in overrides:
             raise ValueError(f"Zip param {p!r} not found in overrides")
@@ -161,21 +158,19 @@ def expand_sweep_params(
 
 
 def get_output_dir(experiment_name: str, output_arg: str | None) -> Path:
-    """Return the output directory path."""
     if output_arg:
         return Path(output_arg)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return Path("outputs") / experiment_name / timestamp
 
 
-def hash_subdir(overrides: dict[str, Any]) -> str:
+def overrides_to_hash(overrides: dict[str, Any]) -> str:
     """Deterministic 12-char hex hash from override values."""
     key = json.dumps(overrides, sort_keys=True, default=str)
     return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
 def format_subdir(pattern: str, overrides: dict[str, Any]) -> str:
-    """Format a subdir pattern with override values."""
     result = pattern
     for key, value in overrides.items():
         placeholder = "{" + key + "}"
@@ -193,18 +188,16 @@ def make_job_subdir(
     job_overrides: dict[str, Any],
     subdir_pattern: str | None,
 ) -> str:
-    """Generate subdirectory name for a job."""
     if subdir_pattern:
         return format_subdir(subdir_pattern, job_overrides)
     if not job_overrides:
         return ""
-    return hash_subdir(job_overrides)
+    return overrides_to_hash(job_overrides)
 
 
 def check_subdir_uniqueness(
     jobs: list[dict[str, Any]], subdir_pattern: str | None
 ) -> None:
-    """Verify all jobs produce unique subdirectory names."""
     if len(jobs) <= 1:
         return
 

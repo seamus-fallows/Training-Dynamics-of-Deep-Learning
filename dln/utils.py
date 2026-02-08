@@ -2,17 +2,14 @@ import os
 import yaml
 import json
 from pathlib import Path
-from typing import Any, Type
-from torch import nn
+from typing import Any
 import numpy as np
 import torch as t
-from torch.optim import Optimizer
 from torch import Tensor
 from omegaconf import OmegaConf, DictConfig
 
 
 def resolve_device(device: str) -> t.device:
-    """Convert device string to torch.device."""
     if device == "cpu":
         return t.device("cpu")
     if device == "cuda":
@@ -35,24 +32,8 @@ def to_device(
     return inputs.to(device), targets.to(device)
 
 
-def get_optimizer_cls(name: str) -> Type[Optimizer]:
-    """Resolve optimizer class from torch.optim by name."""
-    try:
-        return getattr(t.optim, name)
-    except AttributeError as e:
-        raise ValueError(f"Unknown optimizer: '{name}'") from e
-
-
-def get_criterion_cls(name: str) -> Type[nn.Module]:
-    """Resolve loss criterion class from torch.nn by name."""
-    try:
-        return getattr(nn, name)
-    except AttributeError as e:
-        raise ValueError(f"Unknown criterion: '{name}'") from e
-
-
 # =============================================================================
-# Saving
+# Save / Load
 # =============================================================================
 
 
@@ -65,7 +46,6 @@ def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
 
 
 def save_overrides(overrides: dict, output_dir: Path) -> None:
-    """Save per-job overrides as JSON."""
     with (output_dir / "overrides.json").open("w") as f:
         json.dump(overrides, f)
 
@@ -106,13 +86,7 @@ def save_sweep_config(config: dict, output_dir: Path) -> None:
         yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
 
-# =============================================================================
-# Loading
-# =============================================================================
-
-
 def load_history(output_dir: Path) -> dict[str, np.ndarray]:
-    """Load training history from numpy archive."""
     with np.load(output_dir / "history.npz") as data:
         return {k: data[k] for k in data.files}
 
@@ -176,16 +150,6 @@ def load_sweep(sweep_dir: Path) -> dict:
 # =============================================================================
 # Config Resolution
 # =============================================================================
-
-
-def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
-    """Convert row-oriented history to columnar format."""
-    columns: dict[str, list[Any]] = {key: [] for key in rows[0].keys()}
-    for record in rows:
-        for key, value in record.items():
-            columns[key].append(value)
-    return columns
-
 
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"
 

@@ -50,11 +50,8 @@ data:
     matrix: diagonal    # string: matrix type
                         #   "diagonal" - diagonal matrix with entries scale * [1, 2, ..., d]
                         #     requires: scale (float)
-                        #   "random_normal" - random Gaussian matrix
-                        #     requires: mean (float), std (float)
+                        #   "identity" - identity matrix, requires out_dim == in_dim
     scale: 10.0         # (for diagonal)
-    # mean: 0.0         # (for random_normal)
-    # std: 1.0          # (for random_normal)
 
 # -----------------------------------------------------------------------------
 # Training Loop

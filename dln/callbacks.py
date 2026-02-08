@@ -34,7 +34,6 @@ def create_callback(spec: str | dict) -> Callable:
 
 
 def create_callbacks(specs: list | None) -> list[Callable]:
-    """Create multiple callbacks from spec list."""
     if not specs:
         return []
     return [create_callback(spec) for spec in specs]

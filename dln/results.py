@@ -1,20 +1,17 @@
 from dataclasses import dataclass
 from typing import Any
-
 from omegaconf import DictConfig
 
 
 @dataclass
 class RunResult:
-    """Result from a single training run."""
-
     history: dict[str, list[Any]]
     config: DictConfig
 
     def __getitem__(self, key: str) -> list[Any]:
         return self.history[key]
 
-    def has(self, metric: str) -> bool:
+    def __contains__(self, metric: str) -> bool:
         return metric in self.history
 
     def final(self, metric: str) -> Any:
@@ -27,7 +24,5 @@ class RunResult:
 
 @dataclass
 class SweepResult:
-    """Result from a parameter sweep."""
-
     runs: dict[str, RunResult]
     sweep_param: str

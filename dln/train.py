@@ -1,18 +1,33 @@
-from typing import Any, Callable
+from collections import defaultdict
+from typing import Any, Callable, Type
 import torch as t
-from torch import Tensor
+from torch import Tensor, nn
+from torch.optim import Optimizer
 from dln.data import TrainLoader
 from dln.model import DeepLinearNetwork
 from omegaconf import DictConfig
-from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns
 from dln.metrics import compute_metrics
+
+
+def _get_optimizer_cls(name: str) -> Type[Optimizer]:
+    try:
+        return getattr(t.optim, name)
+    except AttributeError as e:
+        raise ValueError(f"Unknown optimizer: '{name}'") from e
+
+
+def _get_criterion_cls(name: str) -> Type[nn.Module]:
+    try:
+        return getattr(nn, name)
+    except AttributeError as e:
+        raise ValueError(f"Unknown criterion: '{name}'") from e
 
 
 class Trainer:
     def __init__(
         self,
         model: DeepLinearNetwork,
-        cfg: DictConfig,
+        training_cfg: DictConfig,
         train_loader: TrainLoader,
         test_data: tuple[Tensor, Tensor],
         device: t.device,
@@ -21,16 +36,16 @@ class Trainer:
         self.model = model.to(device)
         self.train_loader = train_loader
         self.test_data = test_data
-        if cfg.track_train_loss and train_loader.dataset.online:
+        if training_cfg.track_train_loss and train_loader.dataset.online:
             raise ValueError("Cannot track train loss with online data generation.")
-        self.track_train_loss = cfg.track_train_loss
+        self.track_train_loss = training_cfg.track_train_loss
 
-        optimizer_cls = get_optimizer_cls(cfg.optimizer)
-        criterion_cls = get_criterion_cls(cfg.criterion)
+        optimizer_cls = _get_optimizer_cls(training_cfg.optimizer)
+        criterion_cls = _get_criterion_cls(training_cfg.criterion)
 
-        optimizer_kwargs = {"lr": cfg.lr}
-        if cfg.optimizer_params:
-            optimizer_kwargs.update(cfg.optimizer_params)
+        optimizer_kwargs = {"lr": training_cfg.lr}
+        if training_cfg.optimizer_params:
+            optimizer_kwargs.update(training_cfg.optimizer_params)
 
         self.optimizer = optimizer_cls(self.model.parameters(), **optimizer_kwargs)
         self.criterion = criterion_cls()
@@ -49,7 +64,7 @@ class Trainer:
         evaluate_every = max(1, max_steps // num_evaluations)
 
         self.model.train()
-        history = []
+        history = defaultdict(list)
         callbacks = callbacks or []
 
         for step in range(max_steps):
@@ -60,11 +75,12 @@ class Trainer:
 
             if step % evaluate_every == 0:
                 record = self._evaluate(step, metrics)
-                history.append(record)
+                for k, v in record.items():
+                    history[k].append(v)
 
             self._training_step(inputs, targets)
 
-        return rows_to_columns(history)
+        return dict(history)
 
     def _training_step(self, inputs: Tensor, targets: Tensor) -> None:
         self.optimizer.zero_grad()

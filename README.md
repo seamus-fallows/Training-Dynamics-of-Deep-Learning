@@ -32,7 +32,7 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
   * `overrides.py`: CLI parsing and sweep expansion utilities.
   * `plotting.py`: Visualization functions.
   * `experiment.py`: Core experiment execution.
-  * `utils.py`: Utilities (seeding, device selection, history saving/loading).
+  * `utils.py`: Utilities (device selection, history saving/loading, config resolution).
 * **`configs/`**: YAML configuration files.
 
 ## Usage
@@ -107,8 +107,8 @@ history = result["history"]  # dict of numpy arrays
 config = result["config"]    # dict (or None if no config.yaml)
 
 # Load all results from a sweep directory
-results = load_sweep(Path("outputs/my_experiment"))
-for r in results:
+sweep = load_sweep(Path("outputs/my_experiment"))
+for r in sweep["runs"]:
     print(r["subdir"], r["overrides"], r["history"]["test_loss"][-1])
 
 # Load just the history from a single job

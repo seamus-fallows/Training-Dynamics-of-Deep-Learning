@@ -39,7 +39,7 @@ def _flatten_params(model: Module) -> Tensor:
     return t.cat([p.view(-1) for p in model.parameters()])
 
 
-def _to_functional(model: Module) -> tuple[dict[str, Tensor], dict[str, Tensor]]:
+def _extract_params(model: Module) -> tuple[dict[str, Tensor], dict[str, Tensor]]:
     params = dict(model.named_parameters())
     buffers = dict(model.named_buffers())
     return params, buffers
@@ -138,7 +138,7 @@ def trace_covariances(
         chunks: Split computation into chunks to reduce VRAM usage.
             Higher values use less memory but may be slower.
     """
-    params, buffers = _to_functional(model)
+    params, buffers = _extract_params(model)
     n_samples = len(inputs)
     chunk_size = (n_samples + chunks - 1) // chunks
 

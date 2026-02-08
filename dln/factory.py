@@ -24,7 +24,7 @@ def create_trainer(
 
     return Trainer(
         model=model,
-        cfg=training_cfg,
+        training_cfg=training_cfg,
         train_loader=train_loader,
         test_data=test_data,
         device=device,

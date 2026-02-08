@@ -94,10 +94,12 @@ class TrainLoader:
         batch_size: int | None,
         batch_seed: int,
         device: t.device,
+        n_pregenerate: int = 1000,
     ):
         self.dataset = dataset
         self.batch_size = batch_size
         self.device = device
+        self.n_pregenerate = n_pregenerate
 
         self._batch_generator = t.Generator().manual_seed(batch_seed)
         self._noise_generator = t.Generator().manual_seed(batch_seed + 1)
@@ -147,11 +149,9 @@ class TrainLoader:
                 yield x[batch_idx], y[batch_idx]
 
     def _online_iterator(self) -> Iterator[tuple[Tensor, Tensor]]:
-        n_pregenerate = 1000
-
         while True:
             inputs_all = t.randn(
-                n_pregenerate,
+                self.n_pregenerate,
                 self.batch_size,
                 self.dataset.in_dim,
                 generator=self._batch_generator,
@@ -162,7 +162,7 @@ class TrainLoader:
 
             if self.dataset.noise_std > 0:
                 noise_all = t.randn(
-                    n_pregenerate,
+                    self.n_pregenerate,
                     self.batch_size,
                     self.dataset.out_dim,
                     generator=self._noise_generator,
@@ -171,5 +171,5 @@ class TrainLoader:
                     targets_all + noise_all.to(self.device) * self.dataset.noise_std
                 )
 
-            for i in range(n_pregenerate):
+            for i in range(self.n_pregenerate):
                 yield inputs_all[i], targets_all[i]

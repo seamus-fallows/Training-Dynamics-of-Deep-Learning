@@ -1,7 +1,3 @@
-"""
-Core experiment execution functions.
-"""
-
 from omegaconf import DictConfig
 
 from .utils import resolve_device, to_device

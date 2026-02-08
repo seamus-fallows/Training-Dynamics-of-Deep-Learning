@@ -62,7 +62,6 @@ t.set_num_interop_threads(1)
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Run experiments with optional parallel sweeps",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -245,7 +244,7 @@ def run_jobs_parallel(
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         futures = {}
-        for idx, (i, job, job_dir) in enumerate(jobs_to_run):
+        for i, job, job_dir in jobs_to_run:
             future = executor.submit(
                 run_single_job,
                 resolved_base,
@@ -296,7 +295,6 @@ def run_sweep(
     workers: int,
     device: str,
 ) -> None:
-    """Run a sweep of jobs."""
     start_time = time.time()
 
     print(f"Running {len(jobs)} jobs (workers={workers}, device={device})")

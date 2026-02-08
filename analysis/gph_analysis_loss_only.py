@@ -9,6 +9,7 @@ Analyzes results from the GPH experiment sweep with:
 
 import argparse
 import json
+import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ BATCH_SIZES = [1, 2, 5, 10, 50]
 GAMMA_MAX_STEPS = {0.75: 6000, 1.0: 9000, 1.5: 27000}
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 
-N_WORKERS = 192
+N_WORKERS = os.cpu_count()
 MAX_BATCH_SEED = 10000
 
 

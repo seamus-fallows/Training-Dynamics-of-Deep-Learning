@@ -16,7 +16,7 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
-from runner import load_run
+from dln.utils import load_run
 from dln.results import RunResult
 
 
@@ -119,7 +119,7 @@ def plot_panel(ax, data_list: list[tuple[int, RunResult]], title: str):
         color = SEED_COLORS[model_seed % len(SEED_COLORS)]
         steps = result["step"]
 
-        if result.has("train_loss"):
+        if "train_loss" in result:
             ax.plot(steps, result["train_loss"], color=color, linewidth=1.2)
 
     ax.set_yscale("log")

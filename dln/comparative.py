@@ -1,8 +1,7 @@
+from collections import defaultdict
 from typing import Any, Callable
 from dln.train import Trainer
-from dln.utils import rows_to_columns
-from dln.metrics import compute_metrics, compute_comparative_metrics
-import torch as t
+from dln.metrics import compute_comparative_metrics
 
 
 class ComparativeTrainer:
@@ -11,6 +10,10 @@ class ComparativeTrainer:
         trainer_a: Trainer,
         trainer_b: Trainer,
     ):
+        if trainer_a.test_data is not trainer_b.test_data:
+            raise ValueError(
+                "Both trainers must share the same test_data for fair comparison."
+            )
         self.trainer_a = trainer_a
         self.trainer_b = trainer_b
 
@@ -27,7 +30,7 @@ class ComparativeTrainer:
 
         self.trainer_a.model.train()
         self.trainer_b.model.train()
-        history = []
+        history = defaultdict(list)
         callbacks_a = callbacks_a or []
         callbacks_b = callbacks_b or []
 
@@ -41,48 +44,12 @@ class ComparativeTrainer:
             inputs_b, targets_b = next(self.trainer_b.train_loader)
 
             if step % evaluate_every == 0:
+                record_a = self.trainer_a._evaluate(step, metrics)
+                record_b = self.trainer_b._evaluate(step, metrics)
+
                 record = {"step": step}
-                test_inputs, test_targets = self.trainer_a.test_data
-
-                with t.inference_mode():
-                    record["test_loss_a"] = self.trainer_a.criterion(
-                        self.trainer_a.model(test_inputs), test_targets
-                    ).item()
-
-                    record["test_loss_b"] = self.trainer_b.criterion(
-                        self.trainer_b.model(test_inputs), test_targets
-                    ).item()
-
-                    if self.trainer_a.track_train_loss:
-                        train_inputs, train_targets = self.trainer_a.train_data
-                        record["train_loss_a"] = self.trainer_a.criterion(
-                            self.trainer_a.model(train_inputs), train_targets
-                        ).item()
-
-                    if self.trainer_b.track_train_loss:
-                        train_inputs, train_targets = self.trainer_b.train_data
-                        record["train_loss_b"] = self.trainer_b.criterion(
-                            self.trainer_b.model(train_inputs), train_targets
-                        ).item()
-
-                if metrics:
-                    metrics_a = compute_metrics(
-                        self.trainer_a.model,
-                        metrics,
-                        test_inputs,
-                        test_targets,
-                        self.trainer_a.criterion,
-                    )
-                    metrics_b = compute_metrics(
-                        self.trainer_b.model,
-                        metrics,
-                        test_inputs,
-                        test_targets,
-                        self.trainer_b.criterion,
-                    )
-
-                    record.update({f"{k}_a": v for k, v in metrics_a.items()})
-                    record.update({f"{k}_b": v for k, v in metrics_b.items()})
+                record.update({f"{k}_a": v for k, v in record_a.items() if k != "step"})
+                record.update({f"{k}_b": v for k, v in record_b.items() if k != "step"})
 
                 if comparative_metrics:
                     record.update(
@@ -93,9 +60,10 @@ class ComparativeTrainer:
                         )
                     )
 
-                history.append(record)
+                for k, v in record.items():
+                    history[k].append(v)
 
             self.trainer_a._training_step(inputs_a, targets_a)
             self.trainer_b._training_step(inputs_b, targets_b)
 
-        return rows_to_columns(history)
+        return dict(history)

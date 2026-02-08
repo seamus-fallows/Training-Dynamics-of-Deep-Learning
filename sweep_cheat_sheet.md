@@ -10,7 +10,7 @@ python sweep.py -cn=diagonal_teacher
 python sweep.py -cn=gph model.gamma=0.75 training.lr=0.001
 
 # Use a different config
-python sweep.py -cn=random_teacher
+python sweep.py -cn=gph
 ```
 
 ## Parameter Sweeps

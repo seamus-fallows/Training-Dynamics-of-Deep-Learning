@@ -15,7 +15,7 @@ from dln.overrides import (
     parse_overrides,
     expand_sweep_params,
     split_overrides,
-    hash_subdir,
+    overrides_to_hash,
     format_subdir,
     check_subdir_uniqueness,
 )
@@ -114,7 +114,7 @@ def make_trainer(
 
     return Trainer(
         model=model,
-        cfg=training_cfg,
+        training_cfg=training_cfg,
         train_loader=train_loader,
         test_data=test_data,
         device=device,
@@ -244,21 +244,21 @@ class TestOverrides:
         assert fixed == {}
         assert sweep == overrides
 
-    def test_hash_subdir_deterministic(self):
+    def test_overrides_to_hash_deterministic(self):
         overrides = {"training.batch_seed": 42, "model.gamma": 0.75}
-        h1 = hash_subdir(overrides)
-        h2 = hash_subdir(overrides)
+        h1 = overrides_to_hash(overrides)
+        h2 = overrides_to_hash(overrides)
         assert h1 == h2
         assert len(h1) == 12
 
-    def test_hash_subdir_different_inputs(self):
-        h1 = hash_subdir({"a": 1})
-        h2 = hash_subdir({"a": 2})
+    def test_overrides_to_hash_different_inputs(self):
+        h1 = overrides_to_hash({"a": 1})
+        h2 = overrides_to_hash({"a": 2})
         assert h1 != h2
 
-    def test_hash_subdir_order_independent(self):
-        h1 = hash_subdir({"a": 1, "b": 2})
-        h2 = hash_subdir({"b": 2, "a": 1})
+    def test_overrides_to_hash_order_independent(self):
+        h1 = overrides_to_hash({"a": 1, "b": 2})
+        h2 = overrides_to_hash({"b": 2, "a": 1})
         assert h1 == h2
 
     def test_format_subdir(self):
@@ -914,7 +914,7 @@ class TestSaveLoadPipeline:
 
         assert list(tmp_path.glob("*.tmp*")) == []
 
-    def test_sweep_creates_hash_subdirs(self, tmp_path):
+    def test_sweep_creates_hashed_subdirs(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
 
@@ -922,7 +922,7 @@ class TestSaveLoadPipeline:
         run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
 
         for job in jobs:
-            job_dir = tmp_path / hash_subdir(job)
+            job_dir = tmp_path / overrides_to_hash(job)
             assert (job_dir / "history.npz").exists()
             assert (job_dir / "overrides.json").exists()
 
@@ -947,7 +947,7 @@ class TestSaveLoadPipeline:
         run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
 
         for job in jobs:
-            with (tmp_path / hash_subdir(job) / "overrides.json").open() as f:
+            with (tmp_path / overrides_to_hash(job) / "overrides.json").open() as f:
                 assert json.load(f) == job
 
     def test_fixed_overrides_baked_into_config(self, tmp_path):
@@ -962,7 +962,7 @@ class TestSaveLoadPipeline:
         assert config["model"]["gamma"] == 0.75
 
         for job in jobs:
-            with (tmp_path / hash_subdir(job) / "overrides.json").open() as f:
+            with (tmp_path / overrides_to_hash(job) / "overrides.json").open() as f:
                 saved = json.load(f)
             assert "model.gamma" not in saved
             assert "gamma" not in saved
@@ -1023,7 +1023,7 @@ class TestSaveLoadPipeline:
         save_sweep_config(resolved, tmp_path)
 
         job = {"training.batch_seed": 0}
-        job_dir = tmp_path / hash_subdir(job)
+        job_dir = tmp_path / overrides_to_hash(job)
         job_dir.mkdir()
         run_single_job(resolved, "single", job, job_dir, "cpu")
 
@@ -1044,7 +1044,7 @@ class TestSaveLoadPipeline:
 
         subdirs = {r["subdir"] for r in sweep["runs"]}
         for job in jobs:
-            assert hash_subdir(job) in subdirs
+            assert overrides_to_hash(job) in subdirs
 
         for run in sweep["runs"]:
             assert "step" in run["history"]
