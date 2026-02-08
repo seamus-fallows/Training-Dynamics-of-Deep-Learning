@@ -41,7 +41,7 @@ def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
     """Save training history as compressed numpy archive (atomic write)."""
     history_path = output_dir / "history.npz"
     tmp_path = output_dir / "history.tmp.npz"
-    np.savez_compressed(tmp_path, **{k: np.array(v) for k, v in history.items()})
+    np.savez(tmp_path, **{k: np.array(v) for k, v in history.items()})
     os.replace(tmp_path, history_path)
 
 

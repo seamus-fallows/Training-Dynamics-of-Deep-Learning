@@ -83,7 +83,7 @@ class Trainer:
         return dict(history)
 
     def _training_step(self, inputs: Tensor, targets: Tensor) -> None:
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
         output = self.model(inputs)
         loss = self.criterion(output, targets)
         loss.backward()
