@@ -56,6 +56,17 @@ from dln.overrides import (
 t.set_num_threads(1)
 t.set_num_interop_threads(1)
 
+
+def _fmt_time(seconds):
+    h, remainder = divmod(int(seconds), 3600)
+    m, s = divmod(remainder, 60)
+    if h:
+        return f"{h}h {m}m {s}s"
+    if m:
+        return f"{m}m {s}s"
+    return f"{s}s"
+
+
 # =============================================================================
 # CLI
 # =============================================================================
@@ -296,8 +307,8 @@ def run_jobs_parallel(
             eta = (total - done) / rate if rate > 0 else 0
             print(
                 f"\rProgress: {done}/{total} ({100 * done / total:.1f}%) | "
-                f"{rate:.1f} jobs/s | ETA: {eta:.0f}s | "
-                f"completed: {completed}, failed: {failed}",
+                f"{rate:.1f} jobs/s | Elapsed: {_fmt_time(elapsed)} | "
+                f"ETA: {_fmt_time(eta)} | failed: {failed}",
                 end="",
                 flush=True,
             )
@@ -354,7 +365,7 @@ def run_sweep(
     print(f"Completed: {completed}")
     print(f"Skipped:   {skipped}")
     print(f"Failed:    {failed}")
-    print(f"Time:      {elapsed:.1f}s")
+    print(f"Time:      {_fmt_time(elapsed)}")
 
     if errors:
         print()
@@ -363,7 +374,6 @@ def run_sweep(
             print(f"  Job {i} {job}: {error}")
         if len(errors) > 10:
             print(f"  ... and {len(errors) - 10} more")
-
 
 
 # =============================================================================
