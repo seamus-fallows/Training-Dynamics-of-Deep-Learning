@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-WORKERS=250
+WORKERS=192
 OUTPUT=outputs/gph_offline
 
 echo "=== Full Batch Training ==="

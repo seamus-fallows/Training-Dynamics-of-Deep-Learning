@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-WORKERS=400
+WORKERS=192
 OUTPUT=outputs/gph_online
 
 echo "=== Large Batch Training ==="
