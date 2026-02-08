@@ -1,6 +1,5 @@
 omegaconf
 torch
 numpy
-tqdm
 matplotlib
 scipy

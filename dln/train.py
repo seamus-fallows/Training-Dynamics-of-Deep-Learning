@@ -6,7 +6,6 @@ from dln.model import DeepLinearNetwork
 from omegaconf import DictConfig
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns
 from dln.metrics import compute_metrics
-# import time
 
 
 class Trainer:
@@ -53,7 +52,6 @@ class Trainer:
         history = []
         callbacks = callbacks or []
 
-        # start = time.time()
         for step in range(max_steps):
             for callback in callbacks:
                 callback(step, self)
@@ -65,8 +63,6 @@ class Trainer:
                 history.append(record)
 
             self._training_step(inputs, targets)
-        # end = time.time()
-        # print(f"\nTrainign time: {end - start}\n")
 
         return rows_to_columns(history)
 

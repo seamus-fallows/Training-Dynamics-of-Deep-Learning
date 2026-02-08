@@ -31,7 +31,6 @@ def make_model_config(**overrides):
         num_hidden=2,
         hidden_dim=10,
         gamma=1.5,
-        bias=False,
         model_seed=0,
     )
     defaults.update(overrides)

@@ -136,18 +136,12 @@ def parse_args() -> argparse.Namespace:
 # =============================================================================
 
 
-# def init_worker(num_workers: int) -> None:
-#     """Initialize worker process with proper thread configuration."""
-#     t.set_num_threads(1)
-#     t.set_num_interop_threads(1)
-
-
 def run_single_job(
     base_config: dict,
     config_dir: str,
     overrides: dict[str, Any],
     output_dir: Path,
-    device: str | None = None,
+    device: str,
 ) -> tuple[bool, str | None]:
     """Run a single experiment job. Returns (success, error_message)."""
     try:
@@ -181,7 +175,6 @@ def run_jobs_sequential(
     subdir_pattern: str | None,
     skip_existing: bool,
     fail_fast: bool,
-    num_workers: int,
     device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
     """Run jobs sequentially. Returns (completed, skipped, failed, errors)."""
@@ -336,7 +329,6 @@ def run_sweep(
             subdir_pattern,
             skip_existing,
             fail_fast,
-            workers,
             device,
         )
     else:

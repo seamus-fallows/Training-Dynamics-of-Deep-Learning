@@ -21,7 +21,7 @@ model:
   out_dim: 5         # int: output dimension
   num_hidden: 3      # int: number of hidden layers
   hidden_dim: 50     # int: width of hidden layers
-  gamma: 1.0         # float: initialization scaling exponent
+  gamma: 1.0         # float: REQUIRED, must be positive. initialization scaling exponent
                      #   std = hidden_dim^(-gamma/2)
                      #   0.5 = standard, 0.75 = NTK, 1.0 = mean-field, 1.5+ = saddle-to-saddle
   model_seed: 0            # int: random seed for weight initialization
