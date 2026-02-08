@@ -115,6 +115,7 @@ python sweep.py -cn=diagonal_teacher --comparative training_b.batch_size=10
 | `true` / `false` | `True` / `False` |
 | `SGD` | `"SGD"` (string) |
 | `1,2,3` | `[1, 2, 3]` (sweep) |
+| `[a,b,c]` | `["a", "b", "c"]` (list value, not a sweep) |
 | `0..5` | `[0, 1, 2, 3, 4]` (sweep) |
 | `0..10..2` | `[0, 2, 4, 6, 8]` (sweep) |
 | `range(0,5)` | `[0, 1, 2, 3, 4]` (sweep) |

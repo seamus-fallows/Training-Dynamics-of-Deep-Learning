@@ -11,6 +11,7 @@ from dln.train import Trainer
 from dln.comparative import ComparativeTrainer
 from dln.callbacks import create_callback
 from dln.overrides import (
+    ListValue,
     parse_value,
     parse_overrides,
     expand_sweep_params,
@@ -211,6 +212,26 @@ class TestOverrides:
         assert {"a": 2, "b": 20, "c": 100} in jobs
         assert {"a": 2, "b": 20, "c": 200} in jobs
 
+    def test_expand_sweep_params_zip_respects_cli_order(self):
+        """Zipped dims are placed at the position of their first key, not appended."""
+        # zip(a,b) listed first → outermost; c is innermost
+        overrides = {"a": [1, 2], "b": [10, 20], "c": [100, 200]}
+        jobs = expand_sweep_params(overrides, zip_groups=["a,b"])
+        # a/b outermost means first half has a=1,b=10 and second half has a=2,b=20
+        assert jobs[0]["a"] == 1 and jobs[1]["a"] == 1
+        assert jobs[2]["a"] == 2 and jobs[3]["a"] == 2
+        # c innermost means it alternates within each a/b group
+        assert jobs[0]["c"] == 100 and jobs[1]["c"] == 200
+
+        # Now put c first → c outermost, zip(a,b) innermost
+        overrides = {"c": [100, 200], "a": [1, 2], "b": [10, 20]}
+        jobs = expand_sweep_params(overrides, zip_groups=["a,b"])
+        # c outermost means first half has c=100
+        assert jobs[0]["c"] == 100 and jobs[1]["c"] == 100
+        assert jobs[2]["c"] == 200 and jobs[3]["c"] == 200
+        # a/b innermost means it alternates within each c group
+        assert jobs[0]["a"] == 1 and jobs[1]["a"] == 2
+
     def test_expand_sweep_params_zip_length_mismatch_raises(self):
         overrides = {"a": [1, 2], "b": [10, 20, 30]}
         with pytest.raises(ValueError, match="mismatched lengths"):
@@ -225,6 +246,39 @@ class TestOverrides:
         overrides = {"a": [1, 2], "b": 99}
         with pytest.raises(ValueError, match="must have multiple values"):
             expand_sweep_params(overrides, zip_groups=["a,b"])
+
+    def test_parse_value_list_literal_strings(self):
+        result = parse_value("[trace_covariances,weight_norm]")
+        assert isinstance(result, ListValue)
+        assert result == ["trace_covariances", "weight_norm"]
+
+    def test_parse_value_list_literal_single_element(self):
+        result = parse_value("[trace_covariances]")
+        assert isinstance(result, ListValue)
+        assert result == ["trace_covariances"]
+
+    def test_parse_value_list_literal_mixed_types(self):
+        result = parse_value("[1,null,true,foo]")
+        assert isinstance(result, ListValue)
+        assert result == [1, None, True, "foo"]
+
+    def test_parse_value_list_literal_empty(self):
+        result = parse_value("[]")
+        assert isinstance(result, ListValue)
+        assert result == []
+
+    def test_parse_value_list_literal_numbers(self):
+        result = parse_value("[1,2,3]")
+        assert isinstance(result, ListValue)
+        assert result == [1, 2, 3]
+
+    def test_parse_value_list_literal_is_not_plain_list(self):
+        """List literals are ListValue, not plain list (distinguishes from sweeps)."""
+        literal = parse_value("[1,2,3]")
+        sweep = parse_value("1,2,3")
+        assert isinstance(literal, ListValue)
+        assert not isinstance(sweep, ListValue)
+        assert isinstance(sweep, list)
 
     def test_split_overrides(self):
         overrides = {"model.gamma": 0.75, "training.batch_seed": [0, 1, 2], "max_steps": 1000}
@@ -243,6 +297,33 @@ class TestOverrides:
         fixed, sweep = split_overrides(overrides)
         assert fixed == {}
         assert sweep == overrides
+
+    def test_split_overrides_list_value_is_fixed(self):
+        overrides = {
+            "metrics": ListValue(["trace_covariances", "weight_norm"]),
+            "model.gamma": [0.75, 1.0],
+            "max_steps": 1000,
+        }
+        fixed, sweep = split_overrides(overrides)
+        assert fixed["metrics"] == ["trace_covariances", "weight_norm"]
+        assert not isinstance(fixed["metrics"], ListValue)
+        assert "max_steps" in fixed
+        assert sweep == {"model.gamma": [0.75, 1.0]}
+
+    def test_list_literal_end_to_end(self):
+        """Full pipeline: parse_overrides -> split_overrides with list literal."""
+        overrides = parse_overrides([
+            "metrics=[trace_covariances,weight_norm]",
+            "model.gamma=0.75,1.0",
+            "max_steps=1000",
+        ])
+        fixed, sweep = split_overrides(overrides)
+        assert fixed == {
+            "metrics": ["trace_covariances", "weight_norm"],
+            "max_steps": 1000,
+        }
+        assert not isinstance(fixed["metrics"], ListValue)
+        assert sweep == {"model.gamma": [0.75, 1.0]}
 
     def test_overrides_to_hash_deterministic(self):
         overrides = {"training.batch_seed": 42, "model.gamma": 0.75}

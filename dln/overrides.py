@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 
+class ListValue(list):
+    """A list that represents a single config value, not a sweep dimension."""
+
+
 # =============================================================================
 # Value Parsing
 # =============================================================================
@@ -42,15 +46,22 @@ def parse_value(value_str: str) -> Any | list[Any]:
     Parse a CLI value string into Python value(s).
 
     Handles:
+        - List literals: [a,b,c] -> ListValue (single config value, not a sweep)
         - range(start, stop) or range(start, stop, step)
         - Range shorthand: start..stop or start..stop..step
-        - Comma-separated values: 1,2,3 or 0.5,1.0,1.5
+        - Comma-separated values: 1,2,3 or 0.5,1.0,1.5 (sweep dimension)
         - null/None -> None
         - true/false -> bool
         - Numbers (int or float)
         - Strings
     """
     value_str = value_str.strip()
+
+    if value_str.startswith("[") and value_str.endswith("]"):
+        inner = value_str[1:-1].strip()
+        if not inner:
+            return ListValue()
+        return ListValue(_parse_single_value(v.strip()) for v in inner.split(","))
 
     range_match = re.match(r"range\((\d+),\s*(\d+)(?:,\s*(\d+))?\)", value_str)
     if range_match:
@@ -85,9 +96,21 @@ def parse_overrides(override_args: list[str]) -> dict[str, Any]:
 def split_overrides(
     overrides: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split overrides into fixed (scalar) and sweep (list-valued)."""
-    fixed = {k: v for k, v in overrides.items() if not isinstance(v, list)}
-    sweep = {k: v for k, v in overrides.items() if isinstance(v, list)}
+    """Split overrides into fixed (scalar) and sweep (list-valued).
+
+    ListValue instances (from [x,y] syntax) are treated as fixed values,
+    not sweep dimensions.
+    """
+    fixed = {
+        k: list(v) if isinstance(v, ListValue) else v
+        for k, v in overrides.items()
+        if not isinstance(v, list) or isinstance(v, ListValue)
+    }
+    sweep = {
+        k: v
+        for k, v in overrides.items()
+        if isinstance(v, list) and not isinstance(v, ListValue)
+    }
     return fixed, sweep
 
 
@@ -128,16 +151,22 @@ def expand_sweep_params(
     ]
     zipped_params = {p for group in zip_group_lists for p in group}
 
-    dimensions = [
-        ([k], [(v,) for v in vals])
-        for k, vals in overrides.items()
-        if k not in zipped_params
-    ]
-
     for params in zip_group_lists:
         _validate_zip_group(params, overrides)
-        values_per_param = [overrides[p] for p in params]
-        dimensions.append((params, list(zip(*values_per_param))))
+
+    # Map each zipped param to its group index for insertion at natural position
+    param_to_group = {p: i for i, group in enumerate(zip_group_lists) for p in group}
+    inserted_groups: set[int] = set()
+
+    dimensions = []
+    for k, vals in overrides.items():
+        if k not in zipped_params:
+            dimensions.append(([k], [(v,) for v in vals]))
+        elif (group_idx := param_to_group[k]) not in inserted_groups:
+            inserted_groups.add(group_idx)
+            params = zip_group_lists[group_idx]
+            values_per_param = [overrides[p] for p in params]
+            dimensions.append((params, list(zip(*values_per_param))))
 
     all_keys = [keys for keys, _ in dimensions]
     all_value_tuples = [vals for _, vals in dimensions]
