@@ -6,6 +6,7 @@ from dln.model import DeepLinearNetwork
 from omegaconf import DictConfig
 from dln.utils import get_criterion_cls, get_optimizer_cls, rows_to_columns
 from dln.metrics import compute_metrics
+# import time
 
 
 class Trainer:
@@ -21,6 +22,8 @@ class Trainer:
         self.model = model.to(device)
         self.train_loader = train_loader
         self.test_data = test_data
+        if cfg.track_train_loss and train_loader.dataset.online:
+            raise ValueError("Cannot track train loss with online data generation.")
         self.track_train_loss = cfg.track_train_loss
 
         optimizer_cls = get_optimizer_cls(cfg.optimizer)
@@ -50,6 +53,7 @@ class Trainer:
         history = []
         callbacks = callbacks or []
 
+        # start = time.time()
         for step in range(max_steps):
             for callback in callbacks:
                 callback(step, self)
@@ -61,6 +65,8 @@ class Trainer:
                 history.append(record)
 
             self._training_step(inputs, targets)
+        # end = time.time()
+        # print(f"\nTrainign time: {end - start}\n")
 
         return rows_to_columns(history)
 

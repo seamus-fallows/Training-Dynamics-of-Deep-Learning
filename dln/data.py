@@ -100,10 +100,10 @@ class TrainLoader:
         self.device = device
 
         self._batch_generator = t.Generator().manual_seed(batch_seed)
-        # Separate generator so that toggling noise_std doesn't change the input sequence
         self._noise_generator = t.Generator().manual_seed(batch_seed + 1)
 
         if dataset.online:
+            self.train_data = None
             self._teacher_matrix = dataset.teacher_matrix.to(device)
         else:
             self.train_data = (

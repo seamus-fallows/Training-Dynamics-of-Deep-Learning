@@ -11,16 +11,15 @@ class DeepLinearNetwork(nn.Module):
         sizes = [cfg.in_dim] + [cfg.hidden_dim] * cfg.num_hidden + [cfg.out_dim]
         self.layers = nn.Sequential(
             *[
-                nn.Linear(sizes[i], sizes[i + 1], bias=False)
-                for i in range(len(sizes) - 1)
+                nn.Linear(d_in, d_out, bias=False)
+                for d_in, d_out in zip(sizes, sizes[1:])
             ]
         )
 
-        if cfg.gamma is not None:
-            # Scaling defined in https://arxiv.org/pdf/2106.15933
-            std = cfg.hidden_dim ** (-cfg.gamma / 2)
-            gen = t.Generator().manual_seed(cfg.model_seed)
-            self._init_weights(std, gen)
+        # Scaling defined in https://arxiv.org/pdf/2106.15933
+        std = cfg.hidden_dim ** (-cfg.gamma / 2)
+        gen = t.Generator().manual_seed(cfg.model_seed)
+        self._init_weights(std, gen)
 
     def _init_weights(self, std: float, generator: t.Generator) -> None:
         with t.no_grad():

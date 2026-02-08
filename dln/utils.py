@@ -1,7 +1,6 @@
 import os
 import yaml
 import json
-import random
 from pathlib import Path
 from typing import Any, Type
 from torch import nn
@@ -10,18 +9,6 @@ import torch as t
 from torch.optim import Optimizer
 from torch import Tensor
 from omegaconf import OmegaConf, DictConfig
-
-
-def seed_rng(seed: int) -> None:
-    """Seed all global RNGs.
-
-    Each experiment entry point (run_experiment, run_comparative_experiment) calls this
-    before using the global RNG, so prior global state never leaks between jobs.
-    Parallel workers are safe because they run in separate processes.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    t.manual_seed(seed)
 
 
 def resolve_device(device: str) -> t.device:
@@ -146,58 +133,6 @@ def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
     return columns
 
 
-def validate_config(cfg: DictConfig, config_type: str = "single") -> None:
-    """Validate config values before experiment execution."""
-
-    if config_type == "single":
-        _validate_model_config(cfg.model)
-        _validate_training_config(cfg.training)
-        _validate_data_config(cfg.data)
-
-        if cfg.training.track_train_loss and cfg.data.online:
-            raise ValueError("Cannot track train loss with online data generation.")
-
-    elif config_type == "comparative":
-        _validate_model_config(cfg.model_a)
-        _validate_model_config(cfg.model_b)
-        _validate_training_config(cfg.training_a)
-        _validate_training_config(cfg.training_b)
-        _validate_data_config(cfg.data)
-        if (
-            cfg.training_a.track_train_loss or cfg.training_b.track_train_loss
-        ) and cfg.data.online:
-            raise ValueError("Cannot track train loss with online data generation.")
-
-
-def _validate_model_config(model_cfg: DictConfig) -> None:
-    if model_cfg.in_dim <= 0:
-        raise ValueError("in_dim must be positive")
-    if model_cfg.out_dim <= 0:
-        raise ValueError("out_dim must be positive")
-    if model_cfg.num_hidden < 0:
-        raise ValueError("num_hidden must be non-negative")
-    if model_cfg.hidden_dim <= 0:
-        raise ValueError("hidden_dim must be positive")
-    if model_cfg.gamma is not None and model_cfg.gamma <= 0:
-        raise ValueError("gamma must be positive")
-
-
-def _validate_training_config(training_cfg: DictConfig) -> None:
-    if training_cfg.lr <= 0:
-        raise ValueError("lr must be positive")
-    if training_cfg.batch_size is not None and training_cfg.batch_size <= 0:
-        raise ValueError("batch_size must be positive")
-
-
-def _validate_data_config(data_cfg: DictConfig) -> None:
-    if data_cfg.train_samples <= 0:
-        raise ValueError("train_samples must be positive")
-    if data_cfg.test_samples <= 0:
-        raise ValueError("test_samples must be positive")
-    if data_cfg.noise_std < 0:
-        raise ValueError("noise_std must be non-negative")
-
-
 CONFIG_ROOT = Path(__file__).parent.parent / "configs"
 
 
@@ -213,7 +148,7 @@ def resolve_config(
     config_dir: str = "single",
     overrides: dict[str, Any] | None = None,
 ) -> DictConfig:
-    """Apply overrides, merge shared configs, resolve, and validate. No file I/O."""
+    """Apply overrides, merge shared configs and resolve"""
     cfg = OmegaConf.create(base_config)
 
     if overrides:
@@ -229,7 +164,6 @@ def resolve_config(
             cfg.training_b = OmegaConf.merge(cfg.shared.training, cfg.training_b)
 
     OmegaConf.resolve(cfg)
-    validate_config(cfg, config_dir)
     return cfg
 
 

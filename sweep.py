@@ -24,6 +24,7 @@ Usage:
         --skip-existing
 """
 
+import torch as t
 import argparse
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -33,6 +34,12 @@ import tempfile
 import traceback
 
 from dln.experiment import run_experiment, run_comparative_experiment
+from dln.utils import (
+    load_base_config,
+    resolve_config,
+    save_base_config,
+    save_overrides,
+)
 from dln.overrides import (
     parse_overrides,
     expand_sweep_params,
@@ -41,9 +48,11 @@ from dln.overrides import (
     make_job_subdir,
     check_subdir_uniqueness,
 )
-from dln.utils import load_base_config, resolve_config, save_base_config, save_overrides
-import torch as t
 
+# Single-threaded BLAS: our matrix ops are too small for thread parallelism
+# to outweigh the wake/sync overhead. Also prevents thread contention in parallel sweeps.
+t.set_num_threads(1)
+t.set_num_interop_threads(1)
 
 # =============================================================================
 # CLI
@@ -127,10 +136,10 @@ def parse_args() -> argparse.Namespace:
 # =============================================================================
 
 
-def init_worker(num_workers: int) -> None:
-    """Initialize worker process with proper thread configuration."""
-    t.set_num_threads(1)
-    t.set_num_interop_threads(1)
+# def init_worker(num_workers: int) -> None:
+#     """Initialize worker process with proper thread configuration."""
+#     t.set_num_threads(1)
+#     t.set_num_interop_threads(1)
 
 
 def run_single_job(
@@ -176,8 +185,6 @@ def run_jobs_sequential(
     device: str,
 ) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
     """Run jobs sequentially. Returns (completed, skipped, failed, errors)."""
-
-    init_worker(num_workers)
 
     completed = 0
     skipped = 0
@@ -248,11 +255,7 @@ def run_jobs_parallel(
     total = len(jobs_to_run)
     start_time = time.time()
 
-    with ProcessPoolExecutor(
-        max_workers=num_workers,
-        initializer=init_worker,
-        initargs=(num_workers,),
-    ) as executor:
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
         futures = {}
         for idx, (i, job, job_dir) in enumerate(jobs_to_run):
             future = executor.submit(
