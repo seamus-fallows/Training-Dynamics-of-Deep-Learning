@@ -23,11 +23,6 @@ Usage:
         --subdir='g{model.gamma}_s{training.batch_seed}'
 """
 
-import os
-
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-
 import torch as t
 import argparse
 import time
@@ -43,7 +38,6 @@ from dln.experiment import run_experiment, run_comparative_experiment
 from dln.utils import (
     load_base_config,
     resolve_config,
-    resolve_device,
     save_sweep_config,
     save_overrides,
     save_history,
@@ -146,16 +140,11 @@ _worker_state = {}
 
 
 def _worker_init(resolved_base, config_dir, device):
-    """Called once per worker process at pool creation."""
-    t.set_num_threads(1)
     _worker_state.update(
         resolved_base=resolved_base,
         config_dir=config_dir,
         device=device,
     )
-    if device == "cuda":
-        dev = resolve_device(device)
-        t.zeros(1, device=dev)
 
 
 def _worker_run_job(job_overrides, output_dir):
