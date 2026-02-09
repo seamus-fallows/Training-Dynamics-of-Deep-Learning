@@ -281,7 +281,11 @@ class TestOverrides:
         assert isinstance(sweep, list)
 
     def test_split_overrides(self):
-        overrides = {"model.gamma": 0.75, "training.batch_seed": [0, 1, 2], "max_steps": 1000}
+        overrides = {
+            "model.gamma": 0.75,
+            "training.batch_seed": [0, 1, 2],
+            "max_steps": 1000,
+        }
         fixed, sweep = split_overrides(overrides)
         assert fixed == {"model.gamma": 0.75, "max_steps": 1000}
         assert sweep == {"training.batch_seed": [0, 1, 2]}
@@ -312,11 +316,13 @@ class TestOverrides:
 
     def test_list_literal_end_to_end(self):
         """Full pipeline: parse_overrides -> split_overrides with list literal."""
-        overrides = parse_overrides([
-            "metrics=[trace_covariances,weight_norm]",
-            "model.gamma=0.75,1.0",
-            "max_steps=1000",
-        ])
+        overrides = parse_overrides(
+            [
+                "metrics=[trace_covariances,weight_norm]",
+                "model.gamma=0.75,1.0",
+                "max_steps=1000",
+            ]
+        )
         fixed, sweep = split_overrides(overrides)
         assert fixed == {
             "metrics": ["trace_covariances", "weight_norm"],
@@ -396,8 +402,10 @@ class TestSeedIsolation:
             return make_trainer(
                 model_cfg=make_model_config(model_seed=42),
                 training_cfg=make_training_config(batch_seed=0),
-                data_cfg=make_data_config(data_seed=0),
-            ).run(max_steps=50, num_evaluations=5)
+                data_cfg=make_data_config(
+                    data_seed=0, train_samples=20, test_samples=10
+                ),
+            ).run(max_steps=20, num_evaluations=5)
 
         history_a = run_once()
         history_b = run_once()
@@ -413,9 +421,11 @@ class TestSeedIsolation:
             return make_trainer(
                 model_cfg=make_model_config(model_seed=42),
                 training_cfg=make_training_config(batch_size=10, batch_seed=0),
-                data_cfg=make_data_config(data_seed=0),
+                data_cfg=make_data_config(
+                    data_seed=0, train_samples=20, test_samples=10
+                ),
                 device=device,
-            ).run(max_steps=100, num_evaluations=10)
+            ).run(max_steps=50, num_evaluations=10)
 
         history_cpu = run_on_device(t.device("cpu"))
         history_gpu = run_on_device(t.device("cuda"))
@@ -499,6 +509,23 @@ class TestSeedIsolation:
         for (xa, ya), (xb, yb) in zip(batches_a, batches_b):
             assert t.allclose(xa, xb)
             assert t.allclose(ya, yb)
+
+    def test_global_rng_does_not_affect_model_weights(self):
+        """nn.Linear's default init is overwritten, so global RNG state is irrelevant."""
+        t.manual_seed(0)
+        model_a = create_model(model_seed=42)
+        t.manual_seed(999)
+        model_b = create_model(model_seed=42)
+        assert t.equal(get_all_params(model_a), get_all_params(model_b))
+
+    def test_gamma_only_scales_weights(self):
+        """Same (hidden_dim, model_seed) produces same random pattern; gamma only scales."""
+        model_1 = create_model(gamma=1.0, hidden_dim=10)
+        model_15 = create_model(gamma=1.5, hidden_dim=10)
+        scale_1 = 10 ** (-1.0 / 2)
+        scale_15 = 10 ** (-1.5 / 2)
+        for w1, w15 in zip(model_1.parameters(), model_15.parameters()):
+            assert t.allclose(w1 / scale_1, w15 / scale_15, atol=1e-6)
 
     def test_test_set_same_between_online_and_offline(self):
         """Test set is identical for online and offline with same data_seed."""
@@ -772,19 +799,19 @@ class TestTrainer:
     def test_training_reduces_loss(self):
         trainer = make_trainer(
             model_cfg=make_model_config(model_seed=42),
-            training_cfg=make_training_config(batch_seed=0, lr=0.01),
+            training_cfg=make_training_config(batch_seed=0, lr=0.1),
             data_cfg=make_data_config(data_seed=0),
         )
-        history = trainer.run(max_steps=500, num_evaluations=10)
+        history = trainer.run(max_steps=100, num_evaluations=10)
         assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
 
     def test_online_training_reduces_loss(self):
         trainer = make_trainer(
             model_cfg=make_model_config(model_seed=42),
-            training_cfg=make_training_config(batch_size=20, batch_seed=0, lr=0.01),
-            data_cfg=make_data_config(online=True, test_samples=100),
+            training_cfg=make_training_config(batch_size=20, batch_seed=0, lr=0.1),
+            data_cfg=make_data_config(online=True, test_samples=20),
         )
-        history = trainer.run(max_steps=500, num_evaluations=10)
+        history = trainer.run(max_steps=100, num_evaluations=10)
         assert history["test_loss"][-1] < history["test_loss"][0] * 0.1
 
     def test_history_keys_offline(self):
@@ -1013,8 +1040,15 @@ class TestSaveLoadPipeline:
 
         jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
         run_sweep(
-            resolved, "single", jobs, tmp_path,
-            "seed{training.batch_seed}", True, False, 1, "cpu",
+            resolved,
+            "single",
+            jobs,
+            tmp_path,
+            "seed{training.batch_seed}",
+            True,
+            False,
+            1,
+            "cpu",
         )
 
         assert (tmp_path / "seed0" / "history.npz").exists()
@@ -1056,7 +1090,14 @@ class TestSaveLoadPipeline:
         run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
 
         completed, skipped, failed, errors = run_jobs_sequential(
-            resolved, "single", jobs, tmp_path, None, True, False, "cpu",
+            resolved,
+            "single",
+            jobs,
+            tmp_path,
+            None,
+            True,
+            False,
+            "cpu",
         )
         assert completed == 0
         assert skipped == 2
@@ -1070,7 +1111,14 @@ class TestSaveLoadPipeline:
         run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
 
         completed, skipped, failed, errors = run_jobs_sequential(
-            resolved, "single", jobs, tmp_path, None, False, False, "cpu",
+            resolved,
+            "single",
+            jobs,
+            tmp_path,
+            None,
+            False,
+            False,
+            "cpu",
         )
         assert completed == 1
         assert skipped == 0

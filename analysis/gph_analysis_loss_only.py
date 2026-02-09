@@ -1,13 +1,14 @@
 """
 GPH Sweep Analysis
 
-Analyzes results from the GPH experiment sweep with:
+Analyzes results from GPH experiment sweeps (offline or online) with:
 - Parallel data loading across CPU cores
 - Caching of computed statistics for fast plot iteration
-- Three plot types: loss comparison, loss ratio, min/max spread
+- Two plot types: loss ratio with significance testing, loss variability with spread bands
 """
 
 import argparse
+import hashlib
 import json
 import os
 import pickle
@@ -24,21 +25,43 @@ from scipy import stats as scipy_stats
 # Configuration
 # =============================================================================
 
-BASE_PATH = Path("outputs/gph_offline")
-CACHE_PATH = Path("cache/gph_offline.pkl")
-FIGURES_PATH = Path("figures/gph_offline")
-
 WIDTHS = [10, 50, 100]
 GAMMAS = [0.75, 1.0, 1.5]
 NOISE_LEVELS = [0.0, 0.2]
 MODEL_SEEDS = [0, 1]
 BATCH_SIZES = [1, 2, 5, 10, 50]
 
-GAMMA_MAX_STEPS = {0.75: 6000, 1.0: 9000, 1.5: 27000}
+GAMMA_MAX_STEPS = {0.75: 5000, 1.0: 8000, 1.5: 26000}
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 
 N_WORKERS = os.cpu_count()
 MAX_BATCH_SEED = 10000
+
+EXPERIMENTS = {
+    "offline": {
+        "base_path": Path("outputs/gph_offline"),
+        "cache_path": Path("cache/gph_offline.pkl"),
+        "figures_path": Path("figures/gph_offline"),
+        "baseline_subdir": "full_batch",
+        "sgd_subdir": "mini_batch",
+        "baseline_label": "GD",
+        "baseline_batch_size": None,
+        "regime_label": "Offline (finite data)",
+    },
+    "online": {
+        "base_path": Path("outputs/gph_online"),
+        "cache_path": Path("cache/gph_online.pkl"),
+        "figures_path": Path("figures/gph_online"),
+        "baseline_subdir": "large_batch",
+        "sgd_subdir": "mini_batch",
+        "baseline_label": "Large batch",
+        "baseline_batch_size": 500,
+        "regime_label": "Online (infinite data)",
+    },
+}
+
+# Set in main() and worker_init()
+_exp = None
 
 
 # =============================================================================
@@ -46,59 +69,111 @@ MAX_BATCH_SEED = 10000
 # =============================================================================
 
 
-def get_gd_dir_name(width: int, gamma: float, noise: float, model_seed: int) -> str:
-    max_steps = GAMMA_MAX_STEPS[gamma]
-    return f"noise_std{noise}_max_steps{max_steps}_gamma{gamma}_hidden_dim{width}_model_seed{model_seed}_batch_sizeNone"
+def _overrides_to_hash(overrides: dict) -> str:
+    """Deterministic 12-char hex hash from override values (matches sweep.py)."""
+    key = json.dumps(overrides, sort_keys=True, default=str)
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
-def load_history(path: Path) -> dict | None:
-    history_file = path / "history.json"
+def _make_overrides(**kwargs) -> dict:
+    """Build overrides dict with sweep.py key names."""
+    key_map = {
+        "gamma": "model.gamma",
+        "max_steps": "max_steps",
+        "model_seed": "model.model_seed",
+        "noise": "data.noise_std",
+        "hidden_dim": "model.hidden_dim",
+        "batch_seed": "training.batch_seed",
+        "batch_size": "training.batch_size",
+    }
+    return {key_map[k]: v for k, v in kwargs.items()}
+
+
+def _run_dir(subdir: str, overrides: dict) -> Path:
+    return _exp["base_path"] / subdir / _overrides_to_hash(overrides)
+
+
+def _load_test_loss(path: Path) -> np.ndarray | None:
+    """Load only test_loss from history.npz."""
+    history_file = path / "history.npz"
     if not history_file.exists():
         return None
     try:
-        with open(history_file) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
+        with np.load(history_file) as data:
+            return data["test_loss"]
+    except Exception:
         return None
 
 
-def find_sgd_dirs(
-    width: int, gamma: float, noise: float, model_seed: int, batch_size: int
-) -> list[Path]:
-    """Find all SGD run directories by constructing paths directly."""
+def _load_steps_and_loss(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """Load step and test_loss from history.npz."""
+    history_file = path / "history.npz"
+    if not history_file.exists():
+        return None
+    try:
+        with np.load(history_file) as data:
+            return data["step"], data["test_loss"]
+    except Exception:
+        return None
+
+
+def _load_baseline(
+    width: int, gamma: float, noise: float, model_seed: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, int] | None:
+    """Load baseline loss curve.
+
+    Offline (full_batch): single deterministic GD run.
+        Returns (steps, loss, None, 1).
+    Online (large_batch): Welford mean+variance over all batch seeds.
+        Returns (steps, mean, var, n).
+    """
     max_steps = GAMMA_MAX_STEPS[gamma]
+    subdir = _exp["baseline_subdir"]
 
-    dirs = []
-    for batch_seed in range(MAX_BATCH_SEED):
-        name = f"noise_std{noise}_max_steps{max_steps}_gamma{gamma}_hidden_dim{width}_model_seed{model_seed}_batch_seed{batch_seed}_batch_size{batch_size}"
-        path = BASE_PATH / name
-        if path.exists():
-            dirs.append(path)
-
-    return dirs
-
-
-def compute_ci(
-    arrays: list[np.ndarray], confidence: float = 0.95
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute mean and confidence interval from list of arrays."""
-    if not arrays:
-        return np.array([]), np.array([]), np.array([])
-
-    data = np.stack(arrays)
-    n = len(arrays)
-    mean = data.mean(axis=0)
-
-    if n < 2:
-        return mean, mean, mean
-
-    sem = data.std(axis=0, ddof=1) / np.sqrt(n)
-    t_val = scipy_stats.t.ppf((1 + confidence) / 2, df=n - 1)
-
-    lower = mean - t_val * sem
-    upper = mean + t_val * sem
-
-    return mean, lower, upper
+    if subdir == "full_batch":
+        overrides = _make_overrides(
+            gamma=gamma,
+            max_steps=max_steps,
+            model_seed=model_seed,
+            noise=noise,
+            hidden_dim=width,
+        )
+        result = _load_steps_and_loss(_run_dir(subdir, overrides))
+        if result is None:
+            return None
+        steps, loss = result
+        return steps, loss, None, 1
+    else:
+        n = 0
+        mean = None
+        m2 = None
+        steps = None
+        for batch_seed in range(MAX_BATCH_SEED):
+            overrides = _make_overrides(
+                gamma=gamma,
+                max_steps=max_steps,
+                model_seed=model_seed,
+                noise=noise,
+                hidden_dim=width,
+                batch_seed=batch_seed,
+            )
+            result = _load_steps_and_loss(_run_dir(subdir, overrides))
+            if result is None:
+                continue
+            s, loss = result
+            n += 1
+            if mean is None:
+                steps = s
+                mean = loss.astype(np.float64)
+                m2 = np.zeros_like(mean)
+            else:
+                delta = loss - mean
+                mean += delta / n
+                m2 += delta * (loss - mean)
+        if n == 0 or steps is None:
+            return None
+        var = m2 / (n - 1) if n > 1 else np.zeros_like(mean)
+        return steps, mean, var, n
 
 
 @dataclass
@@ -106,104 +181,225 @@ class ConfigStats:
     """Statistics for a single configuration."""
 
     steps: np.ndarray
-    gd_loss: np.ndarray
+    baseline_loss: np.ndarray
+    baseline_var: np.ndarray | None  # None for deterministic (offline) baseline
+    baseline_n: int
     sgd_mean: np.ndarray
     sgd_lower: np.ndarray
     sgd_upper: np.ndarray
     sgd_min: np.ndarray
     sgd_max: np.ndarray
     sgd_var: np.ndarray
+    sgd_log_mean: np.ndarray  # Welford mean of log(loss)
+    sgd_log_std: np.ndarray  # std of log(loss), for log-space spread bands
     n_runs: int
 
 
-def compute_stats_for_config(
-    width: int, gamma: float, noise: float, model_seed: int, batch_size: int
+def _compute_sgd_stats(
+    width: int,
+    gamma: float,
+    noise: float,
+    model_seed: int,
+    batch_size: int,
+    baseline_steps: np.ndarray,
+    baseline_loss: np.ndarray,
+    baseline_var: np.ndarray | None,
+    baseline_n: int,
 ) -> ConfigStats | None:
-    """Compute statistics for a single (width, gamma, noise, model_seed, batch_size) configuration."""
-    # Load GD baseline
-    gd_dir = BASE_PATH / get_gd_dir_name(width, gamma, noise, model_seed)
-    gd_hist = load_history(gd_dir)
-    if gd_hist is None:
+    """Compute SGD statistics using Welford's online algorithm.
+
+    Uses O(steps) memory instead of O(n_runs * steps) by computing
+    mean, variance, min, max incrementally.
+    """
+    max_steps = GAMMA_MAX_STEPS[gamma]
+    subdir = _exp["sgd_subdir"]
+
+    n = 0
+    mean = None
+    m2 = None
+    log_mean = None
+    log_m2 = None
+    min_vals = None
+    max_vals = None
+
+    for batch_seed in range(MAX_BATCH_SEED):
+        overrides = _make_overrides(
+            gamma=gamma,
+            max_steps=max_steps,
+            model_seed=model_seed,
+            noise=noise,
+            hidden_dim=width,
+            batch_seed=batch_seed,
+            batch_size=batch_size,
+        )
+        loss = _load_test_loss(_run_dir(subdir, overrides))
+        if loss is None:
+            continue
+
+        n += 1
+        log_loss = np.log(np.maximum(loss, 1e-300))
+        if mean is None:
+            mean = loss.astype(np.float64)
+            m2 = np.zeros_like(mean)
+            log_mean = log_loss.astype(np.float64)
+            log_m2 = np.zeros_like(log_mean)
+            min_vals = loss.copy()
+            max_vals = loss.copy()
+        else:
+            delta = loss - mean
+            mean += delta / n
+            m2 += delta * (loss - mean)
+            log_delta = log_loss - log_mean
+            log_mean += log_delta / n
+            log_m2 += log_delta * (log_loss - log_mean)
+            np.minimum(min_vals, loss, out=min_vals)
+            np.maximum(max_vals, loss, out=max_vals)
+
+    if n == 0:
         return None
 
-    # Find and load all SGD runs
-    sgd_dirs = find_sgd_dirs(width, gamma, noise, model_seed, batch_size)
-    if not sgd_dirs:
-        return None
-
-    sgd_losses = []
-    for path in sgd_dirs:
-        hist = load_history(path)
-        if hist and "test_loss" in hist:
-            sgd_losses.append(np.array(hist["test_loss"]))
-
-    if not sgd_losses:
-        return None
-
-    # Compute statistics
-    steps = np.array(gd_hist["step"])
-    gd_loss = np.array(gd_hist["test_loss"])
-
-    sgd_mean, sgd_lower, sgd_upper = compute_ci(sgd_losses)
-    sgd_arr = np.stack(sgd_losses)
-    sgd_min = sgd_arr.min(axis=0)
-    sgd_max = sgd_arr.max(axis=0)
-    sgd_var = sgd_arr.var(axis=0, ddof=1)
+    var = m2 / (n - 1) if n > 1 else np.zeros_like(mean)
+    log_var = log_m2 / (n - 1) if n > 1 else np.zeros_like(log_mean)
+    log_std = np.sqrt(log_var)
+    sem = np.sqrt(var / n)
+    t_val = scipy_stats.t.ppf(0.975, df=n - 1) if n > 1 else 0.0
 
     return ConfigStats(
-        steps=steps,
-        gd_loss=gd_loss,
-        sgd_mean=sgd_mean,
-        sgd_lower=sgd_lower,
-        sgd_upper=sgd_upper,
-        sgd_min=sgd_min,
-        sgd_max=sgd_max,
-        sgd_var=sgd_var,
-        n_runs=len(sgd_losses),
+        steps=baseline_steps,
+        baseline_loss=baseline_loss,
+        baseline_var=baseline_var,
+        baseline_n=baseline_n,
+        sgd_mean=mean,
+        sgd_lower=mean - t_val * sem,
+        sgd_upper=mean + t_val * sem,
+        sgd_min=min_vals,
+        sgd_max=max_vals,
+        sgd_var=var,
+        sgd_log_mean=log_mean,
+        sgd_log_std=log_std,
+        n_runs=n,
     )
 
 
-def _compute_wrapper(args: tuple) -> tuple[tuple, ConfigStats | None]:
-    """Wrapper for parallel execution."""
-    width, gamma, noise, model_seed, batch_size = args
-    result = compute_stats_for_config(width, gamma, noise, model_seed, batch_size)
-    return args, result
+# =============================================================================
+# Parallel Computation
+# =============================================================================
 
 
-def compute_all_stats(n_workers: int = N_WORKERS) -> dict[tuple, ConfigStats]:
-    """Compute statistics for all configurations in parallel."""
-    # Generate all configuration tuples
-    configs = [
-        (width, gamma, noise, model_seed, batch_size)
+def _worker_init(exp_config):
+    global _exp
+    _exp = exp_config
+
+
+def _baseline_wrapper(args):
+    width, gamma, noise, model_seed = args
+    return args, _load_baseline(width, gamma, noise, model_seed)
+
+
+def _sgd_wrapper(args):
+    (
+        config_key,
+        width,
+        gamma,
+        noise,
+        model_seed,
+        batch_size,
+        bl_steps,
+        bl_loss,
+        bl_var,
+        bl_n,
+    ) = args
+    result = _compute_sgd_stats(
+        width, gamma, noise, model_seed, batch_size, bl_steps, bl_loss, bl_var, bl_n
+    )
+    return config_key, result
+
+
+def compute_all_stats(
+    exp_config: dict, n_workers: int = N_WORKERS
+) -> dict[tuple, ConfigStats]:
+    global _exp
+    _exp = exp_config
+
+    # Phase 1: Compute baselines
+    baseline_configs = [
+        (width, gamma, noise, model_seed)
         for gamma in GAMMAS
         for noise in NOISE_LEVELS
-        for batch_size in BATCH_SIZES
         for width in WIDTHS
         for model_seed in MODEL_SEEDS
     ]
 
-    print(
-        f"Computing statistics for {len(configs)} configurations using {n_workers} workers..."
-    )
+    print(f"Loading baselines ({len(baseline_configs)} configs)...")
+    baselines = {}
 
-    stats = {}
-    completed = 0
-
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(_compute_wrapper, cfg): cfg for cfg in configs}
-
+    with ProcessPoolExecutor(
+        max_workers=n_workers, initializer=_worker_init, initargs=(exp_config,)
+    ) as executor:
+        futures = {
+            executor.submit(_baseline_wrapper, cfg): cfg for cfg in baseline_configs
+        }
+        done = 0
         for future in as_completed(futures):
-            config, result = future.result()
+            cfg, result = future.result()
             if result is not None:
-                stats[config] = result
-            completed += 1
+                baselines[cfg] = result
+            done += 1
             print(
-                f"\r  Progress: {completed}/{len(configs)} ({100 * completed / len(configs):.0f}%)",
+                f"\r  Baselines: {done}/{len(baseline_configs)}",
                 end="",
                 flush=True,
             )
 
-    print(f"\nComputed stats for {len(stats)} configurations")
+    print(f"\n  Loaded {len(baselines)}/{len(baseline_configs)} baselines")
+
+    # Phase 2: Compute SGD stats
+    sgd_args = []
+    for gamma in GAMMAS:
+        for noise in NOISE_LEVELS:
+            for batch_size in BATCH_SIZES:
+                for width in WIDTHS:
+                    for model_seed in MODEL_SEEDS:
+                        bl_key = (width, gamma, noise, model_seed)
+                        if bl_key not in baselines:
+                            continue
+                        bl_steps, bl_loss, bl_var, bl_n = baselines[bl_key]
+                        config_key = (width, gamma, noise, model_seed, batch_size)
+                        sgd_args.append(
+                            (
+                                config_key,
+                                width,
+                                gamma,
+                                noise,
+                                model_seed,
+                                batch_size,
+                                bl_steps,
+                                bl_loss,
+                                bl_var,
+                                bl_n,
+                            )
+                        )
+
+    print(f"Computing SGD statistics ({len(sgd_args)} configs)...")
+    stats = {}
+
+    with ProcessPoolExecutor(
+        max_workers=n_workers, initializer=_worker_init, initargs=(exp_config,)
+    ) as executor:
+        futures = {executor.submit(_sgd_wrapper, cfg): cfg for cfg in sgd_args}
+        done = 0
+        for future in as_completed(futures):
+            config_key, result = future.result()
+            if result is not None:
+                stats[config_key] = result
+            done += 1
+            print(
+                f"\r  SGD stats: {done}/{len(sgd_args)} ({100 * done / len(sgd_args):.0f}%)",
+                end="",
+                flush=True,
+            )
+
+    print(f"\n  Computed {len(stats)} configurations")
     return stats
 
 
@@ -212,62 +408,54 @@ def compute_all_stats(n_workers: int = N_WORKERS) -> dict[tuple, ConfigStats]:
 # =============================================================================
 
 
-def save_cache(stats: dict[tuple, ConfigStats], path: Path = CACHE_PATH) -> None:
-    """Save computed statistics to cache file."""
+def save_cache(stats: dict[tuple, ConfigStats], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Convert ConfigStats to dicts for pickling
     cache_data = {}
     for key, cs in stats.items():
         cache_data[key] = {
             "steps": cs.steps,
-            "gd_loss": cs.gd_loss,
+            "baseline_loss": cs.baseline_loss,
+            "baseline_var": cs.baseline_var,
+            "baseline_n": cs.baseline_n,
             "sgd_mean": cs.sgd_mean,
             "sgd_lower": cs.sgd_lower,
             "sgd_upper": cs.sgd_upper,
             "sgd_min": cs.sgd_min,
             "sgd_max": cs.sgd_max,
             "sgd_var": cs.sgd_var,
+            "sgd_log_mean": cs.sgd_log_mean,
+            "sgd_log_std": cs.sgd_log_std,
             "n_runs": cs.n_runs,
         }
-
     with open(path, "wb") as f:
         pickle.dump(cache_data, f)
     print(f"Cache saved to {path}")
 
 
-def load_cache(path: Path = CACHE_PATH) -> dict[tuple, ConfigStats] | None:
-    """Load statistics from cache file."""
+def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
     if not path.exists():
         return None
-
     try:
         with open(path, "rb") as f:
             cache_data = pickle.load(f)
-
-        # Convert dicts back to ConfigStats
-        stats = {}
-        for key, d in cache_data.items():
-            stats[key] = ConfigStats(**d)
-
-        return stats
+        return {key: ConfigStats(**d) for key, d in cache_data.items()}
     except (pickle.UnpicklingError, KeyError, TypeError) as e:
         print(f"Warning: Failed to load cache ({e}), will recompute")
         return None
 
 
 def get_stats(
-    force_recompute: bool = False, n_workers: int = N_WORKERS
+    exp_config: dict, force_recompute: bool = False, n_workers: int = N_WORKERS
 ) -> dict[tuple, ConfigStats]:
-    """Get statistics, using cache if available."""
+    cache_path = exp_config["cache_path"]
     if not force_recompute:
-        stats = load_cache()
+        stats = load_cache(cache_path)
         if stats is not None:
             print(f"Loaded {len(stats)} configurations from cache")
             return stats
 
-    stats = compute_all_stats(n_workers=n_workers)
-    save_cache(stats)
+    stats = compute_all_stats(exp_config, n_workers=n_workers)
+    save_cache(stats, cache_path)
     return stats
 
 
@@ -277,20 +465,103 @@ def get_stats(
 
 
 def save_fig(fig: plt.Figure, name: str) -> None:
-    """Save figure and close it."""
-    FIGURES_PATH.mkdir(parents=True, exist_ok=True)
-    fig.savefig(FIGURES_PATH / f"{name}.png", dpi=150, bbox_inches="tight")
+    figures_path = _exp["figures_path"]
+    figures_path.mkdir(parents=True, exist_ok=True)
+    fig.savefig(figures_path / f"{name}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+def _welch_t_crit(se_a: np.ndarray, n_a: int, se_b: np.ndarray, n_b: int) -> np.ndarray:
+    """Welch-Satterthwaite t critical value (two-tailed 95%), numerically stable.
+
+    se_a, se_b are variance/n (squared standard error of the mean).
+    When both SEs underflow to zero, returns 1.96 (normal approximation,
+    appropriate since both means are precisely known).
+    """
+    se_sum = se_a + se_b
+    ws_numer = se_sum**2
+    ws_denom = se_a**2 / max(n_a - 1, 1) + se_b**2 / max(n_b - 1, 1)
+    # When ws_denom underflows to 0, SEs are negligible → large df (normal approx)
+    nonzero = ws_denom > 0
+    df = np.where(nonzero, ws_numer / np.where(nonzero, ws_denom, 1.0), 1e6)
+    df = np.maximum(df, 1.0)
+    return scipy_stats.t.ppf(0.975, df=df)
+
+
+def _significance_masks(s: ConfigStats) -> tuple[np.ndarray, np.ndarray]:
+    """Compute where baseline is below SGD, with and without significance.
+
+    Returns (sig_95, mean_below) where:
+    - sig_95: E[baseline] < E[SGD] at 95% confidence (Welch's t-test)
+    - mean_below: baseline_mean < sgd_mean (point estimate only)
+
+    For deterministic baselines (offline), this reduces to the one-sample
+    test against the SGD CI. For stochastic baselines (online), uses
+    Welch's two-sample t-test on the difference.
+    """
+    mean_below = s.baseline_loss < s.sgd_mean
+
+    if s.baseline_var is None:
+        # Deterministic baseline: one-sample test
+        sig_95 = s.baseline_loss < s.sgd_lower
+    else:
+        # Welch's two-sample test
+        diff = s.sgd_mean - s.baseline_loss
+        se_bl = s.baseline_var / s.baseline_n
+        se_sgd = s.sgd_var / s.n_runs
+        se_diff = np.sqrt(se_bl + se_sgd)
+
+        t_crit = _welch_t_crit(se_bl, s.baseline_n, se_sgd, s.n_runs)
+
+        # Lower bound of 95% CI for (E[SGD] - E[baseline]) > 0
+        sig_95 = diff > t_crit * se_diff
+
+    return sig_95, mean_below
+
+
+def _ratio_ci(s: ConfigStats) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute SGD/baseline ratio with 95% CI.
+
+    For deterministic baselines: divides SGD CI bounds by the constant.
+    For stochastic baselines: delta method for the ratio of two means.
+    """
+    ratio = s.sgd_mean / s.baseline_loss
+
+    if s.baseline_var is None:
+        # Constant denominator: CI transforms linearly
+        return ratio, s.sgd_lower / s.baseline_loss, s.sgd_upper / s.baseline_loss
+
+    # Delta method: Var(Y/X) ≈ (Y/X)² × (Var(Y)/(n_Y·Y²) + Var(X)/(n_X·X²))
+    safe_sgd = np.maximum(s.sgd_mean, 1e-30)
+    safe_bl = np.maximum(s.baseline_loss, 1e-30)
+    rel_var = s.sgd_var / (s.n_runs * safe_sgd**2) + s.baseline_var / (
+        s.baseline_n * safe_bl**2
+    )
+    se_ratio = ratio * np.sqrt(rel_var)
+
+    se_bl = s.baseline_var / s.baseline_n
+    se_sgd = s.sgd_var / s.n_runs
+    t_crit = _welch_t_crit(se_bl, s.baseline_n, se_sgd, s.n_runs)
+
+    return ratio, ratio - t_crit * se_ratio, ratio + t_crit * se_ratio
 
 
 def plot_loss_ratio(
     stats: dict[tuple, ConfigStats], gamma: float, noise: float, batch_size: int
 ) -> plt.Figure:
-    """
-    Plot SGD/GD loss ratio and shaded loss comparison.
-    3x4 grid: columns = widths, rows = [seed0 ratio, seed0 loss, seed1 ratio, seed1 loss].
-    Each subplot has its own y-axis scale.
-    """
+    """Plot SGD/baseline loss ratio with 95% CI and significance shading."""
+    bl_label = _exp["baseline_label"]
+    regime = _exp["regime_label"]
+    baseline_bs = _exp["baseline_batch_size"]
+
+    # Construct labels based on experiment type
+    if baseline_bs is not None:
+        # Online: both are SGD with different batch sizes
+        ratio_ylabel = f"$L_{{B={batch_size}}} \\,/\\, L_{{B={baseline_bs}}}$"
+    else:
+        # Offline: GD vs SGD
+        ratio_ylabel = f"$L_{{\\mathrm{{SGD}}}} \\,/\\, L_{{\\mathrm{{{bl_label}}}}}$"
+
     fig, axes = plt.subplots(
         len(MODEL_SEEDS) * 2,
         len(WIDTHS),
@@ -308,132 +579,118 @@ def plot_loss_ratio(
             key = (width, gamma, noise, model_seed, batch_size)
 
             if key not in stats:
-                ax_ratio.set_title(f"w={width}, seed={model_seed}\n(no data)")
-                ax_ratio.set_xlabel("Step")
-                ax_ratio.set_ylabel("SGD / GD")
-                ax_loss.set_xlabel("Step")
-                ax_loss.set_ylabel("Test Loss")
+                ax_ratio.set_title(f"width={width}, model_seed={model_seed}\n(no data)")
+                ax_ratio.set_xlabel("Training step")
+                ax_ratio.set_ylabel(ratio_ylabel)
+                ax_loss.set_xlabel("Training step")
+                ax_loss.set_ylabel("Test loss")
                 continue
 
             s = stats[key]
 
+            # Build per-config labels
+            if baseline_bs is not None:
+                bl_legend = (
+                    f"batch_size={baseline_bs} mean ({s.baseline_n} batch seeds)"
+                )
+                sgd_legend = f"batch_size={batch_size} mean ({s.n_runs} batch seeds)"
+                sig_label = (
+                    f"batch_size={baseline_bs} < batch_size={batch_size} (p < 0.05)"
+                )
+                nosig_label = (
+                    f"batch_size={baseline_bs} < batch_size={batch_size} (not sig.)"
+                )
+            else:
+                bl_legend = bl_label
+                sgd_legend = f"SGD mean ({s.n_runs} batch seeds)"
+                sig_label = f"{bl_label} < SGD (p < 0.05)"
+                nosig_label = f"{bl_label} < SGD (not sig.)"
+
             # === Ratio plot (top) ===
-            ratio_mean = s.sgd_mean / s.gd_loss
-            ratio_lower = s.sgd_lower / s.gd_loss
-            ratio_upper = s.sgd_upper / s.gd_loss
+            ratio_mean, ratio_lower, ratio_upper = _ratio_ci(s)
 
             ax_ratio.axhline(1.0, color="gray", linestyle="--", alpha=0.5, linewidth=1)
             ax_ratio.plot(
-                s.steps, ratio_mean, label=f"n={s.n_runs}", color="C1", linewidth=1.5
+                s.steps,
+                ratio_mean,
+                label=f"Mean ± 95% CI ({s.n_runs} batch seeds)",
+                color="C1",
+                linewidth=1.5,
             )
             ax_ratio.fill_between(
                 s.steps, ratio_lower, ratio_upper, alpha=0.3, color="C1"
             )
-
-            ax_ratio.set_xlabel("Step")
-            ax_ratio.set_ylabel("SGD / GD")
-            ax_ratio.set_title(f"w={width}, seed={model_seed}")
+            ax_ratio.set_xlabel("Training step")
+            ax_ratio.set_ylabel(ratio_ylabel)
+            ax_ratio.set_title(f"width={width}, model_seed={model_seed}")
             ax_ratio.legend(loc="upper right", fontsize=7)
 
-            # === Shaded loss plot (bottom) ===
-            ax_loss.plot(s.steps, s.gd_loss, label="GD", color="C0", linewidth=1.5)
+            # === Loss comparison (bottom) ===
+            ax_loss.plot(
+                s.steps, s.baseline_loss, label=bl_legend, color="C0", linewidth=1.5
+            )
             ax_loss.plot(
                 s.steps,
                 s.sgd_mean,
-                label=f"SGD (n={s.n_runs})",
+                label=sgd_legend,
                 color="C1",
                 linewidth=1.5,
             )
+            # Log-transformed CI of the arithmetic mean (delta method on log(X̄))
+            # Var(log X̄) ≈ SEM²/μ², so CI = mean ×/÷ exp(t × SEM/mean)
+            t_val = scipy_stats.t.ppf(0.975, df=max(s.n_runs - 1, 1))
+            sem = np.sqrt(s.sgd_var / s.n_runs)
+            relative_sem = sem / np.maximum(s.sgd_mean, 1e-30)
+            ci_factor = np.exp(t_val * relative_sem)
             ax_loss.fill_between(
-                s.steps, s.sgd_lower, s.sgd_upper, alpha=0.3, color="C1"
+                s.steps,
+                s.sgd_mean / ci_factor,
+                s.sgd_mean * ci_factor,
+                alpha=0.3,
+                color="C1",
             )
 
-            # Shading: dark green where GD < CI lower (statistically significant)
+            sig_95, mean_below = _significance_masks(s)
+
+            # Dark green: statistically significant at 95%
             ax_loss.fill_between(
                 s.steps,
                 0,
                 1,
-                where=(s.gd_loss < s.sgd_lower),
+                where=sig_95,
                 alpha=0.4,
                 color="darkgreen",
                 transform=ax_loss.get_xaxis_transform(),
-                label="GD < CI lower",
+                label=sig_label,
             )
-
-            # Shading: light green where CI lower <= GD < E[SGD]
+            # Light green: mean below but not significant
             ax_loss.fill_between(
                 s.steps,
                 0,
                 1,
-                where=(s.gd_loss >= s.sgd_lower) & (s.gd_loss < s.sgd_mean),
+                where=mean_below & ~sig_95,
                 alpha=0.25,
                 color="lightgreen",
                 transform=ax_loss.get_xaxis_transform(),
-                label="CI lower ≤ GD < E[SGD]",
+                label=nosig_label,
             )
 
             ax_loss.set_yscale("log")
-            ax_loss.set_xlabel("Step")
-            ax_loss.set_ylabel("Test Loss")
+            ax_loss.set_xlabel("Training step")
+            ax_loss.set_ylabel("Test loss")
             ax_loss.legend(loc="upper right", fontsize=6)
 
-    fig.suptitle(
-        f"Loss Ratio & Comparison: γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}",
-        fontsize=12,
-        fontweight="bold",
-    )
-    fig.tight_layout()
-    return fig
-
-
-def plot_loss_spread(
-    stats: dict[tuple, ConfigStats], gamma: float, noise: float, batch_size: int
-) -> plt.Figure:
-    """
-    Plot min/max envelope of SGD runs vs GD.
-    3x2 grid: columns = widths, rows = model_seeds.
-    """
-    fig, axes = plt.subplots(
-        len(MODEL_SEEDS), len(WIDTHS), figsize=(5 * len(WIDTHS), 4 * len(MODEL_SEEDS))
-    )
-    axes = np.atleast_2d(axes)
-
-    for row, model_seed in enumerate(MODEL_SEEDS):
-        for col, width in enumerate(WIDTHS):
-            ax = axes[row, col]
-            key = (width, gamma, noise, model_seed, batch_size)
-
-            if key not in stats:
-                ax.set_title(f"w={width}, seed={model_seed}\n(no data)")
-                ax.set_xlabel("Step")
-                ax.set_ylabel("Test Loss")
-                continue
-
-            s = stats[key]
-
-            # Plot envelope
-            ax.fill_between(
-                s.steps,
-                s.sgd_min,
-                s.sgd_max,
-                alpha=0.3,
-                color="C1",
-                label=f"SGD min/max (n={s.n_runs})",
-            )
-            ax.plot(s.steps, s.sgd_mean, color="C1", linewidth=1.5, label="SGD mean")
-            ax.plot(s.steps, s.gd_loss, color="C0", linewidth=2, label="GD")
-
-            ax.set_yscale("log")
-            ax.set_xlabel("Step")
-            ax.set_ylabel("Test Loss")
-            ax.set_title(f"w={width}, seed={model_seed}")
-            ax.legend(loc="upper right", fontsize=8)
-
-    fig.suptitle(
-        f"Loss Spread: γ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}",
-        fontsize=12,
-        fontweight="bold",
-    )
+    if baseline_bs is not None:
+        suptitle = (
+            f"Test Loss: batch_size={batch_size} vs batch_size={baseline_bs} — {regime}\n"
+            f"γ={gamma} ({GAMMA_NAMES[gamma]}), σ_ε={noise}"
+        )
+    else:
+        suptitle = (
+            f"Test Loss: SGD vs GD — {regime}\n"
+            f"γ={gamma} ({GAMMA_NAMES[gamma]}), σ_ε={noise}, batch_size={batch_size}"
+        )
+    fig.suptitle(suptitle, fontsize=12, fontweight="bold")
     fig.tight_layout()
     return fig
 
@@ -441,10 +698,11 @@ def plot_loss_spread(
 def plot_loss_variance(
     stats: dict[tuple, ConfigStats], gamma: float, noise: float, batch_size: int
 ) -> plt.Figure:
-    """
-    Plot coefficient of variation (CV = std/mean) and loss with variance bands.
-    3x4 grid: columns = widths, rows = [seed0 CV, seed0 loss±std, seed1 CV, seed1 loss±std].
-    """
+    """Plot log-space standard deviation and test loss with spread bands."""
+    bl_label = _exp["baseline_label"]
+    regime = _exp["regime_label"]
+    baseline_bs = _exp["baseline_batch_size"]
+
     fig, axes = plt.subplots(
         len(MODEL_SEEDS) * 2,
         len(WIDTHS),
@@ -462,69 +720,83 @@ def plot_loss_variance(
             key = (width, gamma, noise, model_seed, batch_size)
 
             if key not in stats:
-                ax_cv.set_title(f"w={width}, seed={model_seed}\n(no data)")
-                ax_cv.set_xlabel("Step")
-                ax_cv.set_ylabel("CV")
-                ax_loss.set_xlabel("Step")
-                ax_loss.set_ylabel("Test Loss")
+                ax_cv.set_title(f"width={width}, model_seed={model_seed}\n(no data)")
+                ax_cv.set_xlabel("Training step")
+                ax_cv.set_ylabel(r"$\sigma(\log L)$")
+                ax_loss.set_xlabel("Training step")
+                ax_loss.set_ylabel("Test loss")
                 continue
 
             s = stats[key]
 
-            # Compute std and CV
-            sgd_std = np.sqrt(s.sgd_var)
-            cv = np.where(s.sgd_mean > 1e-12, sgd_std / s.sgd_mean, 0)
+            # Build per-config labels
+            if baseline_bs is not None:
+                bl_legend = (
+                    f"batch_size={baseline_bs} mean ({s.baseline_n} batch seeds)"
+                )
+                sgd_legend = f"batch_size={batch_size} mean ({s.n_runs} batch seeds)"
+                cv_legend = f"batch_size={batch_size} ({s.n_runs} batch seeds)"
+            else:
+                bl_legend = bl_label
+                sgd_legend = f"SGD mean ({s.n_runs} batch seeds)"
+                cv_legend = f"SGD ({s.n_runs} batch seeds)"
 
-            # === CV plot (top) ===
-            ax_cv.plot(s.steps, cv, color="C1", linewidth=1.5, label=f"n={s.n_runs}")
-            ax_cv.set_xlabel("Step")
-            ax_cv.set_ylabel("Std / Mean")
-            ax_cv.set_title(f"w={width}, seed={model_seed}")
+            ax_cv.plot(
+                s.steps, s.sgd_log_std, color="C1", linewidth=1.5, label=cv_legend
+            )
+            ax_cv.set_xlabel("Training step")
+            ax_cv.set_ylabel(r"$\sigma(\log L)$")
+            ax_cv.set_title(f"width={width}, model_seed={model_seed}")
             ax_cv.legend(loc="upper right", fontsize=7)
 
-            # === Loss with variance bands (bottom) ===
-            ax_loss.plot(s.steps, s.gd_loss, label="GD", color="C0", linewidth=1.5)
+            ax_loss.plot(
+                s.steps, s.baseline_loss, label=bl_legend, color="C0", linewidth=1.5
+            )
             ax_loss.plot(
                 s.steps,
                 s.sgd_mean,
-                label=f"SGD (n={s.n_runs})",
+                label=sgd_legend,
                 color="C1",
                 linewidth=1.5,
             )
 
-            # Variance band: mean ± std
-            sgd_lower_std = np.maximum(
-                s.sgd_mean - sgd_std, 1e-12
-            )  # Clip for log scale
-            sgd_upper_std = s.sgd_mean + sgd_std
+            spread_factor = np.exp(s.sgd_log_std)
+            spread_lower = s.sgd_mean / spread_factor
+            spread_upper = s.sgd_mean * spread_factor
             ax_loss.fill_between(
                 s.steps,
-                sgd_lower_std,
-                sgd_upper_std,
+                spread_lower,
+                spread_upper,
                 alpha=0.3,
                 color="C1",
-                label="±1 std",
+                label=r"mean $\times/\div\,$ exp($\sigma_{\log}$)",
             )
 
             ax_loss.set_yscale("log")
-            ax_loss.set_xlabel("Step")
-            ax_loss.set_ylabel("Test Loss")
+            ax_loss.set_xlabel("Training step")
+            ax_loss.set_ylabel("Test loss")
             ax_loss.legend(loc="upper right", fontsize=6)
 
-    fig.suptitle(
-        f"SGD Loss: Relative Std & Mean±Std\nγ={gamma} ({GAMMA_NAMES[gamma]}), noise={noise}, batch={batch_size}",
-        fontsize=12,
-        fontweight="bold",
-    )
+    if baseline_bs is not None:
+        suptitle = (
+            f"Test Loss Variability: batch_size={batch_size} vs batch_size={baseline_bs} — {regime}\n"
+            f"γ={gamma} ({GAMMA_NAMES[gamma]}), σ_ε={noise}"
+        )
+    else:
+        suptitle = (
+            f"SGD Test Loss Variability — {regime}\n"
+            f"γ={gamma} ({GAMMA_NAMES[gamma]}), σ_ε={noise}, batch_size={batch_size}"
+        )
+    fig.suptitle(suptitle, fontsize=12, fontweight="bold")
     fig.tight_layout()
     return fig
 
 
 def generate_all_plots(stats: dict[tuple, ConfigStats]) -> None:
-    """Generate all plots and save to FIGURES_PATH."""
-    FIGURES_PATH.mkdir(parents=True, exist_ok=True)
+    figures_path = _exp["figures_path"]
+    figures_path.mkdir(parents=True, exist_ok=True)
 
-    total = len(GAMMAS) * len(NOISE_LEVELS) * len(BATCH_SIZES) * 3  # 3 plot types
+    total = len(GAMMAS) * len(NOISE_LEVELS) * len(BATCH_SIZES) * 2
     completed = 0
 
     print(f"Generating {total} plots...")
@@ -532,7 +804,6 @@ def generate_all_plots(stats: dict[tuple, ConfigStats]) -> None:
     for gamma in GAMMAS:
         for noise in NOISE_LEVELS:
             for batch_size in BATCH_SIZES:
-                # Loss ratio (combined with shaded loss comparison)
                 fig = plot_loss_ratio(stats, gamma, noise, batch_size)
                 save_fig(fig, f"loss_ratio_g{gamma}_noise{noise}_b{batch_size}")
                 completed += 1
@@ -542,17 +813,6 @@ def generate_all_plots(stats: dict[tuple, ConfigStats]) -> None:
                     flush=True,
                 )
 
-                # Loss spread
-                fig = plot_loss_spread(stats, gamma, noise, batch_size)
-                save_fig(fig, f"loss_spread_g{gamma}_noise{noise}_b{batch_size}")
-                completed += 1
-                print(
-                    f"\r  Progress: {completed}/{total} ({100 * completed / total:.0f}%)",
-                    end="",
-                    flush=True,
-                )
-
-                # Loss variance
                 fig = plot_loss_variance(stats, gamma, noise, batch_size)
                 save_fig(fig, f"loss_variance_g{gamma}_noise{noise}_b{batch_size}")
                 completed += 1
@@ -562,42 +822,7 @@ def generate_all_plots(stats: dict[tuple, ConfigStats]) -> None:
                     flush=True,
                 )
 
-    print(f"\nAll plots saved to {FIGURES_PATH}/")
-
-
-# =============================================================================
-# Summary Statistics
-# =============================================================================
-
-
-def print_summary(stats: dict[tuple, ConfigStats]) -> None:
-    """Print summary of where GD outperforms SGD."""
-    print("\n" + "=" * 80)
-    print("Summary: % of steps where GD < E[SGD]")
-    print("=" * 80)
-
-    for noise in NOISE_LEVELS:
-        for batch_size in BATCH_SIZES:
-            print(f"\nNoise={noise}, Batch={batch_size}")
-            print("-" * 70)
-
-            header = "           "
-            for gamma in GAMMAS:
-                header += f"  γ={gamma:4}  "
-            print(header)
-
-            for width in WIDTHS:
-                for model_seed in MODEL_SEEDS:
-                    row = f"w={width:3}, s={model_seed}: "
-                    for gamma in GAMMAS:
-                        key = (width, gamma, noise, model_seed, batch_size)
-                        if key not in stats:
-                            row += "   N/A   "
-                        else:
-                            s = stats[key]
-                            pct = (s.gd_loss < s.sgd_mean).mean() * 100
-                            row += f"  {pct:5.1f}%  "
-                    print(row)
+    print(f"\nAll plots saved to {figures_path}/")
 
 
 # =============================================================================
@@ -607,6 +832,11 @@ def print_summary(stats: dict[tuple, ConfigStats]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Analyze GPH sweep results")
+    parser.add_argument(
+        "experiment",
+        choices=["offline", "online"],
+        help="Which experiment to analyze",
+    )
     parser.add_argument(
         "--recompute",
         action="store_true",
@@ -618,16 +848,15 @@ def main():
         default=N_WORKERS,
         help=f"Number of parallel workers (default: {N_WORKERS})",
     )
-    parser.add_argument(
-        "--summary", action="store_true", help="Print summary statistics"
-    )
     args = parser.parse_args()
 
-    stats = get_stats(force_recompute=args.recompute, n_workers=args.workers)
+    global _exp
+    _exp = EXPERIMENTS[args.experiment]
 
-    if args.summary:
-        print_summary(stats)
+    print(f"Experiment: {args.experiment}")
+    print(f"Data: {_exp['base_path']}")
 
+    stats = get_stats(_exp, force_recompute=args.recompute, n_workers=args.workers)
     generate_all_plots(stats)
 
     print("\nDone!")
