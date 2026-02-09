@@ -38,7 +38,7 @@ def to_device(
 
 
 def save_history(history: dict[str, list[Any]], output_dir: Path) -> None:
-    """Save training history as compressed numpy archive (atomic write)."""
+    """Save training history as numpy archive (atomic write)."""
     history_path = output_dir / "history.npz"
     tmp_path = output_dir / "history.tmp.npz"
     np.savez(tmp_path, **{k: np.array(v) for k, v in history.items()})
