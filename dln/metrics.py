@@ -6,10 +6,10 @@ Efficient computation of Tr(HΣ)
 ================================
 The Hessian-gradient covariance trace Tr(HΣ) measures the alignment between
 the curvature of the loss landscape and the gradient noise. Naively computing
-this requires forming H (P×P) and Σ (P×P), which is infeasible for large P.
+this requires forming H (PxP) and Σ (PxP), which is infeasible for large P.
 
 Instead, we exploit the outer-product structure of the covariance. Given
-per-sample gradients gᵢ, mean gradient ḡ, and noise vectors nᵢ = gᵢ − ḡ:
+per-sample gradients gᵢ, mean gradient ḡ, and noise vectors nᵢ = gᵢ- ḡ:
 
     Σ = (1/N) Σᵢ nᵢnᵢᵀ
 
