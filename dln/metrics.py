@@ -1,6 +1,28 @@
 """
 Model metrics: fn(model, inputs, targets, criterion) -> float | dict[str, float]
 Comparative metrics: fn(model_a, model_b) -> float
+
+Efficient computation of Tr(HΣ)
+================================
+The Hessian-gradient covariance trace Tr(HΣ) measures the alignment between
+the curvature of the loss landscape and the gradient noise. Naively computing
+this requires forming H (P×P) and Σ (P×P), which is infeasible for large P.
+
+Instead, we exploit the outer-product structure of the covariance. Given
+per-sample gradients gᵢ, mean gradient ḡ, and noise vectors nᵢ = gᵢ − ḡ:
+
+    Σ = (1/N) Σᵢ nᵢnᵢᵀ
+
+    Tr(HΣ) = Tr(H · (1/N) Σᵢ nᵢnᵢᵀ)
+            = (1/N) Σᵢ Tr(Hnᵢnᵢᵀ)
+            = (1/N) Σᵢ nᵢᵀHnᵢ           [cyclic property of trace]
+
+Each nᵢᵀHnᵢ requires only a Hessian-vector product Hnᵢ (computed via
+forward-over-reverse autodiff in O(P) time and memory) followed by a dot
+product with nᵢ. Neither H nor Σ is ever materialized.
+
+Cost: O(NP) time and memory, vs O(P²) memory and O(P³) compute for the
+naive approach. The same decomposition gives Tr(Σ) = (1/N) Σᵢ ||nᵢ||².
 """
 
 import torch as t
