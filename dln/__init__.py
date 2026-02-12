@@ -1,4 +1,4 @@
-from .results import RunResult, SweepResult
+from .results import RunResult
 from .data import Dataset, TrainLoader
 from .train import Trainer
 from .comparative import ComparativeTrainer

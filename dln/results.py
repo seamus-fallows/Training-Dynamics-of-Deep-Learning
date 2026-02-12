@@ -18,11 +18,6 @@ class RunResult:
         return self.history[metric][-1]
 
     def metric_names(self) -> list[str]:
-        """Return list of available metrics (excluding 'step')."""
         return [k for k in self.history.keys() if k != "step"]
 
 
-@dataclass
-class SweepResult:
-    runs: dict[str, RunResult]
-    sweep_param: str

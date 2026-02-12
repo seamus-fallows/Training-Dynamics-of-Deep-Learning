@@ -1,11 +1,39 @@
+import torch as t
+from torch import Tensor
 from omegaconf import DictConfig
 
 from .utils import resolve_device, to_device
-from .data import Dataset
-from .factory import create_trainer
+from .data import Dataset, TrainLoader
+from .model import DeepLinearNetwork
+from .train import Trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
 from .results import RunResult
+
+
+def create_trainer(
+    model_cfg: DictConfig,
+    training_cfg: DictConfig,
+    dataset: Dataset,
+    test_data: tuple[Tensor, Tensor],
+    device: t.device,
+) -> Trainer:
+    model = DeepLinearNetwork(model_cfg)
+
+    train_loader = TrainLoader(
+        dataset=dataset,
+        batch_size=training_cfg.batch_size,
+        batch_seed=training_cfg.batch_seed,
+        device=device,
+    )
+
+    return Trainer(
+        model=model,
+        training_cfg=training_cfg,
+        train_loader=train_loader,
+        test_data=test_data,
+        device=device,
+    )
 
 
 def run_experiment(

@@ -1,5 +1,5 @@
 experiment:
-  name: "gph"
+  name: "bench"
 
 model:
   in_dim: 5
@@ -11,7 +11,7 @@ model:
 
 training:
   lr: 0.0001
-  batch_size: 50
+  batch_size: null
   optimizer: "SGD"
   optimizer_params: null
   criterion: "MSELoss"
@@ -22,16 +22,14 @@ data:
   train_samples: 500
   test_samples: 500
   data_seed: 0
-  online: true
+  online: false
   noise_std: 0.0
   params:
     matrix: "diagonal"
     scale: 10.0
-    
-metrics:
-  # - trace_covariances:
-  #     chunks: 1
 
-max_steps: 10000
+metrics:
+
+max_steps: 5000
 num_evaluations: 250
 callbacks: []

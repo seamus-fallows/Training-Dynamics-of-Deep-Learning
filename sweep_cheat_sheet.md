@@ -61,21 +61,18 @@ python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 --device=cpu
 
 ## Output Control
 
-Default location: `outputs/{experiment_name}/{timestamp}_{sweep_params}/`
+Default location: `outputs/{experiment_name}/{timestamp}/`
+
+All results are stored in a single `results.parquet` file (one row per job).
 
 ```bash
 # Example
 python sweep.py -cn=gph training.batch_seed=0..10
-# → outputs/gph/2025-01-21_14-30-45_batch_seed/
+# → outputs/gph/2025-01-21_14-30-45/results.parquet
 
 # Custom output directory
 python sweep.py -cn=gph training.batch_seed=0..10 \
     --output=outputs/my_experiment
-
-# Custom subdirectory pattern
-python sweep.py -cn=gph training.batch_seed=0..10 model.gamma=0.75,1.0 \
-    --output=outputs/my_experiment \
-    --subdir='g{model.gamma}_s{training.batch_seed}'
 ```
 
 ## Resuming Failed Sweeps
@@ -84,6 +81,31 @@ python sweep.py -cn=gph training.batch_seed=0..10 model.gamma=0.75,1.0 \
 # Requires --output so path is stable; existing jobs are skipped by default
 python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 \
     --output=outputs/gph_study
+```
+
+## Selective Re-runs
+
+```bash
+# Re-run specific jobs from a completed sweep
+python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 \
+    --output=outputs/gph_study \
+    --rerun training.batch_seed=42..50
+
+# Re-run everything with a particular param value
+python sweep.py -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..100 \
+    --output=outputs/gph_study \
+    --rerun model.gamma=0.75
+```
+
+## Merging Sweeps
+
+```bash
+# Merge results from different machines
+python -m dln.results_io merge outputs/machine_a outputs/machine_b -o outputs/combined
+
+# Fixed override differences (e.g., gamma) are promoted to columns automatically
+# Overlapping runs are deduplicated (later inputs win by default)
+python -m dln.results_io merge dir_a dir_b dir_c -o outputs/merged --keep=last
 ```
 
 ## Error Handling

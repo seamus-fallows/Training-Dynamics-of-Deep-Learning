@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib.axes import Axes
 from scipy import stats
 
-from .results import RunResult, SweepResult
+from .results import RunResult
 
 
 # =============================================================================
@@ -14,7 +14,7 @@ from .results import RunResult, SweepResult
 def compute_ci(
     curves: list[np.ndarray] | list[list[float]], ci: float = 0.95
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Returns (mean, lower, upper) for confidence interval."""
+    """Returns (mean, lower, upper)."""
     curves = np.asarray(curves)
     n = len(curves)
     mean = curves.mean(axis=0)
@@ -79,7 +79,6 @@ def _plot_series(
 def plot(
     data: RunResult
     | list[RunResult]
-    | SweepResult
     | dict[str, RunResult | list[RunResult]],
     metric: str = "test_loss",
     ylabel: str | None = None,
@@ -88,7 +87,6 @@ def plot(
     log_scale: bool = True,
     title: str | None = None,
     legend_title: str | None = None,
-    average: bool | str = False,
     ax: Axes | None = None,
 ) -> Axes:
     """Plot training curves.
@@ -96,12 +94,7 @@ def plot(
     Accepts:
         - RunResult: single curve
         - list[RunResult]: averaged with CI
-        - SweepResult: each param value as separate curve (or averaged if average=True)
         - dict mapping labels to RunResult or list[RunResult]
-
-    Args:
-        average: For SweepResult only. If True or a string, combine all runs into
-            one curve with CI. String value becomes the label.
     """
     if ax is None:
         _, ax = plt.subplots()
@@ -109,12 +102,6 @@ def plot(
     # Normalize to dict[str, RunResult | list[RunResult]]
     if isinstance(data, RunResult):
         labeled_data = {None: data}
-    elif isinstance(data, SweepResult):
-        if average:
-            label = average if isinstance(average, str) else "averaged"
-            labeled_data = {label: list(data.runs.values())}
-        else:
-            labeled_data = data.runs
     elif isinstance(data, list):
         labeled_data = {None: data}
     else:
@@ -141,7 +128,7 @@ def plot(
 
 
 def plot_comparative(
-    runs: RunResult | SweepResult | dict[str, RunResult | list[RunResult]],
+    runs: RunResult | dict[str, RunResult | list[RunResult]],
     metric: str = "test_loss",
     suffixes: tuple[str, str] = ("A", "B"),
     ci: float = 0.95,
@@ -149,18 +136,11 @@ def plot_comparative(
     log_scale: bool = True,
     title: str | None = None,
     legend_title: str | None = None,
-    average: bool | str = False,
     ax: Axes | None = None,
 ) -> Axes:
     """Plot comparative training curves (model A vs B)."""
     if isinstance(runs, RunResult):
         runs = {None: runs}
-    elif isinstance(runs, SweepResult):
-        if average:
-            label = average if isinstance(average, str) else None
-            runs = {label: list(runs.runs.values())}
-        else:
-            runs = runs.runs
 
     if ax is None:
         _, ax = plt.subplots()

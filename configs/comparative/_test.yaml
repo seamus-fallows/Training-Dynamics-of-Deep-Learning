@@ -1,0 +1,44 @@
+experiment:
+  name: "test_comparative"
+
+shared:
+  model:
+    in_dim: 3
+    out_dim: 3
+    num_hidden: 1
+    hidden_dim: 5
+    gamma: 1.0
+    model_seed: 0
+  training:
+    lr: 0.01
+    batch_size: null
+    optimizer: "SGD"
+    optimizer_params: null
+    criterion: "MSELoss"
+    batch_seed: 0
+    track_train_loss: false
+
+model_a: {}
+model_b: {}
+
+training_a: {}
+training_b: {}
+
+data:
+  train_samples: 20
+  test_samples: 10
+  data_seed: 0
+  online: false
+  noise_std: 0.0
+  params:
+    matrix: "diagonal"
+    scale: 1.0
+
+max_steps: 10
+num_evaluations: 2
+metrics: []
+comparative_metrics:
+  - param_distance
+
+callbacks_a: []
+callbacks_b: []

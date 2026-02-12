@@ -19,37 +19,31 @@ Usage:
         --zip=model.gamma,max_steps \\
         --workers=40 \\
         --device=cuda \\
-        --output=outputs/my_experiment \\
-        --subdir='g{model.gamma}_s{training.batch_seed}'
+        --output=outputs/my_experiment
+
+    # Re-run specific jobs
+    python sweep.py -cn=gph training.batch_seed=0..100 --rerun training.batch_seed=42..50
 """
 
 import torch as t
 import argparse
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from pathlib import Path
 from typing import Any
-import tempfile
 import traceback
 
 from omegaconf import OmegaConf
 
 from dln.experiment import run_experiment, run_comparative_experiment
-from dln.utils import (
-    load_base_config,
-    resolve_config,
-    save_sweep_config,
-    save_overrides,
-    save_history,
-)
+from dln.utils import load_base_config, resolve_config, save_sweep_config
 from dln.overrides import (
     parse_overrides,
     split_overrides,
     expand_sweep_params,
     get_output_dir,
-    make_job_subdir,
-    check_subdir_uniqueness,
 )
+from dln.results_io import SweepWriter, NullWriter
 
 # Single-threaded BLAS: our matrix ops are too small for thread parallelism
 # to outweigh the wake/sync overhead. Also prevents thread contention in parallel sweeps.
@@ -114,14 +108,10 @@ def parse_args() -> argparse.Namespace:
         help="Output directory (default: outputs/{experiment_name}/{timestamp})",
     )
     parser.add_argument(
-        "--subdir",
-        default=None,
-        help="Subdirectory pattern, e.g., 'g{model.gamma}_s{training.batch_seed}'",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing results (default: skip existing)",
+        "--rerun",
+        nargs="*",
+        metavar="OVERRIDE",
+        help="Force re-run of matching jobs (same override syntax as positional args)",
     )
     parser.add_argument(
         "--fail-fast",
@@ -158,12 +148,11 @@ def _worker_init(resolved_base, config_dir, device):
     )
 
 
-def _worker_run_job(job_overrides, output_dir):
+def _worker_run_job(job_overrides):
     return run_single_job(
         _worker_state["resolved_base"],
         _worker_state["config_dir"],
         job_overrides,
-        output_dir,
         _worker_state["device"],
     )
 
@@ -177,13 +166,10 @@ def run_single_job(
     resolved_base: dict,
     config_dir: str,
     job_overrides: dict[str, Any],
-    output_dir: Path,
     device: str,
-) -> tuple[bool, str | None]:
-    """Run a single experiment job. Returns (success, error_message)."""
+) -> tuple[bool, dict | None, str | None]:
+    """Returns (success, history, error_message)."""
     try:
-        save_overrides(job_overrides, output_dir)
-
         cfg = resolve_config(resolved_base, config_dir, job_overrides)
 
         if config_dir == "comparative":
@@ -191,47 +177,34 @@ def run_single_job(
         else:
             result = run_experiment(cfg, device=device)
 
-        save_history(result.history, output_dir)
-        return True, None
+        return True, result.history, None
     except Exception:
-        return False, traceback.format_exc()
+        return False, None, traceback.format_exc()
 
 
 def run_jobs_sequential(
     resolved_base: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
-    output_dir: Path,
-    subdir_pattern: str | None,
-    skip_existing: bool,
+    writer: SweepWriter | NullWriter,
     fail_fast: bool,
     device: str,
-) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
-    """Run jobs sequentially. Returns (completed, skipped, failed, errors)."""
-
+) -> tuple[int, int, list[tuple[int, dict, str]]]:
+    """Returns (completed, failed, errors)."""
     completed = 0
-    skipped = 0
     failed = 0
     errors = []
 
     for i, job in enumerate(jobs):
-        subdir = make_job_subdir(job, subdir_pattern)
-        job_dir = output_dir / subdir if subdir else output_dir
-
-        if skip_existing and (job_dir / "history.npz").exists():
-            skipped += 1
-            continue
-
-        job_dir.mkdir(parents=True, exist_ok=True)
-
         if len(jobs) > 1:
-            print(f"[{i + 1}/{len(jobs)}] {subdir}")
+            print(f"[{i + 1}/{len(jobs)}]")
 
-        success, error = run_single_job(
-            resolved_base, config_dir, job, job_dir, device=device
+        success, history, error = run_single_job(
+            resolved_base, config_dir, job, device=device
         )
 
         if success:
+            writer.add(job, history)
             completed += 1
         else:
             failed += 1
@@ -240,42 +213,24 @@ def run_jobs_sequential(
             if fail_fast:
                 break
 
-    return completed, skipped, failed, errors
+    return completed, failed, errors
 
 
 def run_jobs_parallel(
     resolved_base: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
-    output_dir: Path,
-    subdir_pattern: str | None,
-    skip_existing: bool,
+    writer: SweepWriter | NullWriter,
     fail_fast: bool,
     num_workers: int,
     device: str,
-) -> tuple[int, int, int, list[tuple[int, dict, str]]]:
-    """Run jobs in parallel. Returns (completed, skipped, failed, errors)."""
+) -> tuple[int, int, list[tuple[int, dict, str]]]:
+    """Returns (completed, failed, errors)."""
     completed = 0
-    skipped = 0
     failed = 0
     errors = []
 
-    jobs_to_run = []
-    for i, job in enumerate(jobs):
-        subdir = make_job_subdir(job, subdir_pattern)
-        job_dir = output_dir / subdir if subdir else output_dir
-
-        if skip_existing and (job_dir / "history.npz").exists():
-            skipped += 1
-            continue
-
-        job_dir.mkdir(parents=True, exist_ok=True)
-        jobs_to_run.append((i, job, job_dir))
-
-    if not jobs_to_run:
-        return completed, skipped, failed, errors
-
-    total = len(jobs_to_run)
+    total = len(jobs)
     start_time = time.time()
 
     with ProcessPoolExecutor(
@@ -284,15 +239,16 @@ def run_jobs_parallel(
         initargs=(resolved_base, config_dir, device),
     ) as executor:
         futures = {}
-        for i, job, job_dir in jobs_to_run:
-            future = executor.submit(_worker_run_job, job, job_dir)
+        for i, job in enumerate(jobs):
+            future = executor.submit(_worker_run_job, job)
             futures[future] = (i, job)
 
         for future in as_completed(futures):
             i, job = futures[future]
-            success, error = future.result()
+            success, history, error = future.result()
 
             if success:
+                writer.add(job, history)
                 completed += 1
             else:
                 failed += 1
@@ -314,56 +270,46 @@ def run_jobs_parallel(
             )
 
     print()
-    return completed, skipped, failed, errors
+    return completed, failed, errors
 
 
 def run_sweep(
     resolved_base: dict,
     config_dir: str,
     jobs: list[dict[str, Any]],
-    output_dir: Path,
-    subdir_pattern: str | None,
-    skip_existing: bool,
+    writer: SweepWriter | NullWriter,
     fail_fast: bool,
     workers: int,
     device: str,
+    skipped: int = 0,
 ) -> None:
     start_time = time.time()
 
     print(f"Running {len(jobs)} jobs (workers={workers}, device={device})")
-    print(f"Output: {output_dir}")
+    if skipped:
+        print(f"Skipping {skipped} already-completed jobs")
     print()
 
-    if workers == 1:
-        completed, skipped, failed, errors = run_jobs_sequential(
-            resolved_base,
-            config_dir,
-            jobs,
-            output_dir,
-            subdir_pattern,
-            skip_existing,
-            fail_fast,
-            device,
+    if not jobs:
+        completed, failed, errors = 0, 0, []
+    elif workers == 1:
+        completed, failed, errors = run_jobs_sequential(
+            resolved_base, config_dir, jobs, writer, fail_fast, device,
         )
     else:
-        completed, skipped, failed, errors = run_jobs_parallel(
-            resolved_base,
-            config_dir,
-            jobs,
-            output_dir,
-            subdir_pattern,
-            skip_existing,
-            fail_fast,
-            workers,
-            device,
+        completed, failed, errors = run_jobs_parallel(
+            resolved_base, config_dir, jobs, writer, fail_fast, workers, device,
         )
+
+    writer.finalize()
 
     elapsed = time.time() - start_time
 
     print()
     print("=" * 50)
     print(f"Completed: {completed}")
-    print(f"Skipped:   {skipped}")
+    if skipped:
+        print(f"Skipped:   {skipped}")
     print(f"Failed:    {failed}")
     print(f"Time:      {_fmt_time(elapsed)}")
 
@@ -374,6 +320,77 @@ def run_sweep(
             print(f"  Job {i} {job}: {error}")
         if len(errors) > 10:
             print(f"  ... and {len(errors) - 10} more")
+
+
+# =============================================================================
+# Resume / Rerun Helpers
+# =============================================================================
+
+
+def _build_rerun_set(
+    rerun_args: list[str], param_keys: list[str], completed: set[tuple],
+) -> set[tuple]:
+    """Supports partial-key matching: ``--rerun model.gamma=0.75`` invalidates all
+    completed runs where model.gamma=0.75, regardless of other param values.
+    """
+    rerun_overrides = parse_overrides(rerun_args)
+    rerun_fixed, rerun_sweep_params = split_overrides(rerun_overrides)
+
+    # Warn if rerun keys don't overlap with sweep param keys
+    rerun_keys = set(rerun_sweep_params.keys()) | set(rerun_fixed.keys())
+    if rerun_keys and not rerun_keys & set(param_keys):
+        print(
+            f"Warning: --rerun keys {rerun_keys} don't overlap with sweep "
+            f"parameters {set(param_keys)}. No jobs will be re-run.",
+            file=sys.stderr,
+        )
+
+    # Treat fixed values as single-element sweeps for expansion
+    for k, v in rerun_fixed.items():
+        rerun_sweep_params[k] = [v]
+
+    rerun_jobs = expand_sweep_params(rerun_sweep_params)
+
+    # Build index mapping: which positions in param_keys are constrained by rerun
+    match_keys = [k for k in param_keys if k in rerun_keys]
+    if not match_keys:
+        return set()
+
+    match_indices = [param_keys.index(k) for k in match_keys]
+
+    # Collect the set of partial tuples (only constrained positions)
+    rerun_partials = {
+        tuple(job[k] for k in match_keys)
+        for job in rerun_jobs
+    }
+
+    # Match completed tuples by checking only the constrained positions
+    invalidated = set()
+    for ct in completed:
+        partial = tuple(ct[i] for i in match_indices)
+        if partial in rerun_partials:
+            invalidated.add(ct)
+    return invalidated
+
+
+def _filter_jobs(
+    jobs: list[dict[str, Any]],
+    param_keys: list[str],
+    completed: set[tuple],
+) -> tuple[list[dict[str, Any]], int]:
+    """Returns (jobs_to_run, skipped_count)."""
+    if not completed:
+        return jobs, 0
+
+    jobs_to_run = []
+    skipped = 0
+    for job in jobs:
+        key = tuple(job.get(k) for k in param_keys)
+        if key in completed:
+            skipped += 1
+        else:
+            jobs_to_run.append(job)
+    return jobs_to_run, skipped
 
 
 # =============================================================================
@@ -388,9 +405,7 @@ if __name__ == "__main__":
     fixed_overrides, sweep_overrides = split_overrides(overrides)
 
     jobs = expand_sweep_params(sweep_overrides, args.zip_groups)
-
-    subdir_pattern = args.subdir
-    check_subdir_uniqueness(jobs, subdir_pattern)
+    param_keys = list(sweep_overrides.keys())
 
     config_dir = "comparative" if args.comparative else "single"
     base_config = load_base_config(args.config_name, config_dir)
@@ -404,23 +419,29 @@ if __name__ == "__main__":
         output_dir = get_output_dir(experiment_name, args.output)
         output_dir.mkdir(parents=True, exist_ok=True)
         save_sweep_config(resolved_base, output_dir)
-        temp_dir_context = None
+        writer = SweepWriter(output_dir, param_keys)
     else:
-        temp_dir_context = tempfile.TemporaryDirectory()
-        output_dir = Path(temp_dir_context.name)
+        writer = NullWriter()
 
-    try:
-        run_sweep(
-            resolved_base=resolved_base,
-            config_dir=config_dir,
-            jobs=jobs,
-            output_dir=output_dir,
-            subdir_pattern=subdir_pattern,
-            skip_existing=not args.overwrite,
-            fail_fast=args.fail_fast,
-            workers=args.workers,
-            device=args.device,
-        )
-    finally:
-        if temp_dir_context is not None:
-            temp_dir_context.cleanup()
+    # Crash recovery: consolidate leftover parts from a previous interrupted run
+    writer.consolidate_parts()
+
+    # Build completed set and filter jobs
+    completed = writer.get_completed_params()
+
+    if args.rerun:
+        rerun_set = _build_rerun_set(args.rerun, param_keys, completed)
+        completed -= rerun_set
+
+    jobs_to_run, skipped = _filter_jobs(jobs, param_keys, completed)
+
+    run_sweep(
+        resolved_base=resolved_base,
+        config_dir=config_dir,
+        jobs=jobs_to_run,
+        writer=writer,
+        fail_fast=args.fail_fast,
+        workers=args.workers,
+        device=args.device,
+        skipped=skipped,
+    )

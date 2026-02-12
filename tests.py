@@ -1,4 +1,4 @@
-import json
+import polars as pl
 import pytest
 import yaml
 import torch as t
@@ -16,20 +16,19 @@ from dln.overrides import (
     parse_overrides,
     expand_sweep_params,
     split_overrides,
-    overrides_to_hash,
-    format_subdir,
-    check_subdir_uniqueness,
 )
 from dln.utils import (
     save_sweep_config,
-    load_history,
-    load_run,
-    load_sweep,
     resolve_config,
     load_base_config,
 )
+from dln.results_io import (
+    SweepWriter, NullWriter, load_sweep, load_sweep_config,
+    merge_sweeps, _flatten_config, _save_param_keys,
+)
+from dln.experiment import run_experiment, run_comparative_experiment
 import dln.metrics as metrics
-from sweep import run_single_job, run_sweep, run_jobs_sequential
+from sweep import run_single_job, run_sweep, run_jobs_sequential, _build_rerun_set
 
 
 # ============================================================================
@@ -331,33 +330,6 @@ class TestOverrides:
         assert not isinstance(fixed["metrics"], ListValue)
         assert sweep == {"model.gamma": [0.75, 1.0]}
 
-    def test_overrides_to_hash_deterministic(self):
-        overrides = {"training.batch_seed": 42, "model.gamma": 0.75}
-        h1 = overrides_to_hash(overrides)
-        h2 = overrides_to_hash(overrides)
-        assert h1 == h2
-        assert len(h1) == 12
-
-    def test_overrides_to_hash_different_inputs(self):
-        h1 = overrides_to_hash({"a": 1})
-        h2 = overrides_to_hash({"a": 2})
-        assert h1 != h2
-
-    def test_overrides_to_hash_order_independent(self):
-        h1 = overrides_to_hash({"a": 1, "b": 2})
-        h2 = overrides_to_hash({"b": 2, "a": 1})
-        assert h1 == h2
-
-    def test_format_subdir(self):
-        pattern = "g{model.gamma}_s{training.seed}"
-        result = format_subdir(pattern, {"model.gamma": 0.75, "training.seed": 42})
-        assert result == "g0.75_s42"
-
-    def test_check_subdir_uniqueness_raises_on_duplicate(self):
-        jobs = [{"a": 1, "b": 10}, {"a": 1, "b": 20}]
-        pattern = "a{a}"  # ignores b, so both map to "a1"
-        with pytest.raises(ValueError, match="Duplicate subdir"):
-            check_subdir_uniqueness(jobs, pattern)
 
 
 # ============================================================================
@@ -789,6 +761,90 @@ class TestComparativeTrainer:
 
         assert history["param_distance"][-1] > 1e-6
 
+    def test_asymmetric_model_configs(self):
+        """Models with different gamma values produce different loss curves."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        test_data = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=42, gamma=0.5),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=42, gamma=2.0),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+
+        comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
+        history = comp_trainer.run(
+            max_steps=50, num_evaluations=5, comparative_metrics=["param_distance"]
+        )
+
+        assert history["param_distance"][0] > 0
+        assert history["test_loss_a"] != history["test_loss_b"]
+
+    def test_per_model_metrics_suffixed(self):
+        """Per-model metrics are suffixed with _a and _b in the history."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        test_data = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+
+        comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
+        history = comp_trainer.run(
+            max_steps=20,
+            num_evaluations=2,
+            metrics=["weight_norm"],
+            comparative_metrics=["param_distance"],
+        )
+
+        assert "weight_norm_a" in history
+        assert "weight_norm_b" in history
+        assert "weight_norm" not in history
+        assert "param_distance" in history
+        assert history["weight_norm_a"] == history["weight_norm_b"]
+
+    def test_shared_test_data_required(self):
+        """ComparativeTrainer raises if trainers don't share test_data."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+
+        test_data_a = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+        test_data_b = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data_a,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data_b,
+        )
+
+        with pytest.raises(ValueError, match="same test_data"):
+            ComparativeTrainer(trainer_a, trainer_b)
+
 
 # ===========================================================================
 # Test Trainer
@@ -989,139 +1045,126 @@ def make_resolved_base(fixed_overrides=None):
     return OmegaConf.to_container(cfg, resolve=True)
 
 
+def run_job(resolved_base, job_overrides, device="cpu"):
+    """Run a single job and return (job_overrides, history)."""
+    cfg = resolve_config(resolved_base, "single", job_overrides)
+    result = run_experiment(cfg, device=device)
+    return job_overrides, result.history
+
+
+def make_fake_history(num_evaluations=3):
+    """Create a fake history dict for testing storage logic without running experiments."""
+    return {
+        "step": list(range(0, num_evaluations * 10, 10)),
+        "test_loss": [1.0 / (i + 1) for i in range(num_evaluations)],
+    }
+
+
 class TestSaveLoadPipeline:
-    def test_single_run_saves_all_artifacts(self, tmp_path):
+    def test_single_run_saves_artifacts(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
-        success, error = run_single_job(resolved, "single", {}, tmp_path, "cpu")
 
+        success, history, error = run_single_job(resolved, "single", {}, "cpu")
         assert success, f"Job failed: {error}"
+
+        writer = SweepWriter(tmp_path, param_keys=[])
+        writer.add({}, history)
+        writer.finalize()
+
         assert (tmp_path / "config.yaml").exists()
-        assert (tmp_path / "history.npz").exists()
-        assert (tmp_path / "overrides.json").exists()
+        assert (tmp_path / "results.parquet").exists()
 
-    def test_single_run_empty_overrides(self, tmp_path):
+    def test_single_run_history_keys(self, tmp_path):
         resolved = make_resolved_base()
-        run_single_job(resolved, "single", {}, tmp_path, "cpu")
-
-        with (tmp_path / "overrides.json").open() as f:
-            assert json.load(f) == {}
-
-    def test_history_contains_expected_keys(self, tmp_path):
-        resolved = make_resolved_base()
-        run_single_job(resolved, "single", {}, tmp_path, "cpu")
-
-        history = load_history(tmp_path)
+        success, history, _ = run_single_job(resolved, "single", {}, "cpu")
+        assert success
         assert "step" in history
         assert "test_loss" in history
         assert len(history["step"]) == 2
 
     def test_no_tmp_files_remain(self, tmp_path):
         resolved = make_resolved_base()
-        run_single_job(resolved, "single", {}, tmp_path, "cpu")
+        writer = SweepWriter(tmp_path, param_keys=[])
+        success, history, _ = run_single_job(resolved, "single", {}, "cpu")
+        writer.add({}, history)
+        writer.finalize()
 
-        assert list(tmp_path.glob("*.tmp*")) == []
+        assert list(tmp_path.rglob("*.tmp*")) == []
 
-    def test_sweep_creates_hashed_subdirs(self, tmp_path):
+    def test_sweep_stores_all_runs_in_parquet(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
 
         jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
-        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "single", jobs, writer, False, 1, "cpu")
 
-        for job in jobs:
-            job_dir = tmp_path / overrides_to_hash(job)
-            assert (job_dir / "history.npz").exists()
-            assert (job_dir / "overrides.json").exists()
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 2
+        assert "training.batch_seed" in df.columns
+        assert set(df["training.batch_seed"].to_list()) == {0, 1}
 
-    def test_sweep_custom_subdir_pattern(self, tmp_path):
+    def test_sweep_param_columns_contain_overrides(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
 
         jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
-        run_sweep(
-            resolved,
-            "single",
-            jobs,
-            tmp_path,
-            "seed{training.batch_seed}",
-            True,
-            False,
-            1,
-            "cpu",
-        )
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "single", jobs, writer, False, 1, "cpu")
 
-        assert (tmp_path / "seed0" / "history.npz").exists()
-        assert (tmp_path / "seed1" / "history.npz").exists()
-
-    def test_per_job_overrides_contain_only_sweep_params(self, tmp_path):
-        resolved = make_resolved_base()
-        save_sweep_config(resolved, tmp_path)
-
-        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
-        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
-
-        for job in jobs:
-            with (tmp_path / overrides_to_hash(job) / "overrides.json").open() as f:
-                assert json.load(f) == job
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        for seed in [0, 1]:
+            row = df.filter(pl.col("training.batch_seed") == seed)
+            assert len(row) == 1
+            assert len(row["test_loss"][0]) == 2
 
     def test_fixed_overrides_baked_into_config(self, tmp_path):
         resolved = make_resolved_base({"model.gamma": 0.75})
         save_sweep_config(resolved, tmp_path)
 
-        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
-        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
-
         with (tmp_path / "config.yaml").open() as f:
             config = yaml.safe_load(f)
         assert config["model"]["gamma"] == 0.75
 
-        for job in jobs:
-            with (tmp_path / overrides_to_hash(job) / "overrides.json").open() as f:
-                saved = json.load(f)
-            assert "model.gamma" not in saved
-            assert "gamma" not in saved
-
     def test_resume_skips_existing(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
 
         jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
-        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "single", jobs, writer, False, 1, "cpu")
 
-        completed, skipped, failed, errors = run_jobs_sequential(
-            resolved,
-            "single",
-            jobs,
-            tmp_path,
-            None,
-            True,
-            False,
-            "cpu",
+        writer2 = SweepWriter(tmp_path, param_keys=param_keys)
+        writer2.consolidate_parts()
+        completed = writer2.get_completed_params()
+        assert len(completed) == 2
+
+        completed2, failed, errors = run_jobs_sequential(
+            resolved, "single", [], writer2, False, "cpu",
         )
-        assert completed == 0
-        assert skipped == 2
+        assert completed2 == 0
         assert failed == 0
 
-    def test_overwrite_reruns_existing(self, tmp_path):
+    def test_rerun_replaces_results(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
 
-        jobs = [{"training.batch_seed": 0}]
-        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+        jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
+        writer1 = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "single", jobs, writer1, False, 1, "cpu")
 
-        completed, skipped, failed, errors = run_jobs_sequential(
-            resolved,
-            "single",
-            jobs,
-            tmp_path,
-            None,
-            False,
-            False,
-            "cpu",
-        )
-        assert completed == 1
-        assert skipped == 0
+        writer2 = SweepWriter(tmp_path, param_keys=param_keys)
+        writer2.consolidate_parts()
+        rerun_jobs = [{"training.batch_seed": 0}]
+        run_sweep(resolved, "single", rerun_jobs, writer2, False, 1, "cpu")
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 2  # deduplication keeps 2 rows
 
     def test_config_mismatch_raises(self, tmp_path):
         config_a = make_resolved_base({"model.gamma": 0.75})
@@ -1136,45 +1179,951 @@ class TestSaveLoadPipeline:
         save_sweep_config(config, tmp_path)
         save_sweep_config(config, tmp_path)
 
-    def test_load_run_single(self, tmp_path):
+    def test_load_sweep_returns_dataframe(self, tmp_path):
         resolved = make_resolved_base()
         save_sweep_config(resolved, tmp_path)
-        run_single_job(resolved, "single", {}, tmp_path, "cpu")
-
-        result = load_run(tmp_path)
-        assert "step" in result["history"]
-        assert "test_loss" in result["history"]
-        assert result["config"] is not None
-        assert result["overrides"] == {}
-
-    def test_load_run_finds_parent_config(self, tmp_path):
-        resolved = make_resolved_base()
-        save_sweep_config(resolved, tmp_path)
-
-        job = {"training.batch_seed": 0}
-        job_dir = tmp_path / overrides_to_hash(job)
-        job_dir.mkdir()
-        run_single_job(resolved, "single", job, job_dir, "cpu")
-
-        result = load_run(job_dir)
-        assert result["config"] is not None
-        assert result["overrides"] == job
-
-    def test_load_sweep_loads_all_runs(self, tmp_path):
-        resolved = make_resolved_base()
-        save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
 
         jobs = [{"training.batch_seed": 0}, {"training.batch_seed": 1}]
-        run_sweep(resolved, "single", jobs, tmp_path, None, True, False, 1, "cpu")
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "single", jobs, writer, False, 1, "cpu")
 
-        sweep = load_sweep(tmp_path)
-        assert sweep["config"] is not None
-        assert len(sweep["runs"]) == 2
+        df = load_sweep(tmp_path)
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) == 2
+        assert "step" in df.columns
+        assert "test_loss" in df.columns
 
-        subdirs = {r["subdir"] for r in sweep["runs"]}
+    def test_comparative_run_roundtrip(self, tmp_path):
+        """Comparative experiment results survive parquet storage roundtrip."""
+        base = load_base_config("_test", "comparative")
+        cfg = resolve_config(base, "comparative")
+        resolved = OmegaConf.to_container(cfg, resolve=True)
+
+        result = run_comparative_experiment(cfg, device="cpu")
+        history = result.history
+
+        assert "step" in history
+        assert "test_loss_a" in history
+        assert "test_loss_b" in history
+        assert "param_distance" in history
+
+        writer = SweepWriter(tmp_path, param_keys=[])
+        writer.add({}, history)
+        writer.finalize()
+
+        df = load_sweep(tmp_path)
+        assert len(df) == 1
+        assert "test_loss_a" in df.columns
+        assert "test_loss_b" in df.columns
+        assert "param_distance" in df.columns
+
+        row = df.row(0, named=True)
+        assert row["test_loss_a"] == history["test_loss_a"]
+        assert row["test_loss_b"] == history["test_loss_b"]
+        assert row["param_distance"] == history["param_distance"]
+        assert row["step"] == history["step"]
+
+    def test_comparative_sweep_stores_all_runs(self, tmp_path):
+        """Comparative sweep with param overrides produces correct parquet."""
+        base = load_base_config("_test", "comparative")
+        resolved = OmegaConf.to_container(
+            resolve_config(base, "comparative"), resolve=True
+        )
+        param_keys = ["shared.training.batch_seed"]
+
+        jobs = [
+            {"shared.training.batch_seed": 0},
+            {"shared.training.batch_seed": 1},
+        ]
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "comparative", jobs, writer, False, 1, "cpu")
+
+        df = load_sweep(tmp_path)
+        assert len(df) == 2
+        assert "shared.training.batch_seed" in df.columns
+        assert set(df["shared.training.batch_seed"].to_list()) == {0, 1}
+        for col in ["test_loss_a", "test_loss_b", "param_distance"]:
+            assert col in df.columns
+            for val in df[col].to_list():
+                assert len(val) == 2  # num_evaluations=2
+
+    def test_comparative_via_run_single_job(self, tmp_path):
+        """Comparative experiment works through run_single_job (the sweep.py path)."""
+        base = load_base_config("_test", "comparative")
+        resolved = OmegaConf.to_container(
+            resolve_config(base, "comparative"), resolve=True
+        )
+
+        success, history, error = run_single_job(
+            resolved, "comparative", {}, "cpu"
+        )
+        assert success, f"Job failed: {error}"
+        assert "test_loss_a" in history
+        assert "test_loss_b" in history
+        assert "param_distance" in history
+
+    def test_comparative_run_single_job_with_overrides(self, tmp_path):
+        """Comparative run_single_job applies overrides through config resolution."""
+        base = load_base_config("_test", "comparative")
+        resolved = OmegaConf.to_container(
+            resolve_config(base, "comparative"), resolve=True
+        )
+
+        success, history, error = run_single_job(
+            resolved, "comparative", {"model_b.gamma": 2.0}, "cpu"
+        )
+        assert success, f"Job failed: {error}"
+        assert history["test_loss_a"] != history["test_loss_b"]
+
+    def test_comparative_per_model_metrics_in_parquet(self, tmp_path):
+        """Per-model metrics survive storage roundtrip with correct suffixes."""
+        base = load_base_config("_test", "comparative")
+        base["metrics"] = ["weight_norm"]
+        resolved = OmegaConf.to_container(
+            resolve_config(base, "comparative"), resolve=True
+        )
+
+        success, history, error = run_single_job(
+            resolved, "comparative", {}, "cpu"
+        )
+        assert success, f"Job failed: {error}"
+
+        writer = SweepWriter(tmp_path, param_keys=[])
+        writer.add({}, history)
+        writer.finalize()
+
+        df = load_sweep(tmp_path)
+        assert "weight_norm_a" in df.columns
+        assert "weight_norm_b" in df.columns
+        assert isinstance(df["weight_norm_a"].dtype, pl.List)
+        assert isinstance(df["weight_norm_b"].dtype, pl.List)
+
+    def test_comparative_resume_skips_existing(self, tmp_path):
+        """Comparative sweep resumes correctly, skipping completed jobs."""
+        base = load_base_config("_test", "comparative")
+        resolved = OmegaConf.to_container(
+            resolve_config(base, "comparative"), resolve=True
+        )
+        param_keys = ["shared.training.batch_seed"]
+
+        jobs = [
+            {"shared.training.batch_seed": 0},
+            {"shared.training.batch_seed": 1},
+        ]
+        writer1 = SweepWriter(tmp_path, param_keys=param_keys)
+        run_sweep(resolved, "comparative", jobs, writer1, False, 1, "cpu")
+
+        writer2 = SweepWriter(tmp_path, param_keys=param_keys)
+        writer2.consolidate_parts()
+        completed = writer2.get_completed_params()
+        assert len(completed) == 2
+        assert (0,) in completed
+        assert (1,) in completed
+
+
+# ============================================================================
+# SweepWriter Unit Tests
+# ============================================================================
+
+
+class TestSweepWriterBasics:
+    def test_add_and_finalize_creates_parquet(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"])
+        writer.add({"seed": 0}, make_fake_history())
+        writer.finalize()
+
+        assert (tmp_path / "results.parquet").exists()
+        assert not (tmp_path / "_parts").exists()
+
+    def test_multiple_adds_single_parquet(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"])
+        for i in range(5):
+            writer.add({"seed": i}, make_fake_history())
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 5
+
+    def test_flush_creates_part_files(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"], flush_every=2)
+        for i in range(3):
+            writer.add({"seed": i}, make_fake_history())
+
+        # After 3 adds with flush_every=2, one flush should have occurred
+        parts = list((tmp_path / "_parts").glob("part_*.parquet"))
+        assert len(parts) == 1
+
+        assert len(writer.buffer) == 1
+
+    def test_finalize_consolidates_parts(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"], flush_every=2)
+        for i in range(5):
+            writer.add({"seed": i}, make_fake_history())
+        writer.finalize()
+
+        assert (tmp_path / "results.parquet").exists()
+        assert not (tmp_path / "_parts").exists()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 5
+
+    def test_no_tmp_files_remain_after_finalize(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"], flush_every=2)
+        for i in range(5):
+            writer.add({"seed": i}, make_fake_history())
+        writer.finalize()
+
+        tmp_files = list(tmp_path.rglob("*.tmp*"))
+        assert tmp_files == []
+
+    def test_empty_writer_finalize_is_noop(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"])
+        writer.finalize()
+        assert not (tmp_path / "results.parquet").exists()
+
+
+class TestSchema:
+    def test_scalar_param_columns(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["model.gamma", "training.batch_seed"])
+        writer.add(
+            {"model.gamma": 0.75, "training.batch_seed": 0},
+            make_fake_history(),
+        )
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert "model.gamma" in df.columns
+        assert "training.batch_seed" in df.columns
+        assert df["model.gamma"][0] == 0.75
+        assert df["training.batch_seed"][0] == 0
+
+    def test_metric_list_columns(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"])
+        history = {
+            "step": [0, 10, 20],
+            "test_loss": [1.0, 0.5, 0.25],
+            "weight_norm": [3.0, 2.5, 2.0],
+        }
+        writer.add({"seed": 0}, history)
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert df["test_loss"].dtype == pl.List(pl.Float64)
+        assert df["step"].dtype == pl.List(pl.Int64)
+        assert df["test_loss"][0].to_list() == [1.0, 0.5, 0.25]
+        assert df["step"][0].to_list() == [0, 10, 20]
+
+    def test_mixed_param_types(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["int_param", "float_param", "str_param"])
+        writer.add(
+            {"int_param": 42, "float_param": 0.75, "str_param": "SGD"},
+            make_fake_history(),
+        )
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert df["int_param"][0] == 42
+        assert df["float_param"][0] == 0.75
+        assert df["str_param"][0] == "SGD"
+
+    def test_no_params_single_job(self, tmp_path):
+        """Single job with no sweep parameters produces parquet with only metric columns."""
+        writer = SweepWriter(tmp_path, param_keys=[])
+        writer.add({}, make_fake_history())
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 1
+        assert "test_loss" in df.columns
+
+    def test_string_param_sweep(self, tmp_path):
+        """Non-numeric sweep params (e.g., optimizer names) store and resume correctly."""
+        param_keys = ["training.optimizer"]
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        for opt in ["SGD", "Adam", "AdamW"]:
+            writer.add({"training.optimizer": opt}, make_fake_history())
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert set(df["training.optimizer"].to_list()) == {"SGD", "Adam", "AdamW"}
+
+        writer2 = SweepWriter(tmp_path, param_keys=param_keys)
+        completed = writer2.get_completed_params()
+        assert completed == {("SGD",), ("Adam",), ("AdamW",)}
+
+
+class TestResumeStorage:
+    def test_get_completed_params_basic(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"])
+        writer.add({"seed": 0}, make_fake_history())
+        writer.add({"seed": 1}, make_fake_history())
+        writer.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["seed"])
+        completed = writer2.get_completed_params()
+        assert completed == {(0,), (1,)}
+
+    def test_get_completed_params_empty(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["seed"])
+        assert writer.get_completed_params() == set()
+
+    def test_get_completed_params_multi_key(self, tmp_path):
+        writer = SweepWriter(tmp_path, param_keys=["gamma", "seed"])
+        writer.add({"gamma": 0.75, "seed": 0}, make_fake_history())
+        writer.add({"gamma": 1.0, "seed": 1}, make_fake_history())
+        writer.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["gamma", "seed"])
+        completed = writer2.get_completed_params()
+        assert completed == {(0.75, 0), (1.0, 1)}
+
+    def test_get_completed_params_single_job(self, tmp_path):
+        """No sweep params: completed set is {()} when results exist."""
+        writer = SweepWriter(tmp_path, param_keys=[])
+        writer.add({}, make_fake_history())
+        writer.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=[])
+        assert writer2.get_completed_params() == {()}
+
+    def test_resume_appends_new_results(self, tmp_path):
+        """Second writer session adds new results alongside existing ones."""
+        writer1 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer1.add({"seed": 0}, make_fake_history())
+        writer1.add({"seed": 1}, make_fake_history())
+        writer1.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer2.consolidate_parts()
+        writer2.add({"seed": 2}, make_fake_history())
+        writer2.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 3
+        assert set(df["seed"].to_list()) == {0, 1, 2}
+
+
+class TestCrashRecovery:
+    def test_consolidate_leftover_parts(self, tmp_path):
+        """Simulate crash: flush parts but don't finalize, then recover."""
+        writer1 = SweepWriter(tmp_path, param_keys=["seed"], flush_every=2)
+        for i in range(4):
+            writer1.add({"seed": i}, make_fake_history())
+        writer1.flush()
+        # Don't finalize — simulate crash
+
+        assert (tmp_path / "_parts").exists()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer2.consolidate_parts()
+
+        assert (tmp_path / "results.parquet").exists()
+        assert not (tmp_path / "_parts").exists()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 4
+
+    def test_consolidate_parts_plus_existing_results(self, tmp_path):
+        """Crash recovery merges parts with existing results.parquet."""
+        writer1 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer1.add({"seed": 0}, make_fake_history())
+        writer1.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["seed"], flush_every=1)
+        writer2.add({"seed": 1}, make_fake_history())
+        writer2.flush()
+        # Don't finalize — simulate crash
+
+        writer3 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer3.consolidate_parts()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 2
+        assert set(df["seed"].to_list()) == {0, 1}
+
+
+class TestDeduplication:
+    def test_rerun_deduplicates_keeping_last(self, tmp_path):
+        """When a job is re-run, the new result replaces the old one."""
+        writer1 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer1.add({"seed": 0}, {"step": [0], "test_loss": [999.0]})
+        writer1.add({"seed": 1}, {"step": [0], "test_loss": [888.0]})
+        writer1.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["seed"])
+        writer2.consolidate_parts()
+        writer2.add({"seed": 0}, {"step": [0], "test_loss": [111.0]})
+        writer2.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 2
+
+        row_0 = df.filter(pl.col("seed") == 0)
+        assert row_0["test_loss"][0].to_list() == [111.0]
+
+        row_1 = df.filter(pl.col("seed") == 1)
+        assert row_1["test_loss"][0].to_list() == [888.0]
+
+    def test_dedup_multi_key(self, tmp_path):
+        writer1 = SweepWriter(tmp_path, param_keys=["gamma", "seed"])
+        writer1.add({"gamma": 0.75, "seed": 0}, {"step": [0], "test_loss": [1.0]})
+        writer1.add({"gamma": 0.75, "seed": 1}, {"step": [0], "test_loss": [2.0]})
+        writer1.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=["gamma", "seed"])
+        writer2.consolidate_parts()
+        writer2.add({"gamma": 0.75, "seed": 0}, {"step": [0], "test_loss": [0.5]})
+        writer2.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 2
+
+        row = df.filter((pl.col("gamma") == 0.75) & (pl.col("seed") == 0))
+        assert row["test_loss"][0].to_list() == [0.5]
+
+
+class TestNullWriter:
+    def test_null_writer_is_noop(self):
+        writer = NullWriter()
+        writer.add({"seed": 0}, make_fake_history())
+        writer.flush()
+        writer.finalize()
+        writer.consolidate_parts()
+        assert writer.get_completed_params() == set()
+
+
+# ============================================================================
+# Storage End-to-End Tests (with real experiments)
+# ============================================================================
+
+
+class TestStorageEndToEnd:
+    def test_single_run_roundtrip(self, tmp_path):
+        """Run one experiment, store in parquet, load back, verify data."""
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+
+        writer = SweepWriter(tmp_path, param_keys=[])
+        job_overrides, history = run_job(resolved, {})
+        writer.add(job_overrides, history)
+        writer.finalize()
+
+        df = load_sweep(tmp_path)
+        assert len(df) == 1
+        assert "test_loss" in df.columns
+        assert "step" in df.columns
+
+        stored_loss = df["test_loss"][0].to_list()
+        assert stored_loss == pytest.approx(history["test_loss"])
+
+    def test_sweep_roundtrip(self, tmp_path):
+        """Run a multi-job sweep, store, load, verify all data."""
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
+
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        jobs = [{"training.batch_seed": i} for i in range(3)]
+
         for job in jobs:
-            assert overrides_to_hash(job) in subdirs
+            _, history = run_job(resolved, job)
+            writer.add(job, history)
+        writer.finalize()
 
-        for run in sweep["runs"]:
-            assert "step" in run["history"]
-            assert "overrides" in run
+        df = load_sweep(tmp_path)
+        assert len(df) == 3
+        assert "training.batch_seed" in df.columns
+        assert set(df["training.batch_seed"].to_list()) == {0, 1, 2}
+
+        for row in df.iter_rows(named=True):
+            assert len(row["test_loss"]) == 2  # num_evaluations=2 in _test.yaml
+
+    def test_sweep_with_metrics(self, tmp_path):
+        """Sweep with extra metrics produces correct metric columns."""
+        resolved = make_resolved_base({"metrics": ["weight_norm"]})
+        save_sweep_config(resolved, tmp_path)
+
+        writer = SweepWriter(tmp_path, param_keys=["training.batch_seed"])
+        for seed in range(2):
+            _, history = run_job(resolved, {"training.batch_seed": seed})
+            writer.add({"training.batch_seed": seed}, history)
+        writer.finalize()
+
+        df = load_sweep(tmp_path)
+        assert "weight_norm" in df.columns
+        for row in df.iter_rows(named=True):
+            assert len(row["weight_norm"]) == 2
+            assert all(w > 0 for w in row["weight_norm"])
+
+    def test_resume_skips_completed(self, tmp_path):
+        """Second session detects completed jobs and skips them."""
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
+
+        writer1 = SweepWriter(tmp_path, param_keys=param_keys)
+        for seed in range(2):
+            _, history = run_job(resolved, {"training.batch_seed": seed})
+            writer1.add({"training.batch_seed": seed}, history)
+        writer1.finalize()
+
+        writer2 = SweepWriter(tmp_path, param_keys=param_keys)
+        writer2.consolidate_parts()
+        completed = writer2.get_completed_params()
+        assert completed == {(0,), (1,)}
+
+        all_jobs = [{"training.batch_seed": i} for i in range(4)]
+        jobs_to_run = [
+            j for j in all_jobs
+            if tuple(j[k] for k in param_keys) not in completed
+        ]
+        assert len(jobs_to_run) == 2
+        assert all(j["training.batch_seed"] in (2, 3) for j in jobs_to_run)
+
+        for job in jobs_to_run:
+            _, history = run_job(resolved, job)
+            writer2.add(job, history)
+        writer2.finalize()
+
+        df = load_sweep(tmp_path)
+        assert len(df) == 4
+
+    def test_load_sweep_config(self, tmp_path):
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+        config = load_sweep_config(tmp_path)
+        assert config == resolved
+
+    def test_load_sweep_consolidates_leftover_parts(self, tmp_path):
+        """load_sweep handles interrupted sweeps by consolidating parts."""
+        writer = SweepWriter(tmp_path, param_keys=["seed"], flush_every=1)
+        writer.add({"seed": 0}, make_fake_history())
+        writer.add({"seed": 1}, make_fake_history())
+        writer.flush()
+        # Don't finalize — simulate crash
+
+        df = load_sweep(tmp_path)
+        assert len(df) == 2
+
+    def test_many_jobs_flush_correctly(self, tmp_path):
+        """Stress test: many jobs with small flush interval."""
+        n_jobs = 50
+        writer = SweepWriter(tmp_path, param_keys=["seed"], flush_every=7)
+        for i in range(n_jobs):
+            writer.add({"seed": i}, make_fake_history())
+        writer.finalize()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == n_jobs
+        assert set(df["seed"].to_list()) == set(range(n_jobs))
+
+
+# ============================================================================
+# _build_rerun_set Tests
+# ============================================================================
+
+
+class TestBuildRerunSet:
+    def test_exact_match(self):
+        """Rerun with exact param values matches those completed tuples."""
+        completed = {(0,), (1,), (2,), (3,), (4,)}
+        param_keys = ["seed"]
+        result = _build_rerun_set(["seed=2,3"], param_keys, completed)
+        assert result == {(2,), (3,)}
+
+    def test_partial_key_match(self):
+        """Rerun with subset of keys matches all completed tuples with those values."""
+        completed = {
+            (0.75, 0), (0.75, 1), (0.75, 2),
+            (1.0, 0), (1.0, 1), (1.0, 2),
+        }
+        param_keys = ["gamma", "seed"]
+        result = _build_rerun_set(["gamma=0.75"], param_keys, completed)
+        assert result == {(0.75, 0), (0.75, 1), (0.75, 2)}
+
+    def test_multi_key_partial_match(self):
+        """Rerun matching on one of three sweep keys."""
+        completed = {
+            (0.75, 100, 0), (0.75, 100, 1),
+            (1.0, 200, 0), (1.0, 200, 1),
+        }
+        param_keys = ["gamma", "steps", "seed"]
+        result = _build_rerun_set(["seed=0"], param_keys, completed)
+        assert result == {(0.75, 100, 0), (1.0, 200, 0)}
+
+    def test_no_overlap_returns_empty(self):
+        """Rerun keys that don't overlap with param_keys match nothing."""
+        completed = {(0,), (1,)}
+        param_keys = ["seed"]
+        result = _build_rerun_set(["gamma=0.75"], param_keys, completed)
+        assert result == set()
+
+    def test_range_syntax(self):
+        """Rerun with range syntax works."""
+        completed = {(i,) for i in range(10)}
+        param_keys = ["seed"]
+        result = _build_rerun_set(["seed=3..6"], param_keys, completed)
+        assert result == {(3,), (4,), (5,)}
+
+    def test_empty_completed_returns_empty(self):
+        completed = set()
+        param_keys = ["seed"]
+        result = _build_rerun_set(["seed=0"], param_keys, completed)
+        assert result == set()
+
+    def test_full_key_match_multi_param(self):
+        """Rerun specifying all param keys produces exact matches."""
+        completed = {
+            (0.75, 0), (0.75, 1),
+            (1.0, 0), (1.0, 1),
+        }
+        param_keys = ["gamma", "seed"]
+        result = _build_rerun_set(["gamma=0.75", "seed=0"], param_keys, completed)
+        assert result == {(0.75, 0)}
+
+
+# ============================================================================
+# Sweep Integration Test
+# ============================================================================
+
+
+class TestRunSweepIntegration:
+    def test_run_sweep_produces_correct_parquet(self, tmp_path):
+        """run_sweep integration: dispatches jobs and produces correct parquet."""
+        resolved = make_resolved_base()
+        save_sweep_config(resolved, tmp_path)
+        param_keys = ["training.batch_seed"]
+
+        writer = SweepWriter(tmp_path, param_keys=param_keys)
+        jobs = [{"training.batch_seed": i} for i in range(4)]
+
+        # workers=1: parallel path (workers>1) uses fork which conflicts with
+        # torch autograd in the test process. Parallel execution is validated
+        # via CLI smoke tests instead.
+        run_sweep(
+            resolved_base=resolved,
+            config_dir="single",
+            jobs=jobs,
+            writer=writer,
+            fail_fast=True,
+            workers=1,
+            device="cpu",
+        )
+
+        df = load_sweep(tmp_path)
+        assert len(df) == 4
+        assert set(df["training.batch_seed"].to_list()) == set(range(4))
+
+        for row in df.iter_rows(named=True):
+            assert len(row["test_loss"]) == 2
+
+
+# ============================================================================
+# Merge Sweeps
+# ============================================================================
+
+
+def _make_sweep_dir(
+    base_dir,
+    name,
+    config,
+    param_keys,
+    rows,
+):
+    """Create a sweep directory with config.yaml, _param_keys.json, and results.parquet."""
+    d = base_dir / name
+    d.mkdir()
+    with (d / "config.yaml").open("w") as f:
+        yaml.safe_dump(config, f)
+    _save_param_keys(d, param_keys)
+    df = pl.DataFrame(rows)
+    df.write_parquet(d / "results.parquet")
+    return d
+
+
+BASE_CONFIG = {
+    "experiment": {"name": "test"},
+    "model": {"gamma": 1.0, "hidden_dim": 100},
+    "training": {"lr": 0.0001, "batch_size": 10},
+    "max_steps": 8000,
+}
+
+
+class TestMergeSweeps:
+    def test_disjoint_sweep_values(self, tmp_path):
+        """Two inputs with different batch_seed ranges merge cleanly."""
+        config = BASE_CONFIG
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
+            {"seed": 0, **history},
+            {"seed": 1, **history},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
+            {"seed": 2, **history},
+            {"seed": 3, **history},
+        ])
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out)
+
+        assert len(result) == 4
+        assert set(result["seed"].to_list()) == {0, 1, 2, 3}
+        assert (out / "results.parquet").exists()
+        assert (out / "_param_keys.json").exists()
+        assert (out / "config.yaml").exists()
+
+    def test_fixed_override_difference_promoted(self, tmp_path):
+        """Differing fixed overrides (gamma) get promoted to columns."""
+        config_a = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.0}}
+        config_b = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.5}}
+        # Use different history data so we can verify provenance
+        history_a = {"step": [0, 10], "test_loss": [1.0, 0.5]}
+        history_b = {"step": [0, 10], "test_loss": [2.0, 1.5]}
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config_a, ["seed"], [
+            {"seed": 0, **history_a},
+            {"seed": 1, **history_a},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config_b, ["seed"], [
+            {"seed": 0, **history_b},
+            {"seed": 1, **history_b},
+        ])
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out)
+
+        assert "model.gamma" in result.columns
+        assert len(result) == 4
+
+        # Verify the promoted gamma values are correctly associated with their source
+        gamma_1 = result.filter(pl.col("model.gamma") == 1.0)
+        gamma_15 = result.filter(pl.col("model.gamma") == 1.5)
+        assert len(gamma_1) == 2
+        assert len(gamma_15) == 2
+        assert gamma_1["test_loss"][0].to_list() == [1.0, 0.5]  # from dir_a
+        assert gamma_15["test_loss"][0].to_list() == [2.0, 1.5]  # from dir_b
+
+    def test_overlapping_runs_dedup_last(self, tmp_path):
+        """Overlapping runs are deduplicated, keeping last input's values."""
+        config = BASE_CONFIG
+        history_a = {"step": [0, 10], "test_loss": [1.0, 0.9]}
+        history_b = {"step": [0, 10], "test_loss": [1.0, 0.1]}  # different loss
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
+            {"seed": 0, **history_a},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
+            {"seed": 0, **history_b},
+        ])
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out, keep="last")
+
+        assert len(result) == 1
+        assert result["test_loss"][0].to_list() == [1.0, 0.1]  # from dir_b
+
+    def test_overlapping_runs_dedup_first(self, tmp_path):
+        """keep='first' keeps the earlier input's values."""
+        config = BASE_CONFIG
+        history_a = {"step": [0, 10], "test_loss": [1.0, 0.9]}
+        history_b = {"step": [0, 10], "test_loss": [1.0, 0.1]}
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
+            {"seed": 0, **history_a},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
+            {"seed": 0, **history_b},
+        ])
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out, keep="first")
+
+        assert len(result) == 1
+        assert result["test_loss"][0].to_list() == [1.0, 0.9]  # from dir_a
+
+    def test_missing_scalar_column_resolved_from_config(self, tmp_path):
+        """Sweep param in one input but not other resolved from config.yaml."""
+        config = BASE_CONFIG
+        history = make_fake_history()
+
+        # dir_a swept hidden_dim, dir_b did not (fixed at 100 in config)
+        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed", "model.hidden_dim"], [
+            {"seed": 0, "model.hidden_dim": 50, **history},
+            {"seed": 0, "model.hidden_dim": 100, **history},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
+            {"seed": 1, **history},
+        ])
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out)
+
+        assert "model.hidden_dim" in result.columns
+        assert len(result) == 3
+
+        # dir_b's row should have hidden_dim=100 from config
+        seed1 = result.filter(pl.col("seed") == 1)
+        assert seed1["model.hidden_dim"][0] == 100
+
+    def test_metric_column_mismatch_errors(self, tmp_path):
+        """Different metric columns (list columns) raise ValueError."""
+        config = BASE_CONFIG
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
+            {"seed": 0, "step": [0, 10], "test_loss": [1.0, 0.5]},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
+            {"seed": 1, "step": [0, 10], "test_loss": [1.0, 0.5], "weight_norm": [3.0, 2.5]},
+        ])
+
+        out = tmp_path / "merged"
+        with pytest.raises(ValueError, match="Metric column mismatch"):
+            merge_sweeps([dir_a, dir_b], out)
+
+    def test_multiple_config_diffs_promoted(self, tmp_path):
+        """Multiple config differences (gamma + max_steps) all become columns."""
+        config_a = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.0}, "max_steps": 8000}
+        config_b = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.5}, "max_steps": 26000}
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config_a, ["seed"], [
+            {"seed": 0, **history},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config_b, ["seed"], [
+            {"seed": 1, **history},
+        ])
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out)
+
+        assert "model.gamma" in result.columns
+        assert "max_steps" in result.columns
+        assert len(result) == 2
+
+        row_a = result.filter(pl.col("seed") == 0)
+        assert row_a["model.gamma"][0] == 1.0
+        assert row_a["max_steps"][0] == 8000
+
+        row_b = result.filter(pl.col("seed") == 1)
+        assert row_b["model.gamma"][0] == 1.5
+        assert row_b["max_steps"][0] == 26000
+
+    def test_param_keys_merged_correctly(self, tmp_path):
+        """Merged _param_keys.json includes original + promoted keys."""
+        config_a = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.0}}
+        config_b = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.5}}
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config_a, ["seed"], [
+            {"seed": 0, **history},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config_b, ["seed"], [
+            {"seed": 1, **history},
+        ])
+
+        out = tmp_path / "merged"
+        merge_sweeps([dir_a, dir_b], out)
+
+        import json
+        with (out / "_param_keys.json").open() as f:
+            merged_keys = json.load(f)
+        assert "seed" in merged_keys
+        assert "model.gamma" in merged_keys
+
+    def test_three_inputs(self, tmp_path):
+        """Merging three inputs works."""
+        gammas = [0.75, 1.0, 1.5]
+        configs = [
+            {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": g}}
+            for g in gammas
+        ]
+
+        dirs = []
+        for i, config in enumerate(configs):
+            # Use unique seeds per input so rows are distinguishable
+            history = make_fake_history()
+            d = _make_sweep_dir(tmp_path, f"dir_{i}", config, ["seed"], [
+                {"seed": i * 10, **history},
+                {"seed": i * 10 + 1, **history},
+            ])
+            dirs.append(d)
+
+        out = tmp_path / "merged"
+        result = merge_sweeps(dirs, out)
+
+        assert len(result) == 6
+        assert set(result["model.gamma"].to_list()) == {0.75, 1.0, 1.5}
+
+        # Verify correct gamma assigned to each input's rows
+        for i, gamma in enumerate(gammas):
+            rows = result.filter(pl.col("seed") == i * 10)
+            assert rows["model.gamma"][0] == gamma
+
+    def test_missing_results_parquet_errors(self, tmp_path):
+        """Missing results.parquet raises FileNotFoundError."""
+        dir_a = tmp_path / "a"
+        dir_a.mkdir()
+        (dir_a / "config.yaml").write_text("experiment: {name: test}\n")
+
+        dir_b = tmp_path / "b"
+        dir_b.mkdir()
+        (dir_b / "config.yaml").write_text("experiment: {name: test}\n")
+
+        with pytest.raises(FileNotFoundError, match="results.parquet"):
+            merge_sweeps([dir_a, dir_b], tmp_path / "merged")
+
+    def test_fewer_than_two_inputs_errors(self, tmp_path):
+        """Need at least 2 inputs."""
+        with pytest.raises(ValueError, match="at least 2"):
+            merge_sweeps([tmp_path], tmp_path / "merged")
+
+    def test_load_sweep_on_merged_output(self, tmp_path):
+        """Merged output is loadable via load_sweep."""
+        config = BASE_CONFIG
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
+            {"seed": 0, **history},
+        ])
+        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
+            {"seed": 1, **history},
+        ])
+
+        out = tmp_path / "merged"
+        merge_sweeps([dir_a, dir_b], out)
+
+        # load_sweep should work on the merged output
+        df = load_sweep(out)
+        assert len(df) == 2
+
+
+class TestFlattenConfig:
+    def test_simple(self):
+        assert _flatten_config({"a": 1, "b": 2}) == {"a": 1, "b": 2}
+
+    def test_nested(self):
+        result = _flatten_config({"model": {"gamma": 1.0, "hidden_dim": 100}})
+        assert result == {"model.gamma": 1.0, "model.hidden_dim": 100}
+
+    def test_deeply_nested(self):
+        result = _flatten_config({"a": {"b": {"c": 42}}})
+        assert result == {"a.b.c": 42}
+
+    def test_mixed_leaves_and_dicts(self):
+        result = _flatten_config({"x": 1, "y": {"z": 2}})
+        assert result == {"x": 1, "y.z": 2}
+
+    def test_list_values_are_leaves(self):
+        """List config values (e.g. callbacks) are kept as leaves, not recursed into."""
+        result = _flatten_config({
+            "callbacks": [{"lr_decay": {"step": 5000}}],
+            "metrics": ["weight_norm"],
+            "model": {"gamma": 1.0},
+        })
+        assert result == {
+            "callbacks": [{"lr_decay": {"step": 5000}}],
+            "metrics": ["weight_norm"],
+            "model.gamma": 1.0,
+        }

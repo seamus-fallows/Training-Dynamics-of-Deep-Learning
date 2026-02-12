@@ -2,23 +2,22 @@
 GPH Sweep Analysis
 
 Analyzes results from GPH experiment sweeps (offline or online) with:
-- Parallel data loading across CPU cores
+- Fast parquet-based data loading
 - Caching of computed statistics for fast plot iteration
 - Two plot types: loss ratio with significance testing, loss variability with spread bands
 """
 
 import argparse
-import hashlib
-import json
-import os
 import pickle
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
+import polars as pl
 from scipy import stats as scipy_stats
+
+from dln.results_io import load_sweep
 
 
 # =============================================================================
@@ -33,9 +32,6 @@ BATCH_SIZES = [1, 2, 5, 10, 50]
 
 GAMMA_MAX_STEPS = {0.75: 5000, 1.0: 8000, 1.5: 26000}
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
-
-N_WORKERS = os.cpu_count()
-MAX_BATCH_SEED = 10000
 
 EXPERIMENTS = {
     "offline": {
@@ -60,7 +56,7 @@ EXPERIMENTS = {
     },
 }
 
-# Set in main() and worker_init()
+# Set in main() for plotting functions
 _exp = None
 
 
@@ -69,111 +65,34 @@ _exp = None
 # =============================================================================
 
 
-def _overrides_to_hash(overrides: dict) -> str:
-    """Deterministic 12-char hex hash from override values (matches sweep.py)."""
-    key = json.dumps(overrides, sort_keys=True, default=str)
-    return hashlib.sha256(key.encode()).hexdigest()[:12]
-
-
-def _make_overrides(**kwargs) -> dict:
-    """Build overrides dict with sweep.py key names."""
-    key_map = {
-        "gamma": "model.gamma",
-        "max_steps": "max_steps",
-        "model_seed": "model.model_seed",
-        "noise": "data.noise_std",
-        "hidden_dim": "model.hidden_dim",
-        "batch_seed": "training.batch_seed",
-        "batch_size": "training.batch_size",
-    }
-    return {key_map[k]: v for k, v in kwargs.items()}
-
-
-def _run_dir(subdir: str, overrides: dict) -> Path:
-    return _exp["base_path"] / subdir / _overrides_to_hash(overrides)
-
-
-def _load_test_loss(path: Path) -> np.ndarray | None:
-    """Load only test_loss from history.npz."""
-    history_file = path / "history.npz"
-    if not history_file.exists():
-        return None
-    try:
-        with np.load(history_file) as data:
-            return data["test_loss"]
-    except Exception:
-        return None
-
-
-def _load_steps_and_loss(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
-    """Load step and test_loss from history.npz."""
-    history_file = path / "history.npz"
-    if not history_file.exists():
-        return None
-    try:
-        with np.load(history_file) as data:
-            return data["step"], data["test_loss"]
-    except Exception:
-        return None
-
-
 def _load_baseline(
-    width: int, gamma: float, noise: float, model_seed: int
+    df: pl.DataFrame, width: int, gamma: float, noise: float, model_seed: int
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, int] | None:
-    """Load baseline loss curve.
-
-    Offline (full_batch): single deterministic GD run.
-        Returns (steps, loss, None, 1).
-    Online (large_batch): Welford mean+variance over all batch seeds.
-        Returns (steps, mean, var, n).
+    """Offline (full_batch): returns (steps, loss, None, 1).
+    Online (large_batch): returns (steps, mean, var, n).
     """
-    max_steps = GAMMA_MAX_STEPS[gamma]
-    subdir = _exp["baseline_subdir"]
+    rows = df.filter(
+        (pl.col("model.gamma") == gamma)
+        & (pl.col("model.hidden_dim") == width)
+        & (pl.col("model.model_seed") == model_seed)
+        & (pl.col("data.noise_std") == noise)
+    )
 
-    if subdir == "full_batch":
-        overrides = _make_overrides(
-            gamma=gamma,
-            max_steps=max_steps,
-            model_seed=model_seed,
-            noise=noise,
-            hidden_dim=width,
-        )
-        result = _load_steps_and_loss(_run_dir(subdir, overrides))
-        if result is None:
-            return None
-        steps, loss = result
+    if len(rows) == 0:
+        return None
+
+    steps = np.array(rows["step"][0])
+
+    if len(rows) == 1:
+        loss = np.array(rows["test_loss"][0])
         return steps, loss, None, 1
-    else:
-        n = 0
-        mean = None
-        m2 = None
-        steps = None
-        for batch_seed in range(MAX_BATCH_SEED):
-            overrides = _make_overrides(
-                gamma=gamma,
-                max_steps=max_steps,
-                model_seed=model_seed,
-                noise=noise,
-                hidden_dim=width,
-                batch_seed=batch_seed,
-            )
-            result = _load_steps_and_loss(_run_dir(subdir, overrides))
-            if result is None:
-                continue
-            s, loss = result
-            n += 1
-            if mean is None:
-                steps = s
-                mean = loss.astype(np.float64)
-                m2 = np.zeros_like(mean)
-            else:
-                delta = loss - mean
-                mean += delta / n
-                m2 += delta * (loss - mean)
-        if n == 0 or steps is None:
-            return None
-        var = m2 / (n - 1) if n > 1 else np.zeros_like(mean)
-        return steps, mean, var, n
+
+    # Multiple runs: compute mean and variance
+    curves = np.array(rows["test_loss"].to_list())
+    n = len(curves)
+    mean = curves.mean(axis=0)
+    var = curves.var(axis=0, ddof=1) if n > 1 else np.zeros_like(mean)
+    return steps, mean, var, n
 
 
 @dataclass
@@ -190,12 +109,13 @@ class ConfigStats:
     sgd_min: np.ndarray
     sgd_max: np.ndarray
     sgd_var: np.ndarray
-    sgd_log_mean: np.ndarray  # Welford mean of log(loss)
+    sgd_log_mean: np.ndarray  # mean of log(loss)
     sgd_log_std: np.ndarray  # std of log(loss), for log-space spread bands
     n_runs: int
 
 
 def _compute_sgd_stats(
+    df: pl.DataFrame,
     width: int,
     gamma: float,
     noise: float,
@@ -206,61 +126,30 @@ def _compute_sgd_stats(
     baseline_var: np.ndarray | None,
     baseline_n: int,
 ) -> ConfigStats | None:
-    """Compute SGD statistics using Welford's online algorithm.
+    """Vectorized mean, variance, CI, and log-space statistics over batch seeds."""
+    rows = df.filter(
+        (pl.col("model.gamma") == gamma)
+        & (pl.col("model.hidden_dim") == width)
+        & (pl.col("model.model_seed") == model_seed)
+        & (pl.col("data.noise_std") == noise)
+        & (pl.col("training.batch_size") == batch_size)
+    )
 
-    Uses O(steps) memory instead of O(n_runs * steps) by computing
-    mean, variance, min, max incrementally.
-    """
-    max_steps = GAMMA_MAX_STEPS[gamma]
-    subdir = _exp["sgd_subdir"]
-
-    n = 0
-    mean = None
-    m2 = None
-    log_mean = None
-    log_m2 = None
-    min_vals = None
-    max_vals = None
-
-    for batch_seed in range(MAX_BATCH_SEED):
-        overrides = _make_overrides(
-            gamma=gamma,
-            max_steps=max_steps,
-            model_seed=model_seed,
-            noise=noise,
-            hidden_dim=width,
-            batch_seed=batch_seed,
-            batch_size=batch_size,
-        )
-        loss = _load_test_loss(_run_dir(subdir, overrides))
-        if loss is None:
-            continue
-
-        n += 1
-        log_loss = np.log(np.maximum(loss, 1e-300))
-        if mean is None:
-            mean = loss.astype(np.float64)
-            m2 = np.zeros_like(mean)
-            log_mean = log_loss.astype(np.float64)
-            log_m2 = np.zeros_like(log_mean)
-            min_vals = loss.copy()
-            max_vals = loss.copy()
-        else:
-            delta = loss - mean
-            mean += delta / n
-            m2 += delta * (loss - mean)
-            log_delta = log_loss - log_mean
-            log_mean += log_delta / n
-            log_m2 += log_delta * (log_loss - log_mean)
-            np.minimum(min_vals, loss, out=min_vals)
-            np.maximum(max_vals, loss, out=max_vals)
-
-    if n == 0:
+    if len(rows) == 0:
         return None
 
-    var = m2 / (n - 1) if n > 1 else np.zeros_like(mean)
-    log_var = log_m2 / (n - 1) if n > 1 else np.zeros_like(log_mean)
+    curves = np.array(rows["test_loss"].to_list())
+    n = len(curves)
+    log_curves = np.log(np.maximum(curves, 1e-300))
+
+    mean = curves.mean(axis=0)
+    var = curves.var(axis=0, ddof=1) if n > 1 else np.zeros_like(mean)
+    log_mean = log_curves.mean(axis=0)
+    log_var = log_curves.var(axis=0, ddof=1) if n > 1 else np.zeros_like(log_mean)
     log_std = np.sqrt(log_var)
+    min_vals = curves.min(axis=0)
+    max_vals = curves.max(axis=0)
+
     sem = np.sqrt(var / n)
     t_val = scipy_stats.t.ppf(0.975, df=n - 1) if n > 1 else 0.0
 
@@ -281,80 +170,38 @@ def _compute_sgd_stats(
     )
 
 
-# =============================================================================
-# Parallel Computation
-# =============================================================================
+def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
+    base_path = exp_config["base_path"]
 
-
-def _worker_init(exp_config):
-    global _exp
-    _exp = exp_config
-
-
-def _baseline_wrapper(args):
-    width, gamma, noise, model_seed = args
-    return args, _load_baseline(width, gamma, noise, model_seed)
-
-
-def _sgd_wrapper(args):
-    (
-        config_key,
-        width,
-        gamma,
-        noise,
-        model_seed,
-        batch_size,
-        bl_steps,
-        bl_loss,
-        bl_var,
-        bl_n,
-    ) = args
-    result = _compute_sgd_stats(
-        width, gamma, noise, model_seed, batch_size, bl_steps, bl_loss, bl_var, bl_n
-    )
-    return config_key, result
-
-
-def compute_all_stats(
-    exp_config: dict, n_workers: int = N_WORKERS
-) -> dict[tuple, ConfigStats]:
-    global _exp
-    _exp = exp_config
+    print("Loading data...")
+    baseline_df = load_sweep(base_path / exp_config["baseline_subdir"])
+    sgd_df = load_sweep(base_path / exp_config["sgd_subdir"])
+    print(f"  Baseline: {len(baseline_df)} runs, SGD: {len(sgd_df)} runs")
 
     # Phase 1: Compute baselines
-    baseline_configs = [
-        (width, gamma, noise, model_seed)
-        for gamma in GAMMAS
-        for noise in NOISE_LEVELS
-        for width in WIDTHS
-        for model_seed in MODEL_SEEDS
-    ]
-
-    print(f"Loading baselines ({len(baseline_configs)} configs)...")
+    print("Computing baselines...")
     baselines = {}
+    for gamma in GAMMAS:
+        for noise in NOISE_LEVELS:
+            for width in WIDTHS:
+                for model_seed in MODEL_SEEDS:
+                    result = _load_baseline(
+                        baseline_df, width, gamma, noise, model_seed
+                    )
+                    if result is not None:
+                        baselines[(width, gamma, noise, model_seed)] = result
 
-    with ProcessPoolExecutor(
-        max_workers=n_workers, initializer=_worker_init, initargs=(exp_config,)
-    ) as executor:
-        futures = {
-            executor.submit(_baseline_wrapper, cfg): cfg for cfg in baseline_configs
-        }
-        done = 0
-        for future in as_completed(futures):
-            cfg, result = future.result()
-            if result is not None:
-                baselines[cfg] = result
-            done += 1
-            print(
-                f"\r  Baselines: {done}/{len(baseline_configs)}",
-                end="",
-                flush=True,
-            )
-
-    print(f"\n  Loaded {len(baselines)}/{len(baseline_configs)} baselines")
+    total_baselines = len(GAMMAS) * len(NOISE_LEVELS) * len(WIDTHS) * len(MODEL_SEEDS)
+    print(f"  Loaded {len(baselines)}/{total_baselines} baselines")
 
     # Phase 2: Compute SGD stats
-    sgd_args = []
+    total = (
+        len(GAMMAS) * len(NOISE_LEVELS) * len(BATCH_SIZES) * len(WIDTHS) * len(MODEL_SEEDS)
+    )
+    print(f"Computing SGD statistics ({total} configs)...")
+    stats = {}
+    done = 0
+
     for gamma in GAMMAS:
         for noise in NOISE_LEVELS:
             for batch_size in BATCH_SIZES:
@@ -362,42 +209,30 @@ def compute_all_stats(
                     for model_seed in MODEL_SEEDS:
                         bl_key = (width, gamma, noise, model_seed)
                         if bl_key not in baselines:
+                            done += 1
                             continue
                         bl_steps, bl_loss, bl_var, bl_n = baselines[bl_key]
                         config_key = (width, gamma, noise, model_seed, batch_size)
-                        sgd_args.append(
-                            (
-                                config_key,
-                                width,
-                                gamma,
-                                noise,
-                                model_seed,
-                                batch_size,
-                                bl_steps,
-                                bl_loss,
-                                bl_var,
-                                bl_n,
-                            )
+                        result = _compute_sgd_stats(
+                            sgd_df,
+                            width,
+                            gamma,
+                            noise,
+                            model_seed,
+                            batch_size,
+                            bl_steps,
+                            bl_loss,
+                            bl_var,
+                            bl_n,
                         )
-
-    print(f"Computing SGD statistics ({len(sgd_args)} configs)...")
-    stats = {}
-
-    with ProcessPoolExecutor(
-        max_workers=n_workers, initializer=_worker_init, initargs=(exp_config,)
-    ) as executor:
-        futures = {executor.submit(_sgd_wrapper, cfg): cfg for cfg in sgd_args}
-        done = 0
-        for future in as_completed(futures):
-            config_key, result = future.result()
-            if result is not None:
-                stats[config_key] = result
-            done += 1
-            print(
-                f"\r  SGD stats: {done}/{len(sgd_args)} ({100 * done / len(sgd_args):.0f}%)",
-                end="",
-                flush=True,
-            )
+                        if result is not None:
+                            stats[config_key] = result
+                        done += 1
+                        print(
+                            f"\r  SGD stats: {done}/{total} ({100 * done / total:.0f}%)",
+                            end="",
+                            flush=True,
+                        )
 
     print(f"\n  Computed {len(stats)} configurations")
     return stats
@@ -445,7 +280,7 @@ def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
 
 
 def get_stats(
-    exp_config: dict, force_recompute: bool = False, n_workers: int = N_WORKERS
+    exp_config: dict, force_recompute: bool = False
 ) -> dict[tuple, ConfigStats]:
     cache_path = exp_config["cache_path"]
     if not force_recompute:
@@ -454,7 +289,7 @@ def get_stats(
             print(f"Loaded {len(stats)} configurations from cache")
             return stats
 
-    stats = compute_all_stats(exp_config, n_workers=n_workers)
+    stats = compute_all_stats(exp_config)
     save_cache(stats, cache_path)
     return stats
 
@@ -489,15 +324,11 @@ def _welch_t_crit(se_a: np.ndarray, n_a: int, se_b: np.ndarray, n_b: int) -> np.
 
 
 def _significance_masks(s: ConfigStats) -> tuple[np.ndarray, np.ndarray]:
-    """Compute where baseline is below SGD, with and without significance.
+    """Returns (sig_95, mean_below).
 
-    Returns (sig_95, mean_below) where:
-    - sig_95: E[baseline] < E[SGD] at 95% confidence (Welch's t-test)
-    - mean_below: baseline_mean < sgd_mean (point estimate only)
-
-    For deterministic baselines (offline), this reduces to the one-sample
-    test against the SGD CI. For stochastic baselines (online), uses
-    Welch's two-sample t-test on the difference.
+    For deterministic baselines (offline), reduces to a one-sample test
+    against the SGD CI. For stochastic baselines (online), uses Welch's
+    two-sample t-test on the difference.
     """
     mean_below = s.baseline_loss < s.sgd_mean
 
@@ -520,9 +351,7 @@ def _significance_masks(s: ConfigStats) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _ratio_ci(s: ConfigStats) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute SGD/baseline ratio with 95% CI.
-
-    For deterministic baselines: divides SGD CI bounds by the constant.
+    """For deterministic baselines: divides SGD CI bounds by the constant.
     For stochastic baselines: delta method for the ratio of two means.
     """
     ratio = s.sgd_mean / s.baseline_loss
@@ -549,7 +378,7 @@ def _ratio_ci(s: ConfigStats) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def plot_loss_ratio(
     stats: dict[tuple, ConfigStats], gamma: float, noise: float, batch_size: int
 ) -> plt.Figure:
-    """Plot SGD/baseline loss ratio with 95% CI and significance shading."""
+    """Ratio with 95% CI and significance shading."""
     bl_label = _exp["baseline_label"]
     regime = _exp["regime_label"]
     baseline_bs = _exp["baseline_batch_size"]
@@ -698,7 +527,7 @@ def plot_loss_ratio(
 def plot_loss_variance(
     stats: dict[tuple, ConfigStats], gamma: float, noise: float, batch_size: int
 ) -> plt.Figure:
-    """Plot log-space standard deviation and test loss with spread bands."""
+    """Log-space standard deviation and test loss with spread bands."""
     bl_label = _exp["baseline_label"]
     regime = _exp["regime_label"]
     baseline_bs = _exp["baseline_batch_size"]
@@ -842,12 +671,6 @@ def main():
         action="store_true",
         help="Force recompute statistics (ignore cache)",
     )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=N_WORKERS,
-        help=f"Number of parallel workers (default: {N_WORKERS})",
-    )
     args = parser.parse_args()
 
     global _exp
@@ -856,7 +679,7 @@ def main():
     print(f"Experiment: {args.experiment}")
     print(f"Data: {_exp['base_path']}")
 
-    stats = get_stats(_exp, force_recompute=args.recompute, n_workers=args.workers)
+    stats = get_stats(_exp, force_recompute=args.recompute)
     generate_all_plots(stats)
 
     print("\nDone!")

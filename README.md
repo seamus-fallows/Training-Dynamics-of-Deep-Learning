@@ -26,13 +26,13 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
   * `train.py`: `Trainer` class and training loop.
   * `comparative.py`: `ComparativeTrainer` for lockstep training of two models.
   * `callbacks.py`: Callback system for mid-training interventions.
-  * `results.py`: `RunResult` and `SweepResult` dataclasses.
+  * `results.py`: `RunResult` dataclass.
   * `metrics.py`: Model and comparative metrics.
-  * `factory.py`: Creates a Trainer from configs.
+  * `results_io.py`: Parquet-based sweep storage (`SweepWriter`, `load_sweep`).
   * `overrides.py`: CLI parsing and sweep expansion utilities.
   * `plotting.py`: Visualization functions.
   * `experiment.py`: Core experiment execution.
-  * `utils.py`: Utilities (device selection, history saving/loading, config resolution).
+  * `utils.py`: Utilities (device selection, config resolution).
 * **`configs/`**: YAML configuration files.
 
 ## Usage
@@ -68,8 +68,9 @@ python sweep.py -cn=diagonal_teacher training.lr=0.001,0.01 model.num_hidden=2,3
 # Run sweep with 40 parallel workers
 python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 
-# Overwrite already-completed jobs (default is to skip them)
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40 --overwrite
+# Re-run specific jobs (default is to skip already-completed jobs)
+python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40 \
+    --rerun training.batch_seed=42..50
 ```
 
 #### Covarying Parameters (Zip Groups)
@@ -89,44 +90,65 @@ python sweep.py -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000 --zi
 ```bash
 # Custom output directory
 python sweep.py -cn=diagonal_teacher --output=outputs/my_experiment
+```
 
-# Custom subdirectory pattern
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..10 \
-    --subdir='seed{training.batch_seed}'
+#### Selective Re-runs
+
+```bash
+# Re-run specific jobs from a completed sweep
+python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 \
+    --output=outputs/my_experiment \
+    --rerun training.batch_seed=42..50
+
+# Re-run all jobs with a particular parameter value
+python sweep.py -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..100 \
+    --output=outputs/gph_study \
+    --rerun model.gamma=0.75
+```
+
+#### Merging Sweeps from Different Machines
+
+```bash
+# Merge sweep results split across machines
+python -m dln.results_io merge outputs/machine_a outputs/machine_b -o outputs/combined
+
+# Differing fixed overrides (e.g., gamma) are automatically promoted to columns
+# Overlapping runs are deduplicated (last input wins by default)
+python -m dln.results_io merge outputs/gamma_1 outputs/gamma_15 -o outputs/combined --keep=last
 ```
 
 ### Loading Results
 
 ```python
 from pathlib import Path
-from dln.utils import load_run, load_sweep, load_history
+from dln.results_io import load_sweep
 
-# Load a single run
-result = load_run(Path("outputs/my_experiment/seed0"))
-history = result["history"]  # dict of numpy arrays
-config = result["config"]    # dict (or None if no config.yaml)
+# Load all results from a sweep as a Polars DataFrame
+df = load_sweep(Path("outputs/my_experiment"))
 
-# Load all results from a sweep directory
-sweep = load_sweep(Path("outputs/my_experiment"))
-for r in sweep["runs"]:
-    print(r["subdir"], r["overrides"], r["history"]["test_loss"][-1])
+# Each row is one run; scalar columns are sweep params, list columns are metric curves
+print(df.columns)  # e.g. ['training.batch_seed', 'step', 'test_loss', 'weight_norm']
 
-# Load just the history from a single job
-history = load_history(Path("outputs/my_experiment/seed0"))
+# Filter and extract
+subset = df.filter(df["training.batch_seed"] < 10)
+final_losses = [row[-1] for row in subset["test_loss"].to_list()]
 ```
 
 ### Plotting
 
 ```python
 from dln.plotting import plot, plot_comparative
-from dln.results import RunResult, SweepResult
+from dln.results import RunResult
 
 # Plot from a RunResult
 result = RunResult(history=history, config=config)
 plot(result)
 
-# Plot with averaging and confidence intervals
-plot(sweep_result, average="SGD")
+# Plot multiple runs with CI
+plot([result1, result2, result3])
+
+# Plot labeled groups
+plot({"SGD": sgd_results, "GD": gd_results})
 ```
 
 ## Configuration
@@ -225,28 +247,18 @@ Override individual values: `model_b.model_seed=999`
 
 ## Outputs
 
-### Single Run
+All results are stored as a single Parquet file per sweep, with periodic part-file flushing for crash resilience.
 
 ```
 outputs/experiment_name/timestamp/
-  config.yaml       # Base configuration
-  history.npz       # Training metrics (numpy archive)
-  overrides.json    # Parameter overrides (empty for defaults)
-  plots.png         # Auto-generated plots (if enabled)
+  config.yaml          # Base configuration (saved once)
+  results.parquet      # All runs — one row per job
+  _param_keys.json     # Sweep parameter names (for resume/dedup)
 ```
 
-### Sweep
-
-```
-outputs/my_sweep/
-  config.yaml       # Base configuration (saved once)
-  seed0/
-    history.npz     # Training metrics
-    overrides.json  # Per-job parameter overrides
-  seed1/
-    history.npz
-    overrides.json
-```
+Each row in `results.parquet` contains:
+- **Scalar columns**: sweep parameter values (e.g., `training.batch_seed`, `model.gamma`)
+- **List columns**: metric curves (e.g., `step`, `test_loss`, `weight_norm`)
 
 ## Extending the Codebase
 

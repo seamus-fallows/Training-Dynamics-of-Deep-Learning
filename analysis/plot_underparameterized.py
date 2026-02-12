@@ -9,15 +9,12 @@ Three figures, each with 3x3 grid (gamma x hidden_dim):
 Each panel shows all seeds as separate lines.
 """
 
-import re
 from pathlib import Path
 from collections import defaultdict
 
-import numpy as np
 import matplotlib.pyplot as plt
 
-from dln.utils import load_run
-from dln.results import RunResult
+from dln.results_io import load_sweep
 
 
 # =============================================================================
@@ -48,53 +45,27 @@ SEED_COLORS = plt.cm.tab10.colors
 # =============================================================================
 
 
-def parse_subdir_name(name: str) -> dict:
-    """Parse parameter values from subdirectory name."""
-    params = {}
-
-    gamma_match = re.search(r"gamma([\d.]+)", name)
-    if gamma_match:
-        params["gamma"] = float(gamma_match.group(1))
-
-    hidden_match = re.search(r"hidden_dim(\d+)", name)
-    if hidden_match:
-        params["hidden_dim"] = int(hidden_match.group(1))
-
-    seed_match = re.search(r"model_seed(\d+)", name)
-    if seed_match:
-        params["model_seed"] = int(seed_match.group(1))
-
-    return params
-
-
-def load_all_results(base_path: Path) -> dict[tuple, list[tuple[int, RunResult]]]:
-    """
-    Load all results from the sweep directory.
-
-    Returns:
-        dict mapping (gamma, hidden_dim) -> list of (model_seed, RunResult) tuples
-    """
+def load_all_results(sweep_dir: Path) -> dict[tuple, list[tuple[int, dict]]]:
     results = defaultdict(list)
 
-    if not base_path.exists():
-        print(f"Warning: {base_path} does not exist")
+    if not (sweep_dir / "results.parquet").exists():
+        print(f"Warning: {sweep_dir / 'results.parquet'} does not exist")
         return results
 
-    for subdir in sorted(base_path.iterdir()):
-        if not subdir.is_dir() or not (subdir / "history.json").exists():
-            continue
+    df = load_sweep(sweep_dir)
 
-        params = parse_subdir_name(subdir.name)
-        gamma = params.get("gamma")
-        hidden_dim = params.get("hidden_dim")
-        model_seed = params.get("model_seed")
+    # Identify list columns (metric curves) vs scalar columns (params)
+    list_cols = [c for c in df.columns if df[c].dtype == df["step"].dtype]
 
-        if gamma is None or hidden_dim is None or model_seed is None:
-            continue
+    for row in df.iter_rows(named=True):
+        gamma = row["model.gamma"]
+        hidden_dim = row["model.hidden_dim"]
+        model_seed = row["model.model_seed"]
 
-        result = load_run(subdir)
+        history = {col: row[col] for col in list_cols}
+
         key = (gamma, hidden_dim)
-        results[key].append((model_seed, result))
+        results[key].append((model_seed, history))
 
     # Sort by model_seed within each group
     for key in results:
@@ -108,19 +79,19 @@ def load_all_results(base_path: Path) -> dict[tuple, list[tuple[int, RunResult]]
 # =============================================================================
 
 
-def plot_panel(ax, data_list: list[tuple[int, RunResult]], title: str):
-    """Plot train loss for a single (gamma, hidden_dim) panel. Each seed is a separate line."""
+def plot_panel(ax, data_list: list[tuple[int, dict]], title: str):
+    """Each seed is a separate line."""
     if not data_list:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(title)
         return
 
-    for model_seed, result in data_list:
+    for model_seed, history in data_list:
         color = SEED_COLORS[model_seed % len(SEED_COLORS)]
-        steps = result["step"]
+        steps = history["step"]
 
-        if "train_loss" in result:
-            ax.plot(steps, result["train_loss"], color=color, linewidth=1.2)
+        if "train_loss" in history:
+            ax.plot(steps, history["train_loss"], color=color, linewidth=1.2)
 
     ax.set_yscale("log")
     ax.set_xlabel("Step")
@@ -130,7 +101,7 @@ def plot_panel(ax, data_list: list[tuple[int, RunResult]], title: str):
 
 
 def plot_figure(results: dict, hidden_dims: list[int], suptitle: str) -> plt.Figure:
-    """Create a 3x3 grid: rows = gamma, columns = hidden_dim."""
+    """Rows = gamma, columns = hidden_dim."""
     fig, axes = plt.subplots(
         len(GAMMAS), len(hidden_dims), figsize=(4 * len(hidden_dims), 3.5 * len(GAMMAS))
     )

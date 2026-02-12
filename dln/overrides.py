@@ -2,8 +2,6 @@
 Override parsing and sweep expansion utilities.
 """
 
-import hashlib
-import json
 import re
 from datetime import datetime
 from itertools import product
@@ -191,54 +189,3 @@ def get_output_dir(experiment_name: str, output_arg: str | None) -> Path:
         return Path(output_arg)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return Path("outputs") / experiment_name / timestamp
-
-
-def overrides_to_hash(overrides: dict[str, Any]) -> str:
-    """Deterministic 12-char hex hash from override values."""
-    key = json.dumps(overrides, sort_keys=True, default=str)
-    return hashlib.sha256(key.encode()).hexdigest()[:12]
-
-
-def format_subdir(pattern: str, overrides: dict[str, Any]) -> str:
-    result = pattern
-    for key, value in overrides.items():
-        placeholder = "{" + key + "}"
-        if placeholder in result:
-            result = result.replace(
-                placeholder, "null" if value is None else str(value)
-            )
-    unmatched = re.findall(r"\{[^}]+\}", result)
-    if unmatched:
-        raise ValueError(f"Unmatched placeholders in subdir pattern: {unmatched}")
-    return result
-
-
-def make_job_subdir(
-    job_overrides: dict[str, Any],
-    subdir_pattern: str | None,
-) -> str:
-    if subdir_pattern:
-        return format_subdir(subdir_pattern, job_overrides)
-    if not job_overrides:
-        return ""
-    return overrides_to_hash(job_overrides)
-
-
-def check_subdir_uniqueness(
-    jobs: list[dict[str, Any]], subdir_pattern: str | None
-) -> None:
-    if len(jobs) <= 1:
-        return
-
-    subdirs = {}
-    for i, job in enumerate(jobs):
-        subdir = make_job_subdir(job, subdir_pattern)
-        if subdir in subdirs:
-            prev_job = subdirs[subdir]
-            raise ValueError(
-                f"Duplicate subdir '{subdir}' for jobs:\n"
-                f"  Job {prev_job[0]}: {prev_job[1]}\n"
-                f"  Job {i}: {job}\n"
-                f"Add more parameters to --subdir pattern to make unique."
-            )
-        subdirs[subdir] = (i, job)
