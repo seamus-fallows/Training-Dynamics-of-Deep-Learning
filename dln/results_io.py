@@ -37,8 +37,7 @@ def _consolidate(
     if param_keys:
         # Add explicit row order so "last" is well-defined after dedup
         combined = (
-            combined
-            .with_row_index("_order")
+            combined.with_row_index("_order")
             .sort("_order")
             .unique(subset=param_keys, keep="last")
             .drop("_order")
@@ -59,9 +58,7 @@ class SweepWriter:
     At sweep end, all parts are consolidated into a single results.parquet.
     """
 
-    def __init__(
-        self, output_dir: Path, param_keys: list[str], flush_every: int = 100
-    ):
+    def __init__(self, output_dir: Path, param_keys: list[str], flush_every: int = 100):
         self.output_dir = output_dir
         self.parts_dir = output_dir / "_parts"
         self.results_path = output_dir / "results.parquet"
@@ -97,11 +94,7 @@ class SweepWriter:
             df = pl.scan_parquet(self.results_path).select(pl.first()).collect()
             return {()} if len(df) > 0 else set()
 
-        df = (
-            pl.scan_parquet(self.results_path)
-            .select(self.param_keys)
-            .collect()
-        )
+        df = pl.scan_parquet(self.results_path).select(self.param_keys).collect()
         return {tuple(row) for row in df.iter_rows()}
 
     def add(self, job_overrides: dict[str, Any], history: dict[str, Any]) -> None:
@@ -209,9 +202,7 @@ def _get_nested(d: dict, dotted_key: str) -> Any:
     return current
 
 
-def merge_sweeps(
-    inputs: list[Path], output: Path, keep: str = "last"
-) -> pl.DataFrame:
+def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.DataFrame:
     """Handles three cases:
 
     - Fixed override differences: promoted to columns automatically.
@@ -323,16 +314,13 @@ def merge_sweeps(
             seen.add(col)
 
     # Step 6: Align column order across frames, concat, and dedup
-    all_columns = list(dict.fromkeys(
-        col for df in frames for col in df.columns
-    ))
+    all_columns = list(dict.fromkeys(col for df in frames for col in df.columns))
     frames = [df.select(all_columns) for df in frames]
     combined = pl.concat(frames, how="vertical_relaxed")
 
     if merged_param_keys:
         combined = (
-            combined
-            .with_row_index("_order")
+            combined.with_row_index("_order")
             .sort("_order")
             .unique(subset=merged_param_keys, keep=keep)
             .drop("_order")
@@ -361,15 +349,22 @@ if __name__ == "__main__":
         "merge", help="Merge multiple sweep directories"
     )
     merge_parser.add_argument(
-        "inputs", nargs="+", type=Path,
+        "inputs",
+        nargs="+",
+        type=Path,
         help="Sweep directories to merge",
     )
     merge_parser.add_argument(
-        "-o", "--output", required=True, type=Path,
+        "-o",
+        "--output",
+        required=True,
+        type=Path,
         help="Output directory for merged results",
     )
     merge_parser.add_argument(
-        "--keep", choices=["first", "last"], default="last",
+        "--keep",
+        choices=["first", "last"],
+        default="last",
         help="Dedup strategy for overlapping runs (default: last)",
     )
 
