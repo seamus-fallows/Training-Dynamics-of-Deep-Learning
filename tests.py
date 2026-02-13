@@ -1542,6 +1542,26 @@ class TestCrashRecovery:
         assert len(df) == 2
         assert set(df["seed"].to_list()) == {0, 1}
 
+    def test_consolidate_mismatched_column_order(self, tmp_path):
+        """Parts written with different column ordering than results.parquet."""
+        # Write results.parquet with columns in one order
+        df1 = pl.DataFrame({"gamma": [1.0], "seed": [0], "step": [[0]], "test_loss": [[0.5]]})
+        df1.write_parquet(tmp_path / "results.parquet")
+        _save_param_keys(tmp_path, ["gamma", "seed"])
+
+        # Write a part file with columns in a different order
+        parts_dir = tmp_path / "_parts"
+        parts_dir.mkdir()
+        df2 = pl.DataFrame({"seed": [1], "gamma": [1.0], "step": [[0]], "test_loss": [[0.9]]})
+        df2.write_parquet(parts_dir / "part_000000.parquet")
+
+        writer = SweepWriter(tmp_path, param_keys=["gamma", "seed"])
+        writer.consolidate_parts()
+
+        df = pl.read_parquet(tmp_path / "results.parquet")
+        assert len(df) == 2
+        assert set(df["seed"].to_list()) == {0, 1}
+
 
 class TestDeduplication:
     def test_rerun_deduplicates_keeping_last(self, tmp_path):

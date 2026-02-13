@@ -32,6 +32,9 @@ def _consolidate(
     for pf in part_files:
         frames.append(pl.read_parquet(pf))
 
+    # Align column order across frames (parts may have been written with different ordering)
+    all_columns = list(dict.fromkeys(col for df in frames for col in df.columns))
+    frames = [df.select(all_columns) for df in frames]
     combined = pl.concat(frames)
 
     if param_keys:
