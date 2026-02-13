@@ -23,8 +23,13 @@ from dln.utils import (
     load_base_config,
 )
 from dln.results_io import (
-    SweepWriter, NullWriter, load_sweep, load_sweep_config,
-    merge_sweeps, _flatten_config, _save_param_keys,
+    SweepWriter,
+    NullWriter,
+    load_sweep,
+    load_sweep_config,
+    merge_sweeps,
+    _flatten_config,
+    _save_param_keys,
 )
 from dln.experiment import run_experiment, run_comparative_experiment
 import dln.metrics as metrics
@@ -329,7 +334,6 @@ class TestOverrides:
         }
         assert not isinstance(fixed["metrics"], ListValue)
         assert sweep == {"model.gamma": [0.75, 1.0]}
-
 
 
 # ============================================================================
@@ -1144,7 +1148,12 @@ class TestSaveLoadPipeline:
         assert len(completed) == 2
 
         completed2, failed, errors = run_jobs_sequential(
-            resolved, "single", [], writer2, False, "cpu",
+            resolved,
+            "single",
+            [],
+            writer2,
+            False,
+            "cpu",
         )
         assert completed2 == 0
         assert failed == 0
@@ -1255,9 +1264,7 @@ class TestSaveLoadPipeline:
             resolve_config(base, "comparative"), resolve=True
         )
 
-        success, history, error = run_single_job(
-            resolved, "comparative", {}, "cpu"
-        )
+        success, history, error = run_single_job(resolved, "comparative", {}, "cpu")
         assert success, f"Job failed: {error}"
         assert "test_loss_a" in history
         assert "test_loss_b" in history
@@ -1284,9 +1291,7 @@ class TestSaveLoadPipeline:
             resolve_config(base, "comparative"), resolve=True
         )
 
-        success, history, error = run_single_job(
-            resolved, "comparative", {}, "cpu"
-        )
+        success, history, error = run_single_job(resolved, "comparative", {}, "cpu")
         assert success, f"Job failed: {error}"
 
         writer = SweepWriter(tmp_path, param_keys=[])
@@ -1385,7 +1390,9 @@ class TestSweepWriterBasics:
 
 class TestSchema:
     def test_scalar_param_columns(self, tmp_path):
-        writer = SweepWriter(tmp_path, param_keys=["model.gamma", "training.batch_seed"])
+        writer = SweepWriter(
+            tmp_path, param_keys=["model.gamma", "training.batch_seed"]
+        )
         writer.add(
             {"model.gamma": 0.75, "training.batch_seed": 0},
             make_fake_history(),
@@ -1415,7 +1422,9 @@ class TestSchema:
         assert df["step"][0].to_list() == [0, 10, 20]
 
     def test_mixed_param_types(self, tmp_path):
-        writer = SweepWriter(tmp_path, param_keys=["int_param", "float_param", "str_param"])
+        writer = SweepWriter(
+            tmp_path, param_keys=["int_param", "float_param", "str_param"]
+        )
         writer.add(
             {"int_param": 42, "float_param": 0.75, "str_param": "SGD"},
             make_fake_history(),
@@ -1545,14 +1554,18 @@ class TestCrashRecovery:
     def test_consolidate_mismatched_column_order(self, tmp_path):
         """Parts written with different column ordering than results.parquet."""
         # Write results.parquet with columns in one order
-        df1 = pl.DataFrame({"gamma": [1.0], "seed": [0], "step": [[0]], "test_loss": [[0.5]]})
+        df1 = pl.DataFrame(
+            {"gamma": [1.0], "seed": [0], "step": [[0]], "test_loss": [[0.5]]}
+        )
         df1.write_parquet(tmp_path / "results.parquet")
         _save_param_keys(tmp_path, ["gamma", "seed"])
 
         # Write a part file with columns in a different order
         parts_dir = tmp_path / "_parts"
         parts_dir.mkdir()
-        df2 = pl.DataFrame({"seed": [1], "gamma": [1.0], "step": [[0]], "test_loss": [[0.9]]})
+        df2 = pl.DataFrame(
+            {"seed": [1], "gamma": [1.0], "step": [[0]], "test_loss": [[0.9]]}
+        )
         df2.write_parquet(parts_dir / "part_000000.parquet")
 
         writer = SweepWriter(tmp_path, param_keys=["gamma", "seed"])
@@ -1695,8 +1708,7 @@ class TestStorageEndToEnd:
 
         all_jobs = [{"training.batch_seed": i} for i in range(4)]
         jobs_to_run = [
-            j for j in all_jobs
-            if tuple(j[k] for k in param_keys) not in completed
+            j for j in all_jobs if tuple(j[k] for k in param_keys) not in completed
         ]
         assert len(jobs_to_run) == 2
         assert all(j["training.batch_seed"] in (2, 3) for j in jobs_to_run)
@@ -1755,8 +1767,12 @@ class TestBuildRerunSet:
     def test_partial_key_match(self):
         """Rerun with subset of keys matches all completed tuples with those values."""
         completed = {
-            (0.75, 0), (0.75, 1), (0.75, 2),
-            (1.0, 0), (1.0, 1), (1.0, 2),
+            (0.75, 0),
+            (0.75, 1),
+            (0.75, 2),
+            (1.0, 0),
+            (1.0, 1),
+            (1.0, 2),
         }
         param_keys = ["gamma", "seed"]
         result = _build_rerun_set(["gamma=0.75"], param_keys, completed)
@@ -1765,8 +1781,10 @@ class TestBuildRerunSet:
     def test_multi_key_partial_match(self):
         """Rerun matching on one of three sweep keys."""
         completed = {
-            (0.75, 100, 0), (0.75, 100, 1),
-            (1.0, 200, 0), (1.0, 200, 1),
+            (0.75, 100, 0),
+            (0.75, 100, 1),
+            (1.0, 200, 0),
+            (1.0, 200, 1),
         }
         param_keys = ["gamma", "steps", "seed"]
         result = _build_rerun_set(["seed=0"], param_keys, completed)
@@ -1795,8 +1813,10 @@ class TestBuildRerunSet:
     def test_full_key_match_multi_param(self):
         """Rerun specifying all param keys produces exact matches."""
         completed = {
-            (0.75, 0), (0.75, 1),
-            (1.0, 0), (1.0, 1),
+            (0.75, 0),
+            (0.75, 1),
+            (1.0, 0),
+            (1.0, 1),
         }
         param_keys = ["gamma", "seed"]
         result = _build_rerun_set(["gamma=0.75", "seed=0"], param_keys, completed)
@@ -1876,14 +1896,26 @@ class TestMergeSweeps:
         config = BASE_CONFIG
         history = make_fake_history()
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
-            {"seed": 0, **history},
-            {"seed": 1, **history},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
-            {"seed": 2, **history},
-            {"seed": 3, **history},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, **history},
+                {"seed": 1, **history},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
+            [
+                {"seed": 2, **history},
+                {"seed": 3, **history},
+            ],
+        )
 
         out = tmp_path / "merged"
         result = merge_sweeps([dir_a, dir_b], out)
@@ -1902,14 +1934,26 @@ class TestMergeSweeps:
         history_a = {"step": [0, 10], "test_loss": [1.0, 0.5]}
         history_b = {"step": [0, 10], "test_loss": [2.0, 1.5]}
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config_a, ["seed"], [
-            {"seed": 0, **history_a},
-            {"seed": 1, **history_a},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config_b, ["seed"], [
-            {"seed": 0, **history_b},
-            {"seed": 1, **history_b},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config_a,
+            ["seed"],
+            [
+                {"seed": 0, **history_a},
+                {"seed": 1, **history_a},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config_b,
+            ["seed"],
+            [
+                {"seed": 0, **history_b},
+                {"seed": 1, **history_b},
+            ],
+        )
 
         out = tmp_path / "merged"
         result = merge_sweeps([dir_a, dir_b], out)
@@ -1931,12 +1975,24 @@ class TestMergeSweeps:
         history_a = {"step": [0, 10], "test_loss": [1.0, 0.9]}
         history_b = {"step": [0, 10], "test_loss": [1.0, 0.1]}  # different loss
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
-            {"seed": 0, **history_a},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
-            {"seed": 0, **history_b},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, **history_a},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, **history_b},
+            ],
+        )
 
         out = tmp_path / "merged"
         result = merge_sweeps([dir_a, dir_b], out, keep="last")
@@ -1950,12 +2006,24 @@ class TestMergeSweeps:
         history_a = {"step": [0, 10], "test_loss": [1.0, 0.9]}
         history_b = {"step": [0, 10], "test_loss": [1.0, 0.1]}
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
-            {"seed": 0, **history_a},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
-            {"seed": 0, **history_b},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, **history_a},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, **history_b},
+            ],
+        )
 
         out = tmp_path / "merged"
         result = merge_sweeps([dir_a, dir_b], out, keep="first")
@@ -1969,13 +2037,25 @@ class TestMergeSweeps:
         history = make_fake_history()
 
         # dir_a swept hidden_dim, dir_b did not (fixed at 100 in config)
-        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed", "model.hidden_dim"], [
-            {"seed": 0, "model.hidden_dim": 50, **history},
-            {"seed": 0, "model.hidden_dim": 100, **history},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
-            {"seed": 1, **history},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config,
+            ["seed", "model.hidden_dim"],
+            [
+                {"seed": 0, "model.hidden_dim": 50, **history},
+                {"seed": 0, "model.hidden_dim": 100, **history},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
+            [
+                {"seed": 1, **history},
+            ],
+        )
 
         out = tmp_path / "merged"
         result = merge_sweeps([dir_a, dir_b], out)
@@ -1991,12 +2071,29 @@ class TestMergeSweeps:
         """Different metric columns (list columns) raise ValueError."""
         config = BASE_CONFIG
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
-            {"seed": 0, "step": [0, 10], "test_loss": [1.0, 0.5]},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
-            {"seed": 1, "step": [0, 10], "test_loss": [1.0, 0.5], "weight_norm": [3.0, 2.5]},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, "step": [0, 10], "test_loss": [1.0, 0.5]},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
+            [
+                {
+                    "seed": 1,
+                    "step": [0, 10],
+                    "test_loss": [1.0, 0.5],
+                    "weight_norm": [3.0, 2.5],
+                },
+            ],
+        )
 
         out = tmp_path / "merged"
         with pytest.raises(ValueError, match="Metric column mismatch"):
@@ -2004,16 +2101,36 @@ class TestMergeSweeps:
 
     def test_multiple_config_diffs_promoted(self, tmp_path):
         """Multiple config differences (gamma + max_steps) all become columns."""
-        config_a = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.0}, "max_steps": 8000}
-        config_b = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.5}, "max_steps": 26000}
+        config_a = {
+            **BASE_CONFIG,
+            "model": {**BASE_CONFIG["model"], "gamma": 1.0},
+            "max_steps": 8000,
+        }
+        config_b = {
+            **BASE_CONFIG,
+            "model": {**BASE_CONFIG["model"], "gamma": 1.5},
+            "max_steps": 26000,
+        }
         history = make_fake_history()
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config_a, ["seed"], [
-            {"seed": 0, **history},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config_b, ["seed"], [
-            {"seed": 1, **history},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config_a,
+            ["seed"],
+            [
+                {"seed": 0, **history},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config_b,
+            ["seed"],
+            [
+                {"seed": 1, **history},
+            ],
+        )
 
         out = tmp_path / "merged"
         result = merge_sweeps([dir_a, dir_b], out)
@@ -2036,17 +2153,30 @@ class TestMergeSweeps:
         config_b = {**BASE_CONFIG, "model": {**BASE_CONFIG["model"], "gamma": 1.5}}
         history = make_fake_history()
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config_a, ["seed"], [
-            {"seed": 0, **history},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config_b, ["seed"], [
-            {"seed": 1, **history},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config_a,
+            ["seed"],
+            [
+                {"seed": 0, **history},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config_b,
+            ["seed"],
+            [
+                {"seed": 1, **history},
+            ],
+        )
 
         out = tmp_path / "merged"
         merge_sweeps([dir_a, dir_b], out)
 
         import json
+
         with (out / "_param_keys.json").open() as f:
             merged_keys = json.load(f)
         assert "seed" in merged_keys
@@ -2064,10 +2194,16 @@ class TestMergeSweeps:
         for i, config in enumerate(configs):
             # Use unique seeds per input so rows are distinguishable
             history = make_fake_history()
-            d = _make_sweep_dir(tmp_path, f"dir_{i}", config, ["seed"], [
-                {"seed": i * 10, **history},
-                {"seed": i * 10 + 1, **history},
-            ])
+            d = _make_sweep_dir(
+                tmp_path,
+                f"dir_{i}",
+                config,
+                ["seed"],
+                [
+                    {"seed": i * 10, **history},
+                    {"seed": i * 10 + 1, **history},
+                ],
+            )
             dirs.append(d)
 
         out = tmp_path / "merged"
@@ -2104,12 +2240,24 @@ class TestMergeSweeps:
         config = BASE_CONFIG
         history = make_fake_history()
 
-        dir_a = _make_sweep_dir(tmp_path, "a", config, ["seed"], [
-            {"seed": 0, **history},
-        ])
-        dir_b = _make_sweep_dir(tmp_path, "b", config, ["seed"], [
-            {"seed": 1, **history},
-        ])
+        dir_a = _make_sweep_dir(
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
+            [
+                {"seed": 0, **history},
+            ],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
+            [
+                {"seed": 1, **history},
+            ],
+        )
 
         out = tmp_path / "merged"
         merge_sweeps([dir_a, dir_b], out)
@@ -2137,11 +2285,13 @@ class TestFlattenConfig:
 
     def test_list_values_are_leaves(self):
         """List config values (e.g. callbacks) are kept as leaves, not recursed into."""
-        result = _flatten_config({
-            "callbacks": [{"lr_decay": {"step": 5000}}],
-            "metrics": ["weight_norm"],
-            "model": {"gamma": 1.0},
-        })
+        result = _flatten_config(
+            {
+                "callbacks": [{"lr_decay": {"step": 5000}}],
+                "metrics": ["weight_norm"],
+                "model": {"gamma": 1.0},
+            }
+        )
         assert result == {
             "callbacks": [{"lr_decay": {"step": 5000}}],
             "metrics": ["weight_norm"],
