@@ -1918,7 +1918,7 @@ class TestMergeSweeps:
         )
 
         out = tmp_path / "merged"
-        result = merge_sweeps([dir_a, dir_b], out)
+        result = merge_sweeps([dir_a, dir_b], out).collect()
 
         assert len(result) == 4
         assert set(result["seed"].to_list()) == {0, 1, 2, 3}
@@ -1956,7 +1956,7 @@ class TestMergeSweeps:
         )
 
         out = tmp_path / "merged"
-        result = merge_sweeps([dir_a, dir_b], out)
+        result = merge_sweeps([dir_a, dir_b], out).collect()
 
         assert "model.gamma" in result.columns
         assert len(result) == 4
@@ -1995,7 +1995,7 @@ class TestMergeSweeps:
         )
 
         out = tmp_path / "merged"
-        result = merge_sweeps([dir_a, dir_b], out, keep="last")
+        result = merge_sweeps([dir_a, dir_b], out, keep="last").collect()
 
         assert len(result) == 1
         assert result["test_loss"][0].to_list() == [1.0, 0.1]  # from dir_b
@@ -2026,7 +2026,7 @@ class TestMergeSweeps:
         )
 
         out = tmp_path / "merged"
-        result = merge_sweeps([dir_a, dir_b], out, keep="first")
+        result = merge_sweeps([dir_a, dir_b], out, keep="first").collect()
 
         assert len(result) == 1
         assert result["test_loss"][0].to_list() == [1.0, 0.9]  # from dir_a
@@ -2058,7 +2058,7 @@ class TestMergeSweeps:
         )
 
         out = tmp_path / "merged"
-        result = merge_sweeps([dir_a, dir_b], out)
+        result = merge_sweeps([dir_a, dir_b], out).collect()
 
         assert "model.hidden_dim" in result.columns
         assert len(result) == 3
@@ -2133,7 +2133,7 @@ class TestMergeSweeps:
         )
 
         out = tmp_path / "merged"
-        result = merge_sweeps([dir_a, dir_b], out)
+        result = merge_sweeps([dir_a, dir_b], out).collect()
 
         assert "model.gamma" in result.columns
         assert "max_steps" in result.columns
@@ -2207,7 +2207,7 @@ class TestMergeSweeps:
             dirs.append(d)
 
         out = tmp_path / "merged"
-        result = merge_sweeps(dirs, out)
+        result = merge_sweeps(dirs, out).collect()
 
         assert len(result) == 6
         assert set(result["model.gamma"].to_list()) == {0.75, 1.0, 1.5}

@@ -205,7 +205,43 @@ def _get_nested(d: dict, dotted_key: str) -> Any:
     return current
 
 
-def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.DataFrame:
+def _schema_list_cols(schema: pl.Schema) -> set[str]:
+    return {name for name, dtype in schema.items() if isinstance(dtype, pl.List)}
+
+
+def _schema_scalar_cols(schema: pl.Schema) -> set[str]:
+    return {name for name, dtype in schema.items() if not isinstance(dtype, pl.List)}
+
+
+def _has_overlapping_params(
+    inputs: list[Path],
+    schemas: list[pl.Schema],
+    merged_param_keys: list[str],
+    promoted_keys: list[str],
+    flat_configs: list[dict[str, Any]],
+) -> bool:
+    """Check for duplicate param tuples across inputs by reading only scalar columns."""
+    if not merged_param_keys:
+        return False
+
+    # Promoted columns make rows from different inputs inherently unique
+    if promoted_keys:
+        return False
+
+    seen: set[tuple] = set()
+    for i in range(len(inputs)):
+        available = [k for k in merged_param_keys if k in schemas[i].names()]
+        if not available:
+            continue
+        df = pl.scan_parquet(inputs[i] / "results.parquet").select(available).collect()
+        for row in df.iter_rows():
+            if row in seen:
+                return True
+            seen.add(row)
+    return False
+
+
+def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.LazyFrame:
     """Handles three cases:
 
     - Fixed override differences: promoted to columns automatically.
@@ -213,16 +249,21 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
     - Overlapping runs: deduplicated (keep="last" or "first").
 
     All inputs must have the same metric columns (list columns).
+
+    Uses streaming I/O when possible to handle arbitrarily large merges.
+    Returns a LazyFrame pointing to the written output file.
     """
     if keep not in ("last", "first"):
         raise ValueError(f"keep must be 'last' or 'first', got {keep!r}")
     if len(inputs) < 2:
         raise ValueError("Need at least 2 inputs to merge")
+    if output.exists():
+        raise FileExistsError(f"Output directory already exists: {output}")
 
-    # Load all inputs
+    # Load configs and schemas (no row data loaded yet)
     configs = []
     param_keys_list = []
-    frames = []
+    schemas = []
 
     for path in inputs:
         if not (path / "results.parquet").exists():
@@ -230,9 +271,15 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
         if not (path / "config.yaml").exists():
             raise FileNotFoundError(f"No config.yaml in {path}")
 
+        # Consolidate any leftover parts from interrupted sweeps
+        parts_dir = path / "_parts"
+        if parts_dir.exists():
+            pk = _load_param_keys(path)
+            _consolidate(path / "results.parquet", parts_dir, pk)
+
         configs.append(load_sweep_config(path))
         param_keys_list.append(_load_param_keys(path) or [])
-        frames.append(load_sweep(path))
+        schemas.append(pl.read_parquet_schema(path / "results.parquet"))
 
     # Step 1: Flatten configs and find keys that differ across inputs
     flat_configs = [_flatten_config(c) for c in configs]
@@ -248,15 +295,9 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
             promoted_keys.append(key)
 
     # Step 2: Validate metric columns (list columns must match across all inputs)
-    def list_cols(df: pl.DataFrame) -> set[str]:
-        return {c for c in df.columns if isinstance(df[c].dtype, pl.List)}
-
-    def scalar_cols(df: pl.DataFrame) -> set[str]:
-        return {c for c in df.columns if not isinstance(df[c].dtype, pl.List)}
-
-    reference = list_cols(frames[0])
-    for i, df in enumerate(frames[1:], 1):
-        lc = list_cols(df)
+    reference = _schema_list_cols(schemas[0])
+    for i, schema in enumerate(schemas[1:], 1):
+        lc = _schema_list_cols(schema)
         if lc != reference:
             missing = reference - lc
             extra = lc - reference
@@ -270,15 +311,16 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
                 f"compared to {inputs[0]}"
             )
 
-    # Steps 3+4: Add missing scalar columns and promoted config-diff columns.
-    # Batched into a single with_columns call per frame for efficiency.
+    # Steps 3+4: Build lazy frames with missing scalar columns and promoted config-diff columns.
     all_scalar = set()
-    for df in frames:
-        all_scalar.update(scalar_cols(df))
+    for schema in schemas:
+        all_scalar.update(_schema_scalar_cols(schema))
 
-    for i in range(len(frames)):
+    frames: list[pl.LazyFrame] = []
+    for i in range(len(inputs)):
+        lf = pl.scan_parquet(inputs[i] / "results.parquet")
         new_cols = []
-        existing = set(frames[i].columns)
+        existing = set(schemas[i].names())
 
         # Missing scalar columns (sweep params in one input but not another)
         for col in sorted(all_scalar - existing):
@@ -297,7 +339,8 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
                 new_cols.append(pl.lit(value).alias(key))
 
         if new_cols:
-            frames[i] = frames[i].with_columns(new_cols)
+            lf = lf.with_columns(new_cols)
+        frames.append(lf)
 
     # Step 5: Build merged param_keys (order-preserved union)
     seen: set[str] = set()
@@ -317,21 +360,36 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
             seen.add(col)
 
     # Step 6: Align column order across frames, concat, and dedup
-    all_columns = list(dict.fromkeys(col for df in frames for col in df.columns))
-    frames = [df.select(all_columns) for df in frames]
+    all_columns = list(dict.fromkeys(
+        col for schema in schemas for col in schema.names()
+    ))
+    for key in promoted_keys:
+        if key not in all_columns:
+            all_columns.append(key)
+    frames = [lf.select(all_columns) for lf in frames]
     combined = pl.concat(frames, how="vertical_relaxed")
 
-    if merged_param_keys:
-        combined = (
+    needs_dedup = _has_overlapping_params(
+        inputs, schemas, merged_param_keys, promoted_keys, flat_configs,
+    )
+
+    # Step 7: Write output
+    output.mkdir(parents=True, exist_ok=True)
+    results_path = output / "results.parquet"
+
+    if needs_dedup:
+        # Dedup requires full materialization (unique is not streamable)
+        result = (
             combined.with_row_index("_order")
             .sort("_order")
             .unique(subset=merged_param_keys, keep=keep)
             .drop("_order")
+            .collect()
         )
+        result.write_parquet(results_path)
+    else:
+        combined.sink_parquet(results_path)
 
-    # Step 7: Write output
-    output.mkdir(parents=True, exist_ok=True)
-    combined.write_parquet(output / "results.parquet")
     _save_param_keys(output, merged_param_keys)
 
     # Write first input's config as reference. Promoted values are authoritative
@@ -339,7 +397,7 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Dat
     with (output / "config.yaml").open("w") as f:
         yaml.safe_dump(configs[0], f, default_flow_style=False, sort_keys=False)
 
-    return combined
+    return pl.scan_parquet(results_path)
 
 
 if __name__ == "__main__":
@@ -374,8 +432,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.command == "merge":
-        result = merge_sweeps(args.inputs, args.output, keep=args.keep)
-        print(f"Merged {len(result)} rows into {args.output / 'results.parquet'}")
-        print(f"Columns: {result.columns}")
+        merge_sweeps(args.inputs, args.output, keep=args.keep)
+        metadata = pl.read_parquet_schema(args.output / "results.parquet")
+        n_rows = pl.scan_parquet(args.output / "results.parquet").select(pl.len()).collect().item()
+        print(f"Merged {n_rows} rows into {args.output / 'results.parquet'}")
+        print(f"Columns: {list(metadata.names())}")
     else:
         parser.print_help()
