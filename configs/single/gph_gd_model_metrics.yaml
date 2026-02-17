@@ -1,5 +1,5 @@
 experiment:
-  name: "gph"
+  name: "gph_gd_model_metrics"
 
 model:
   in_dim: 5
@@ -29,7 +29,10 @@ data:
     scale: 10.0
 
 metrics:
-  - trace_covariances
+  - layer_norms
+  - gram_norms
+  - balance_diffs
+  - effective_weight_norm
 
 max_steps: 10000
 num_evaluations: 250

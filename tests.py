@@ -703,6 +703,101 @@ class TestMetrics:
 
         assert abs(distance - expected) < 1e-6
 
+    def test_effective_weight(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        weights = [layer.weight for layer in reversed(model.layers)]
+        expected = weights[0]
+        for w in weights[1:]:
+            expected = expected @ w
+
+        result = model.effective_weight()
+        assert t.allclose(result, expected, atol=1e-6)
+
+    def test_effective_weight_norm(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        result = metrics.compute_metrics(
+            model, ["effective_weight_norm"], inputs, targets, criterion
+        )
+
+        expected = model.effective_weight().norm().item()
+        assert abs(result["effective_weight_norm"] - expected) < 1e-6
+
+    def test_layer_norms(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        result = metrics.compute_metrics(
+            model, ["layer_norms"], inputs, targets, criterion
+        )
+
+        for i, layer in enumerate(model.layers):
+            key = f"layer_norm_{i}"
+            assert key in result
+            expected = layer.weight.norm().item()
+            assert abs(result[key] - expected) < 1e-6
+
+    def test_gram_norms(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        result = metrics.compute_metrics(
+            model, ["gram_norms"], inputs, targets, criterion
+        )
+
+        for i, layer in enumerate(model.layers):
+            key = f"gram_norm_{i}"
+            assert key in result
+            expected = (layer.weight @ layer.weight.T).norm().item()
+            assert abs(result[key] - expected) < 1e-6
+
+    def test_balance_diffs(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        result = metrics.compute_metrics(
+            model, ["balance_diffs"], inputs, targets, criterion
+        )
+
+        weights = [layer.weight for layer in model.layers]
+        for i in range(len(weights) - 1):
+            expected = (weights[i] @ weights[i].T - weights[i + 1].T @ weights[i + 1]).norm().item()
+            assert abs(result[f"balance_diff_{i}"] - expected) < 1e-6
+
+    def test_layer_distances(self):
+        model_a = create_model(model_seed=0)
+        model_b = create_model(model_seed=1)
+
+        result = metrics.compute_comparative_metrics(
+            model_a, model_b, ["layer_distances"]
+        )
+
+        for i, (a, b) in enumerate(zip(model_a.layers, model_b.layers)):
+            key = f"layer_distance_{i}"
+            assert key in result
+            expected = (a.weight - b.weight).norm().item()
+            assert abs(result[key] - expected) < 1e-6
+
+    def test_frobenius_distance(self):
+        model_a = create_model(model_seed=0)
+        model_b = create_model(model_seed=1)
+
+        result = metrics.compute_comparative_metrics(
+            model_a, model_b, ["frobenius_distance"]
+        )
+
+        expected = (model_a.effective_weight() - model_b.effective_weight()).norm().item()
+        assert abs(result["frobenius_distance"] - expected) < 1e-6
+
 
 # ============================================================================
 # Comparative Trainer Tests
@@ -848,6 +943,37 @@ class TestComparativeTrainer:
 
         with pytest.raises(ValueError, match="same test_data"):
             ComparativeTrainer(trainer_a, trainer_b)
+
+    def test_comparative_trainer_with_dict_metrics(self):
+        """Dict-returning comparative metrics flow through to history."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        test_data = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=0),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=1),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+
+        comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
+        history = comp_trainer.run(
+            max_steps=10,
+            num_evaluations=2,
+            comparative_metrics=["layer_distances", "frobenius_distance"],
+        )
+
+        num_layers = len(list(trainer_a.model.layers))
+        for i in range(num_layers):
+            assert f"layer_distance_{i}" in history
+        assert "frobenius_distance" in history
 
 
 # ===========================================================================

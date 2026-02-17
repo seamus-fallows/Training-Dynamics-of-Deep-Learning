@@ -87,6 +87,8 @@ num_evaluations: 250
 #   Available:
 #     param_distance    - L2 distance between model parameters
 #     param_cosine_sim  - cosine similarity between model parameters
+#     layer_distances   - per-layer Frobenius distance (returns layer_distance_0, ...)
+#     frobenius_distance - Frobenius distance between effective weights
 metrics: []
 comparative_metrics:
   - param_distance

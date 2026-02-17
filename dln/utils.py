@@ -84,6 +84,31 @@ def load_base_config(config_name: str, config_dir: str = "single") -> dict:
     return OmegaConf.to_container(cfg)
 
 
+def _expand_comparative_overrides(
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Reroute ``model.X`` → shared.model.X / model_a.X / model_b.X (and likewise
+    for ``training.X``) so that short-form sweep overrides propagate correctly
+    in comparative configs."""
+    expanded: dict[str, Any] = {}
+    for key, value in overrides.items():
+        if key.startswith("model.") and not key.startswith(("model_a.", "model_b.")):
+            suffix = key[len("model."):]
+            expanded[f"shared.model.{suffix}"] = value
+            expanded[f"model_a.{suffix}"] = value
+            expanded[f"model_b.{suffix}"] = value
+        elif key.startswith("training.") and not key.startswith(
+            ("training_a.", "training_b.")
+        ):
+            suffix = key[len("training."):]
+            expanded[f"shared.training.{suffix}"] = value
+            expanded[f"training_a.{suffix}"] = value
+            expanded[f"training_b.{suffix}"] = value
+        else:
+            expanded[key] = value
+    return expanded
+
+
 def resolve_config(
     base_config: dict,
     config_dir: str = "single",
@@ -93,6 +118,8 @@ def resolve_config(
     cfg = OmegaConf.create(base_config)
 
     if overrides:
+        if config_dir == "comparative":
+            overrides = _expand_comparative_overrides(overrides)
         for key, value in overrides.items():
             OmegaConf.update(cfg, key, value, merge=True)
 

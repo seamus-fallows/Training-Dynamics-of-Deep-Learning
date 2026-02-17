@@ -28,5 +28,8 @@ class DeepLinearNetwork(nn.Module):
                     t.randn(layer.weight.shape, generator=generator) * std
                 )
 
+    def effective_weight(self) -> Tensor:
+        return t.linalg.multi_dot([layer.weight for layer in reversed(self.layers)])
+
     def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)
