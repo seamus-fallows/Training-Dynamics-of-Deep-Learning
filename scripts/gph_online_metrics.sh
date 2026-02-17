@@ -10,7 +10,7 @@ python sweep.py -cn=gph \
     metrics=[trace_covariances] \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
-    model.model_seed=0,1 \
+    model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     training.batch_seed=0..200 \
     model.hidden_dim=100,50,10 \
@@ -27,7 +27,7 @@ python sweep.py -cn=gph \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
     training.batch_size=50,10,5,2,1 \
-    model.model_seed=0,1 \
+    model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     training.batch_seed=0..200 \
     model.hidden_dim=100,50,10 \
@@ -35,8 +35,5 @@ python sweep.py -cn=gph \
     --workers=$WORKERS \
     --device=cuda \
     --output=$OUTPUT/mini_batch
-
-echo "=== Compressing results ==="
-tar -czf outputs/gph_online_metrics.tar.gz -C outputs gph_online_metrics
 
 echo "=== Done ==="

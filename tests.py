@@ -2266,6 +2266,69 @@ class TestMergeSweeps:
         df = load_sweep(out)
         assert len(df) == 2
 
+    def test_partial_overlap_dedup(self, tmp_path):
+        """Some rows overlap across inputs, others are unique to each."""
+        config = BASE_CONFIG
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(
+            tmp_path, "a", config, ["seed"],
+            [{"seed": 0, **history}, {"seed": 1, **history}, {"seed": 2, **history}],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path, "b", config, ["seed"],
+            [{"seed": 1, **history}, {"seed": 2, **history}, {"seed": 3, **history}],
+        )
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out, keep="last").collect()
+
+        assert len(result) == 4
+        assert set(result["seed"].to_list()) == {0, 1, 2, 3}
+
+    def test_one_source_fully_superseded(self, tmp_path):
+        """All of source A's params exist in B; A contributes zero rows."""
+        config = BASE_CONFIG
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(
+            tmp_path, "a", config, ["seed"],
+            [{"seed": 0, **history}, {"seed": 1, **history}],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path, "b", config, ["seed"],
+            [
+                {"seed": 0, **history}, {"seed": 1, **history},
+                {"seed": 2, **history}, {"seed": 3, **history},
+            ],
+        )
+
+        out = tmp_path / "merged"
+        result = merge_sweeps([dir_a, dir_b], out, keep="last").collect()
+
+        assert len(result) == 4
+        assert set(result["seed"].to_list()) == {0, 1, 2, 3}
+
+    def test_dedup_no_temp_files_left(self, tmp_path):
+        """No temporary part files remain after dedup merge."""
+        config = BASE_CONFIG
+        history = make_fake_history()
+
+        dir_a = _make_sweep_dir(
+            tmp_path, "a", config, ["seed"],
+            [{"seed": 0, **history}, {"seed": 1, **history}],
+        )
+        dir_b = _make_sweep_dir(
+            tmp_path, "b", config, ["seed"],
+            [{"seed": 1, **history}, {"seed": 2, **history}],
+        )
+
+        out = tmp_path / "merged"
+        merge_sweeps([dir_a, dir_b], out)
+
+        temp_files = list(out.glob("_dedup_*"))
+        assert temp_files == []
+
 
 class TestFlattenConfig:
     def test_simple(self):

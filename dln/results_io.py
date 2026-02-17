@@ -378,15 +378,50 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Laz
     results_path = output / "results.parquet"
 
     if needs_dedup:
-        # Dedup requires full materialization (unique is not streamable)
-        result = (
-            combined.with_row_index("_order")
+        # Two-pass dedup: resolve duplicates using only scalar columns,
+        # then collect each source's surviving rows independently.
+        scalar_cols = [c for c in all_columns if c not in reference]
+
+        # Pass 1: dedup on lightweight scalar-only frames
+        scalar_frames = []
+        for i, lf in enumerate(frames):
+            scalar_frames.append(
+                lf.select(scalar_cols)
+                .with_row_index("_row_idx")
+                .with_columns(pl.lit(i).cast(pl.UInt32).alias("_source"))
+            )
+        survivors = (
+            pl.concat(scalar_frames)
+            .with_row_index("_order")
             .sort("_order")
             .unique(subset=merged_param_keys, keep=keep)
             .drop("_order")
             .collect()
         )
-        result.write_parquet(results_path)
+
+        # Pass 2: collect surviving rows per source, write to temp parts
+        tmp_parts = []
+        for i, lf in enumerate(frames):
+            kept = survivors.filter(pl.col("_source") == i)["_row_idx"].to_list()
+            if len(kept) == 0:
+                continue
+            chunk = (
+                lf.with_row_index("_row_idx")
+                .filter(pl.col("_row_idx").is_in(kept))
+                .drop("_row_idx")
+                .collect()
+            )
+            tmp = results_path.with_name(f"_dedup_{i}.tmp.parquet")
+            chunk.write_parquet(tmp)
+            tmp_parts.append(tmp)
+            del chunk
+
+        if len(tmp_parts) == 1:
+            os.replace(tmp_parts[0], results_path)
+        else:
+            pl.concat([pl.scan_parquet(p) for p in tmp_parts]).sink_parquet(results_path)
+            for p in tmp_parts:
+                p.unlink()
     else:
         combined.sink_parquet(results_path)
 

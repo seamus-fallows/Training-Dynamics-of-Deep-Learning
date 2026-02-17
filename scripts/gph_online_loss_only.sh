@@ -7,7 +7,7 @@ OUTPUT=outputs/gph_online
 echo "=== Large Batch Training ==="
 python sweep.py -cn=gph \
     data.online=true \
-    model.model_seed=2,3 \
+    model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
@@ -22,7 +22,7 @@ python sweep.py -cn=gph \
 echo "=== Mini Batch Training ==="
 python sweep.py -cn=gph \
     data.online=true \
-    model.model_seed=2,3 \
+    model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
