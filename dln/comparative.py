@@ -22,11 +22,17 @@ class ComparativeTrainer:
         max_steps: int,
         num_evaluations: int,
         metrics: list | None = None,
+        metrics_a: list | None = None,
+        metrics_b: list | None = None,
         comparative_metrics: list[str] | None = None,
         callbacks_a: list[Callable] | None = None,
         callbacks_b: list[Callable] | None = None,
     ) -> dict[str, list[Any]]:
         evaluate_every = max(1, max_steps // num_evaluations)
+
+        # Per-model metrics fall back to shared metrics
+        effective_metrics_a = metrics_a if metrics_a is not None else metrics
+        effective_metrics_b = metrics_b if metrics_b is not None else metrics
 
         self.trainer_a.model.train()
         self.trainer_b.model.train()
@@ -44,8 +50,8 @@ class ComparativeTrainer:
             inputs_b, targets_b = next(self.trainer_b.train_loader)
 
             if step % evaluate_every == 0:
-                record_a = self.trainer_a._evaluate(step, metrics)
-                record_b = self.trainer_b._evaluate(step, metrics)
+                record_a = self.trainer_a._evaluate(step, effective_metrics_a)
+                record_b = self.trainer_b._evaluate(step, effective_metrics_b)
 
                 record = {"step": step}
                 record.update({f"{k}_a": v for k, v in record_a.items() if k != "step"})

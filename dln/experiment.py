@@ -97,7 +97,9 @@ def run_comparative_experiment(
     history = comparative_trainer.run(
         max_steps=cfg.max_steps,
         num_evaluations=cfg.num_evaluations,
-        metrics=cfg.metrics,
+        metrics=cfg.get("metrics", None),
+        metrics_a=cfg.get("metrics_a", None),
+        metrics_b=cfg.get("metrics_b", None),
         comparative_metrics=cfg.comparative_metrics,
         callbacks_a=callbacks_a,
         callbacks_b=callbacks_b,

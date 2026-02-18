@@ -39,6 +39,9 @@ data:
 max_steps: 10000
 num_evaluations: 250
 
+# Per-model metrics: GD (model_a) is deterministic and collected separately
+# via gph_gd_model_metrics.sh, so we only track metrics for SGD (model_b).
+metrics_a: []
 metrics:
   - layer_norms
   - gram_norms

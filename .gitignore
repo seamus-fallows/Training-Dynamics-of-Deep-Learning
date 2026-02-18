@@ -6,3 +6,4 @@ cache/
 *.tar.gz*
 *CLAUDE*
 *claude*
+*.zip*
