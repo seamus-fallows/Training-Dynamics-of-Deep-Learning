@@ -46,6 +46,11 @@ def _consolidate(
             .drop("_order")
         )
 
+    # Sort by param keys for efficient predicate pushdown in downstream analysis
+    sort_cols = [c for c in (param_keys or []) if c in combined.columns]
+    if sort_cols:
+        combined = combined.sort(sort_cols)
+
     tmp_path = results_path.with_suffix(".tmp.parquet")
     combined.write_parquet(tmp_path)
     os.replace(tmp_path, results_path)
