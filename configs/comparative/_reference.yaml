@@ -83,6 +83,15 @@ num_evaluations: 250
 # metrics: computed on each model individually, suffixed with _a and _b
 #   Same format as single config (string or {name: {params}})
 #
+# metrics_a / metrics_b: override metrics for a specific model.
+#   When absent or null, the model falls back to the shared `metrics` list.
+#   Set to [] to suppress all per-model metrics for that model.
+#   Example: track metrics only on model_b (SGD) while skipping model_a (GD):
+#     metrics_a: []
+#     metrics:
+#       - weight_norm
+#       - layer_norms
+#
 # comparative_metrics: computed between models (no suffix)
 #   Available:
 #     param_distance    - L2 distance between model parameters

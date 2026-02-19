@@ -975,6 +975,106 @@ class TestComparativeTrainer:
             assert f"layer_distance_{i}" in history
         assert "frobenius_distance" in history
 
+    def test_per_model_metrics_different_lists(self):
+        """metrics_a and metrics_b can specify different metric lists."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        test_data = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+
+        comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
+        history = comp_trainer.run(
+            max_steps=20,
+            num_evaluations=2,
+            metrics_a=["weight_norm"],
+            metrics_b=["effective_weight_norm"],
+        )
+
+        assert "weight_norm_a" in history
+        assert "weight_norm_b" not in history
+        assert "effective_weight_norm_b" in history
+        assert "effective_weight_norm_a" not in history
+
+    def test_per_model_metrics_suppress_one_model(self):
+        """metrics_a=[] suppresses metrics for model A while shared metrics apply to B."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        test_data = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+
+        comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
+        history = comp_trainer.run(
+            max_steps=20,
+            num_evaluations=2,
+            metrics=["weight_norm"],
+            metrics_a=[],
+        )
+
+        # Model A: metrics_a=[] overrides shared, so no weight_norm_a
+        assert "weight_norm_a" not in history
+        # Model B: no metrics_b specified, falls back to shared metrics
+        assert "weight_norm_b" in history
+        # Both still have test_loss
+        assert "test_loss_a" in history
+        assert "test_loss_b" in history
+
+    def test_per_model_metrics_fallback_to_shared(self):
+        """When metrics_a/metrics_b are absent, both models use shared metrics."""
+        device = t.device("cpu")
+        dataset = Dataset(make_data_config(data_seed=0), in_dim=5, out_dim=5)
+        test_data = (dataset.test_data[0].to(device), dataset.test_data[1].to(device))
+
+        trainer_a = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+        trainer_b = make_trainer(
+            model_cfg=make_model_config(model_seed=42),
+            training_cfg=make_training_config(batch_seed=0),
+            dataset=dataset,
+            test_data=test_data,
+        )
+
+        comp_trainer = ComparativeTrainer(trainer_a, trainer_b)
+        # Only shared metrics, no metrics_a or metrics_b
+        history = comp_trainer.run(
+            max_steps=20,
+            num_evaluations=2,
+            metrics=["weight_norm", "effective_weight_norm"],
+        )
+
+        # Both models get all shared metrics
+        assert "weight_norm_a" in history
+        assert "weight_norm_b" in history
+        assert "effective_weight_norm_a" in history
+        assert "effective_weight_norm_b" in history
+
 
 # ===========================================================================
 # Test Trainer
