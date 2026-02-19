@@ -8,6 +8,7 @@ from .model import DeepLinearNetwork
 from .train import Trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
+from .batched import BatchedDeepLinearNetwork, BatchedTrainLoader, BatchedTrainer
 from .results import RunResult
 
 
@@ -63,6 +64,57 @@ def run_experiment(
     )
 
     return RunResult(history=history, config=cfg)
+
+
+def run_batched_experiment(
+    configs: list[DictConfig],
+    device: str = "cuda",
+) -> list[dict[str, list]]:
+    """Train N models simultaneously using vectorized batched operations.
+
+    All configs must share architecture, training hyperparameters, metrics, and
+    callbacks. They may differ in model_seed, batch_seed, data_seed, noise_std.
+
+    Returns list of N history dicts, one per model.
+    """
+    device = resolve_device(device)
+    cfg0 = configs[0]
+
+    datasets = []
+    loaders = []
+    test_datas = []
+
+    for cfg in configs:
+        dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
+        datasets.append(dataset)
+        test_datas.append(to_device(dataset.test_data, device))
+        loaders.append(
+            TrainLoader(
+                dataset=dataset,
+                batch_size=cfg.training.batch_size,
+                batch_seed=cfg.training.batch_seed,
+                device=device,
+            )
+        )
+
+    model = BatchedDeepLinearNetwork([cfg.model for cfg in configs])
+    batched_loader = BatchedTrainLoader(loaders)
+    callbacks = create_callbacks(cfg0.callbacks)
+
+    trainer = BatchedTrainer(
+        model=model,
+        training_cfg=cfg0.training,
+        train_loader=batched_loader,
+        test_data=test_datas,
+        device=device,
+    )
+
+    return trainer.run(
+        max_steps=cfg0.max_steps,
+        num_evaluations=cfg0.num_evaluations,
+        metrics=cfg0.metrics,
+        callbacks=callbacks,
+    )
 
 
 def run_comparative_experiment(

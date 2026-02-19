@@ -1,0 +1,15 @@
+{
+    "python.defaultInterpreterPath": "/venv/main/bin/python",
+    "terminal.integrated.defaultProfile.linux": "bash (login)",
+    "terminal.integrated.profiles.linux": {
+        "bash (login)": {
+            "path": "/bin/bash",
+            "args": [
+                "-l"
+            ]
+        }
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": []
+}

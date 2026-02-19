@@ -117,6 +117,23 @@ class SweepWriter:
         if len(self.buffer) >= self.flush_every:
             self.flush()
 
+    def add_batch(
+        self,
+        job_overrides_list: list[dict[str, Any]],
+        histories: list[dict[str, Any]],
+    ) -> None:
+        """Add N results from a vectorized group. Flushes when buffer is full."""
+        for job, history in zip(job_overrides_list, histories):
+            row: dict[str, Any] = {}
+            for key in self.param_keys:
+                row[key] = job.get(key)
+            for metric_name, values in history.items():
+                row[metric_name] = values
+            self.buffer.append(row)
+
+        if len(self.buffer) >= self.flush_every:
+            self.flush()
+
     def flush(self) -> None:
         if not self.buffer:
             return
@@ -145,6 +162,13 @@ class NullWriter:
         return set()
 
     def add(self, job_overrides: dict[str, Any], history: dict[str, Any]) -> None:
+        pass
+
+    def add_batch(
+        self,
+        job_overrides_list: list[dict[str, Any]],
+        histories: list[dict[str, Any]],
+    ) -> None:
         pass
 
     def flush(self) -> None:

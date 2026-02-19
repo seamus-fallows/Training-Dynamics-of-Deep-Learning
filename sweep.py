@@ -35,8 +35,8 @@ import traceback
 
 from omegaconf import OmegaConf
 
-from dln.experiment import run_experiment, run_comparative_experiment
-from dln.utils import load_base_config, resolve_config, save_sweep_config
+from dln.experiment import run_experiment, run_comparative_experiment, run_batched_experiment
+from dln.utils import load_base_config, resolve_config, resolve_device, save_sweep_config
 from dln.overrides import (
     parse_overrides,
     split_overrides,
@@ -44,6 +44,7 @@ from dln.overrides import (
     get_output_dir,
 )
 from dln.results_io import SweepWriter, NullWriter
+from dln.batched import group_compatible_jobs, estimate_group_size
 
 # Single-threaded BLAS: our matrix ops are too small for thread parallelism
 # to outweigh the wake/sync overhead. Also prevents thread contention in parallel sweeps.
@@ -129,6 +130,22 @@ def parse_args() -> argparse.Namespace:
         dest="save_results",
         help="Run experiments without saving results (for testing)",
     )
+    parser.add_argument(
+        "--vectorize",
+        default=None,
+        metavar="N|auto",
+        help="Vectorize compatible models into batched GPU training. "
+             "Use --vectorize=N for explicit group size, "
+             "or --vectorize=auto to estimate from GPU memory.",
+    )
+    parser.add_argument(
+        "--memory-budget",
+        type=float,
+        default=0.9,
+        metavar="FRAC",
+        help="Fraction of GPU memory for auto-sizing (0.0-1.0, default 0.9). "
+             "Only used with --vectorize=auto.",
+    )
 
     return parser.parse_args()
 
@@ -153,6 +170,15 @@ def _worker_run_job(job_overrides):
         _worker_state["resolved_base"],
         _worker_state["config_dir"],
         job_overrides,
+        _worker_state["device"],
+    )
+
+
+def _worker_run_vectorized_group(job_group):
+    return run_vectorized_group(
+        _worker_state["resolved_base"],
+        _worker_state["config_dir"],
+        job_group,
         _worker_state["device"],
     )
 
@@ -323,6 +349,214 @@ def run_sweep(
 
 
 # =============================================================================
+# Vectorized Sweep
+# =============================================================================
+
+
+def run_vectorized_group(
+    resolved_base: dict,
+    config_dir: str,
+    job_group: list[dict[str, Any]],
+    device: str,
+) -> tuple[bool, list[dict] | None, str | None]:
+    """Returns (success, list_of_histories, error_message)."""
+    try:
+        configs = [resolve_config(resolved_base, config_dir, job) for job in job_group]
+        histories = run_batched_experiment(configs, device=device)
+        return True, histories, None
+    except Exception:
+        return False, None, traceback.format_exc()
+
+
+def _build_vectorized_groups(
+    resolved_base: dict,
+    config_dir: str,
+    jobs: list[dict[str, Any]],
+    param_keys: list[str],
+    vectorize_n: int | str,
+    device: str,
+    memory_budget: float = 0.9,
+) -> list[list[dict[str, Any]]]:
+    """Build vectorized groups, handling both explicit N and auto-sizing."""
+    if vectorize_n != "auto":
+        return group_compatible_jobs(jobs, param_keys, vectorize_n)
+
+    # Auto mode: group by compatibility (unlimited), then estimate per-group size
+    unlimited_groups = group_compatible_jobs(jobs, param_keys, len(jobs))
+    dev = resolve_device(device)
+
+    result = []
+    for compat_group in unlimited_groups:
+        cfg = resolve_config(resolved_base, config_dir, compat_group[0])
+        n = estimate_group_size(cfg.model, cfg.training, cfg.data, dev, memory_budget)
+        for i in range(0, len(compat_group), n):
+            result.append(compat_group[i : i + n])
+
+    return result
+
+
+def _run_groups_sequential(
+    resolved_base: dict,
+    config_dir: str,
+    groups: list[list[dict[str, Any]]],
+    writer: SweepWriter | NullWriter,
+    fail_fast: bool,
+    device: str,
+) -> tuple[int, int, list[tuple[int, str]]]:
+    completed = 0
+    failed = 0
+    errors = []
+    t0 = time.time()
+
+    for gi, group in enumerate(groups):
+        if len(groups) > 1:
+            elapsed = time.time() - t0
+            print(f"[group {gi + 1}/{len(groups)}, {len(group)} models, {elapsed:.1f}s elapsed]")
+
+        success, histories, error = run_vectorized_group(
+            resolved_base, config_dir, group, device
+        )
+
+        if success:
+            writer.add_batch(group, histories)
+            completed += len(group)
+        else:
+            failed += len(group)
+            errors.append((gi, error))
+            print(f"FAILED: {error}")
+            if fail_fast:
+                break
+
+    return completed, failed, errors
+
+
+def _run_groups_parallel(
+    resolved_base: dict,
+    config_dir: str,
+    groups: list[list[dict[str, Any]]],
+    writer: SweepWriter | NullWriter,
+    fail_fast: bool,
+    num_workers: int,
+    device: str,
+) -> tuple[int, int, list[tuple[int, str]]]:
+    completed = 0
+    failed = 0
+    errors = []
+    total_models = sum(len(g) for g in groups)
+    start_time = time.time()
+
+    with ProcessPoolExecutor(
+        max_workers=num_workers,
+        initializer=_worker_init,
+        initargs=(resolved_base, config_dir, device),
+    ) as executor:
+        futures = {}
+        for gi, group in enumerate(groups):
+            future = executor.submit(_worker_run_vectorized_group, group)
+            futures[future] = (gi, group)
+
+        for future in as_completed(futures):
+            gi, group = futures[future]
+            success, histories, error = future.result()
+
+            if success:
+                writer.add_batch(group, histories)
+                completed += len(group)
+            else:
+                failed += len(group)
+                errors.append((gi, error))
+                if fail_fast:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
+            done = completed + failed
+            elapsed = time.time() - start_time
+            rate = done / elapsed if elapsed > 0 else 0
+            eta = (total_models - done) / rate if rate > 0 else 0
+            print(
+                f"\rProgress: {done}/{total_models} models ({100 * done / total_models:.1f}%) | "
+                f"{rate:.1f} models/s | Elapsed: {_fmt_time(elapsed)} | "
+                f"ETA: {_fmt_time(eta)} | failed: {failed}",
+                end="",
+                flush=True,
+            )
+
+    print()
+    return completed, failed, errors
+
+
+def run_vectorized_sweep(
+    resolved_base: dict,
+    config_dir: str,
+    jobs: list[dict[str, Any]],
+    param_keys: list[str],
+    writer: SweepWriter | NullWriter,
+    fail_fast: bool,
+    workers: int,
+    device: str,
+    vectorize_n: int | str,
+    memory_budget: float = 0.9,
+    skipped: int = 0,
+) -> None:
+    groups = _build_vectorized_groups(
+        resolved_base, config_dir, jobs, param_keys, vectorize_n, device,
+        memory_budget,
+    )
+
+    total_models = sum(len(g) for g in groups)
+    start_time = time.time()
+
+    if workers > 1 and device == "cuda":
+        import torch as _t
+        if _t.cuda.device_count() < workers:
+            print(
+                f"Warning: {workers} workers sharing {_t.cuda.device_count()} GPU(s) "
+                f"with --vectorize may cause OOM. Each worker allocates a full "
+                f"batched model. Consider reducing --workers or --vectorize size.",
+                file=sys.stderr,
+            )
+
+    print(
+        f"Running {total_models} models in {len(groups)} vectorized groups "
+        f"(workers={workers}, device={device})"
+    )
+    if skipped:
+        print(f"Skipping {skipped} already-completed jobs")
+    print()
+
+    if not groups:
+        completed, failed, errors = 0, 0, []
+    elif workers == 1:
+        completed, failed, errors = _run_groups_sequential(
+            resolved_base, config_dir, groups, writer, fail_fast, device,
+        )
+    else:
+        completed, failed, errors = _run_groups_parallel(
+            resolved_base, config_dir, groups, writer, fail_fast, workers, device,
+        )
+
+    writer.finalize()
+
+    elapsed = time.time() - start_time
+
+    print()
+    print("=" * 50)
+    print(f"Completed: {completed}")
+    if skipped:
+        print(f"Skipped:   {skipped}")
+    print(f"Failed:    {failed}")
+    print(f"Time:      {_fmt_time(elapsed)}")
+
+    if errors:
+        print()
+        print("Errors:")
+        for gi, error in errors[:10]:
+            print(f"  Group {gi}: {error}")
+        if len(errors) > 10:
+            print(f"  ... and {len(errors) - 10} more")
+
+
+# =============================================================================
 # Resume / Rerun Helpers
 # =============================================================================
 
@@ -401,6 +635,27 @@ def _filter_jobs(
 if __name__ == "__main__":
     args = parse_args()
 
+    # Parse --vectorize before anything else so we can fail fast
+    vectorize_n = None
+    if args.vectorize is not None:
+        if args.comparative:
+            print("Error: --vectorize cannot be used with --comparative", file=sys.stderr)
+            sys.exit(1)
+        if args.vectorize == "auto":
+            vectorize_n = "auto"
+        else:
+            try:
+                vectorize_n = int(args.vectorize)
+                if vectorize_n < 1:
+                    raise ValueError
+            except ValueError:
+                print(
+                    f"Error: --vectorize must be a positive integer or 'auto', "
+                    f"got {args.vectorize!r}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
     overrides = parse_overrides(args.overrides)
     fixed_overrides, sweep_overrides = split_overrides(overrides)
 
@@ -435,13 +690,28 @@ if __name__ == "__main__":
 
     jobs_to_run, skipped = _filter_jobs(jobs, param_keys, completed)
 
-    run_sweep(
-        resolved_base=resolved_base,
-        config_dir=config_dir,
-        jobs=jobs_to_run,
-        writer=writer,
-        fail_fast=args.fail_fast,
-        workers=args.workers,
-        device=args.device,
-        skipped=skipped,
-    )
+    if vectorize_n is not None:
+        run_vectorized_sweep(
+            resolved_base=resolved_base,
+            config_dir=config_dir,
+            jobs=jobs_to_run,
+            param_keys=param_keys,
+            writer=writer,
+            fail_fast=args.fail_fast,
+            workers=args.workers,
+            device=args.device,
+            vectorize_n=vectorize_n,
+            memory_budget=args.memory_budget,
+            skipped=skipped,
+        )
+    else:
+        run_sweep(
+            resolved_base=resolved_base,
+            config_dir=config_dir,
+            jobs=jobs_to_run,
+            writer=writer,
+            fail_fast=args.fail_fast,
+            workers=args.workers,
+            device=args.device,
+            skipped=skipped,
+        )
