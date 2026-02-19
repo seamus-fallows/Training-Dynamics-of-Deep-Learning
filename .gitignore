@@ -2,7 +2,7 @@ __pycache__/
 *.egg-info/
 outputs/
 figures/
-cache/
+.analysis_cache/
 *.tar.gz*
 *CLAUDE*
 *claude*

@@ -127,6 +127,55 @@ def make_trainer(
 
 
 # ============================================================================
+# Config Consistency Tests
+# ============================================================================
+
+
+class TestConfigConsistency:
+    """Ensure GD-only and comparative configs stay in sync.
+
+    The GD model metrics sweep (configs/single/gph_gd_model_metrics.yaml) and
+    the comparative sweep (configs/comparative/gph_metrics.yaml) must agree on
+    model architecture, data generation, and shared training hyper-parameters.
+    A mismatch would silently invalidate the analysis that combines their results.
+    """
+
+    @pytest.fixture(autouse=True)
+    def load_configs(self):
+        with open("configs/single/gph_gd_model_metrics.yaml") as f:
+            self.gd = yaml.safe_load(f)
+        with open("configs/comparative/gph_metrics.yaml") as f:
+            self.comp = yaml.safe_load(f)
+
+    def test_model_sections_match(self):
+        assert self.gd["model"] == self.comp["shared"]["model"]
+
+    def test_data_sections_match(self):
+        assert self.gd["data"] == self.comp["data"]
+
+    def test_shared_training_params_match(self):
+        gd_training = self.gd["training"]
+        comp_training = self.comp["shared"]["training"]
+        # Compare all shared keys (batch_size differs by design)
+        shared_keys = ["lr", "optimizer", "optimizer_params", "criterion", "batch_seed",
+                       "track_train_loss"]
+        for key in shared_keys:
+            assert gd_training[key] == comp_training[key], (
+                f"training.{key}: GD={gd_training[key]!r} != comparative={comp_training[key]!r}"
+            )
+
+    def test_max_steps_match(self):
+        assert self.gd["max_steps"] == self.comp["max_steps"]
+
+    def test_num_evaluations_match(self):
+        assert self.gd["num_evaluations"] == self.comp["num_evaluations"]
+
+    def test_gd_metrics_match_comparative_model_metrics(self):
+        """GD-only metrics should match the per-model metrics in the comparative config."""
+        assert self.gd["metrics"] == self.comp["metrics"]
+
+
+# ============================================================================
 # Override Parsing and Expansion Tests
 # ============================================================================
 
@@ -797,6 +846,68 @@ class TestMetrics:
 
         expected = (model_a.effective_weight() - model_b.effective_weight()).norm().item()
         assert abs(result["frobenius_distance"] - expected) < 1e-6
+
+    def test_individual_metrics_match_trace_covariances(self):
+        """Individual gradient metrics must agree with the combined trace_covariances."""
+        model_seed, num_hidden, hidden_dim = 0, 2, 8
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        # Reference: combined metric
+        ref_model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        ref = metrics.trace_covariances(ref_model, inputs, targets, criterion)
+
+        # grad_norm_squared (standalone)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        gns = metrics.grad_norm_squared(model, inputs, targets, criterion)
+        assert abs(gns - ref["grad_norm_squared"]) < 1e-5
+
+        # trace_gradient_covariance (standalone)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        tgc = metrics.trace_gradient_covariance(model, inputs, targets, criterion)
+        assert abs(tgc - ref["trace_gradient_covariance"]) < 1e-5
+
+        # trace_hessian_covariance (standalone)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        thc = metrics.trace_hessian_covariance(model, inputs, targets, criterion)
+        assert abs(thc - ref["trace_hessian_covariance"]) < 1e-5
+
+        # gradient_stats (paired)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        gs = metrics.gradient_stats(model, inputs, targets, criterion)
+        assert abs(gs["grad_norm_squared"] - ref["grad_norm_squared"]) < 1e-5
+        assert abs(gs["trace_gradient_covariance"] - ref["trace_gradient_covariance"]) < 1e-5
+
+    def test_individual_metrics_chunked_matches_unchunked(self):
+        """Chunked paths of individual gradient metrics must match their unchunked paths."""
+        model_seed, num_hidden, hidden_dim = 0, 2, 8
+        inputs = t.randn(20, 5)
+        targets = t.randn(20, 5)
+        criterion = nn.MSELoss()
+        chunks = 4
+
+        # trace_gradient_covariance
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        tgc_unchunked = metrics.trace_gradient_covariance(model, inputs, targets, criterion, chunks=1)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        tgc_chunked = metrics.trace_gradient_covariance(model, inputs, targets, criterion, chunks=chunks)
+        assert abs(tgc_unchunked - tgc_chunked) < 1e-5
+
+        # trace_hessian_covariance
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        thc_unchunked = metrics.trace_hessian_covariance(model, inputs, targets, criterion, chunks=1)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        thc_chunked = metrics.trace_hessian_covariance(model, inputs, targets, criterion, chunks=chunks)
+        assert abs(thc_unchunked - thc_chunked) < 1e-5
+
+        # gradient_stats
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        gs_unchunked = metrics.gradient_stats(model, inputs, targets, criterion, chunks=1)
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        gs_chunked = metrics.gradient_stats(model, inputs, targets, criterion, chunks=chunks)
+        assert abs(gs_unchunked["grad_norm_squared"] - gs_chunked["grad_norm_squared"]) < 1e-5
+        assert abs(gs_unchunked["trace_gradient_covariance"] - gs_chunked["trace_gradient_covariance"]) < 1e-5
 
 
 # ============================================================================

@@ -19,7 +19,7 @@ Options:
 
 Expects sweep outputs in outputs/gph/gph_offline_loss/ or outputs/gph/gph_online_loss/.
 Saves figures to figures/gph_offline_loss/ or figures/gph_online_loss/.
-Caches computed statistics in cache/gph_offline_loss.pkl or cache/gph_online_loss.pkl.
+Caches computed statistics in .analysis_cache/gph_offline_loss.pkl or .analysis_cache/gph_online_loss.pkl.
 """
 
 import argparse
@@ -50,7 +50,7 @@ BATCH_KEY_COLS = BL_KEY_COLS[:3]  # columns used for batched parquet reads
 EXPERIMENTS = {
     "offline": {
         "base_path": Path("outputs/gph/gph_offline_loss"),
-        "cache_path": Path("cache/gph_offline_loss.pkl"),
+        "cache_path": Path(".analysis_cache/gph_offline_loss.pkl"),
         "figures_path": Path("figures/gph_offline_loss"),
         "baseline_subdir": "full_batch",
         "sgd_subdir": "mini_batch",
@@ -60,7 +60,7 @@ EXPERIMENTS = {
     },
     "online": {
         "base_path": Path("outputs/gph/gph_online_loss"),
-        "cache_path": Path("cache/gph_online_loss.pkl"),
+        "cache_path": Path(".analysis_cache/gph_online_loss.pkl"),
         "figures_path": Path("figures/gph_online_loss"),
         "baseline_subdir": "large_batch",
         "sgd_subdir": "mini_batch",

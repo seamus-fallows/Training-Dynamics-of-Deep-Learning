@@ -11,10 +11,9 @@ Two figure types per (gamma, noise, width, batch_size) configuration:
     effective weight norm  (GD solid vs SGD dashed + 95% CI)
 
 Data sources:
-  - Comparative sweep: test_loss_a/b, param_distance, layer_distances, frobenius_distance,
-    plus SGD model metrics as _b-suffixed columns (either from running the comparative
-    sweep with metrics_a=[], or by merging standalone SGD data via
-    scripts/merge_sgd_into_comparative.py).
+  - Comparative sweep (--input): test_loss_a/b, param_distance, layer_distances,
+    frobenius_distance, plus SGD model metrics as _b-suffixed columns (via
+    metrics_a=[] so only model_b metrics are tracked).
   - GD-only sweep (--gd-input): layer_norms, gram_norms, balance_diffs,
     effective_weight_norm for the deterministic GD side.
 
@@ -57,7 +56,7 @@ GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 DEFAULT_INPUT = Path("outputs/gph_comparative_metrics/comparative")
 DEFAULT_GD_INPUT = Path("outputs/gph_comparative_metrics/gd_metrics")
 DEFAULT_OUTPUT = Path("figures/gph_comparative_metrics")
-DEFAULT_CACHE = Path("cache/gph_comparative_metrics.pkl")
+DEFAULT_CACHE = Path(".analysis_cache/gph_comparative_metrics.pkl")
 
 # Columns that define a unique configuration (batch_seed is averaged over)
 GROUP_COLS = [
@@ -288,8 +287,8 @@ def compute_all_stats(
 ) -> dict[tuple, CompConfigStats]:
     """Load comparative results and compute per-config stats over batch seeds.
 
-    SGD model metrics are sourced from _b columns in comparative data (added by
-    the comparative sweep with metrics_a=[], or by merge_sgd_into_comparative.py).
+    SGD model metrics are sourced from _b columns in comparative data (via
+    metrics_a=[] so only model_b metrics are tracked).
     GD model metrics always come from gd_fallback.
     """
     path = input_dir / "results.parquet"
@@ -306,7 +305,7 @@ def compute_all_stats(
     if has_sgd_metrics:
         print(f"  {n_sgd_layers} SGD model layers (_b columns)")
     else:
-        print(f"  No SGD model metrics (run merge_sgd_into_comparative.py or re-run sweep)")
+        print(f"  No SGD model metrics (re-run comparative sweep with model metrics enabled)")
 
     groups = df.partition_by(GROUP_COLS, as_dict=True)
     total = len(groups)
@@ -1250,8 +1249,7 @@ def generate_all_plots(
 
     if not has_sgd_metrics:
         print("  Note: SGD model metrics not available — skipping model_metrics figures.")
-        print("  Run gph_sgd_model_metrics.sh + merge_sgd_into_comparative.py,")
-        print("  or re-run the comparative sweep to enable them.")
+        print("  Re-run the comparative sweep with model metrics enabled.")
 
     n_workers = min(os.cpu_count() or 1, len(tasks))
     print(f"Generating {len(tasks)} figures across {n_workers} workers...")

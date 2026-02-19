@@ -381,6 +381,7 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Laz
     # Step 7: Write output
     output.mkdir(parents=True, exist_ok=True)
     results_path = output / "results.parquet"
+    sort_cols = [c for c in merged_param_keys if c in all_columns]
 
     if needs_dedup:
         # Two-pass dedup: resolve duplicates using only scalar columns,
@@ -421,13 +422,15 @@ def merge_sweeps(inputs: list[Path], output: Path, keep: str = "last") -> pl.Laz
             tmp_parts.append(tmp)
             del chunk
 
-        if len(tmp_parts) == 1:
-            os.replace(tmp_parts[0], results_path)
-        else:
-            pl.concat([pl.scan_parquet(p) for p in tmp_parts]).sink_parquet(results_path)
-            for p in tmp_parts:
-                p.unlink()
+        merged = pl.concat([pl.scan_parquet(p) for p in tmp_parts])
+        if sort_cols:
+            merged = merged.sort(sort_cols)
+        merged.sink_parquet(results_path)
+        for p in tmp_parts:
+            p.unlink()
     else:
+        if sort_cols:
+            combined = combined.sort(sort_cols)
         combined.sink_parquet(results_path)
 
     _save_param_keys(output, merged_param_keys)
