@@ -29,6 +29,7 @@ import torch as t
 from torch import Tensor
 from torch.nn import Module, functional as F
 from torch.func import functional_call, grad, jvp, vmap
+from torch.nn.utils import parameters_to_vector
 from typing import Callable
 
 
@@ -57,10 +58,6 @@ def comparative_metric(name: str):
 # Helpers
 
 
-def _flatten_params(model: Module) -> Tensor:
-    return t.cat([p.view(-1) for p in model.parameters()])
-
-
 def _extract_params(model: Module) -> tuple[dict[str, Tensor], dict[str, Tensor]]:
     params = dict(model.named_parameters())
     buffers = dict(model.named_buffers())
@@ -75,10 +72,6 @@ def _unflatten_like(flat: Tensor, reference: dict[str, Tensor]) -> dict[str, Ten
         result[name] = flat[offset : offset + numel].view(param.shape)
         offset += numel
     return result
-
-
-def _flatten_grad_dict(grad_dict: dict[str, Tensor]) -> Tensor:
-    return t.cat([g.flatten() for g in grad_dict.values()])
 
 
 def _compute_per_sample_grads(
@@ -122,7 +115,7 @@ def _compute_batch_hvps(
     def single_hvp(vector: Tensor) -> Tensor:
         v_dict = _unflatten_like(vector, params)
         hvp_dict = grad(directional_deriv)(params, v_dict)
-        return _flatten_grad_dict(hvp_dict)
+        return parameters_to_vector(hvp_dict.values())
 
     return vmap(single_hvp)(vectors)
 
@@ -135,7 +128,7 @@ def weight_norm(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
     with t.no_grad():
-        return _flatten_params(model).norm().item()
+        return parameters_to_vector(model.parameters()).norm().item()
 
 
 @metric("layer_norms")
@@ -181,6 +174,115 @@ def effective_weight_norm(
         return model.effective_weight().norm().item()
 
 
+# Rank metrics (singular-value-based)
+#
+# Helpers take singular values (descending) as input, decoupled from how the
+# matrix is obtained.  This supports future extension to partial weight products.
+# All helpers assume at least one nonzero singular value (sv[0] > 0).
+
+
+def _absolute_rank(sv: Tensor, max_dim: int) -> int:
+    """Count of sigma_i > eps * max_dim * sigma_max."""
+    tol = t.finfo(sv.dtype).eps * max_dim * sv[0]
+    return int((sv > tol).sum().item())
+
+
+def _relative_rank(sv: Tensor, tol: float) -> int:
+    """Count of sigma_i > tol * sigma_max."""
+    return int((sv > tol * sv[0]).sum().item())
+
+
+def _stable_rank(sv: Tensor) -> float:
+    """||W||_F^2 / ||W||_2^2 = sum(sigma_i^2) / sigma_max^2."""
+    return (sv.square().sum() / sv[0].square()).item()
+
+
+def _spectral_entropy_rank(sv: Tensor) -> float:
+    """exp(H) where H = -sum(p_i * log(p_i)), p_i = sigma_i / sum(sigma_j)."""
+    p = sv / sv.sum()
+    return t.special.entr(p).sum().exp().item()
+
+
+def _participation_ratio(sv: Tensor) -> float:
+    """(sum(sigma_i^2))^2 / sum(sigma_i^4)."""
+    sv_sq = sv.square()
+    return (sv_sq.sum().square() / sv_sq.square().sum()).item()
+
+
+@metric("absolute_rank")
+def absolute_rank(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> float:
+    with t.no_grad():
+        W = model.effective_weight()
+        sv = t.linalg.svdvals(W)
+        return _absolute_rank(sv, max(W.shape))
+
+
+@metric("relative_rank")
+def relative_rank(
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    tol: float = 0.01,
+    **kwargs,
+) -> float:
+    with t.no_grad():
+        sv = t.linalg.svdvals(model.effective_weight())
+        return _relative_rank(sv, tol)
+
+
+@metric("stable_rank")
+def stable_rank(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> float:
+    with t.no_grad():
+        sv = t.linalg.svdvals(model.effective_weight())
+        return _stable_rank(sv)
+
+
+@metric("spectral_entropy_rank")
+def spectral_entropy_rank(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> float:
+    with t.no_grad():
+        sv = t.linalg.svdvals(model.effective_weight())
+        return _spectral_entropy_rank(sv)
+
+
+@metric("participation_ratio")
+def participation_ratio(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> float:
+    with t.no_grad():
+        sv = t.linalg.svdvals(model.effective_weight())
+        return _participation_ratio(sv)
+
+
+@metric("rank_metrics")
+def rank_metrics(
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    tol: float = 0.01,
+    **kwargs,
+) -> dict[str, float]:
+    """All rank metrics from a single SVD: absolute_rank, relative_rank,
+    stable_rank, spectral_entropy_rank, participation_ratio."""
+    with t.no_grad():
+        W = model.effective_weight()
+        sv = t.linalg.svdvals(W)
+        return {
+            "absolute_rank": _absolute_rank(sv, max(W.shape)),
+            "relative_rank": _relative_rank(sv, tol),
+            "stable_rank": _stable_rank(sv),
+            "spectral_entropy_rank": _spectral_entropy_rank(sv),
+            "participation_ratio": _participation_ratio(sv),
+        }
+
+
 @metric("grad_norm_squared")
 def grad_norm_squared(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
@@ -193,8 +295,8 @@ def grad_norm_squared(
         return criterion(output, targets)
 
     mean_grad_dict = grad(compute_loss)(params)
-    mean_grad = _flatten_grad_dict(mean_grad_dict).detach()
-    return (mean_grad**2).sum().item()
+    mean_grad = parameters_to_vector(mean_grad_dict.values()).detach()
+    return mean_grad.dot(mean_grad).item()
 
 
 # Per-sample gradient trace engine
@@ -232,14 +334,18 @@ def _gradient_traces(
 
         result = {}
         if compute_grad_norm:
-            result["grad_norm_squared"] = (mean_grad**2).sum().item()
+            result["grad_norm_squared"] = mean_grad.dot(mean_grad).item()
         if compute_trace_grad:
-            result["trace_gradient_covariance"] = (noise**2).sum(dim=1).mean().item()
+            result["trace_gradient_covariance"] = (
+                t.linalg.vecdot(noise, noise).mean().item()
+            )
         if compute_trace_hess:
             hvps = _compute_batch_hvps(
                 model, params, buffers, inputs, targets, criterion, noise
             ).detach()
-            result["trace_hessian_covariance"] = (noise * hvps).sum(dim=1).mean().item()
+            result["trace_hessian_covariance"] = (
+                t.linalg.vecdot(noise, hvps).mean().item()
+            )
         return result
 
     chunk_size = (n_samples + chunks - 1) // chunks
@@ -248,8 +354,12 @@ def _gradient_traces(
     grad_sum = None
     for i in range(0, n_samples, chunk_size):
         chunk_grads = _compute_per_sample_grads(
-            model, params, buffers,
-            inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
+            model,
+            params,
+            buffers,
+            inputs[i : i + chunk_size],
+            targets[i : i + chunk_size],
+            criterion,
         ).detach()
         if grad_sum is None:
             grad_sum = chunk_grads.sum(dim=0)
@@ -265,26 +375,30 @@ def _gradient_traces(
 
     for i in range(0, n_samples, chunk_size):
         chunk_grads = _compute_per_sample_grads(
-            model, params, buffers,
-            inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
+            model,
+            params,
+            buffers,
+            inputs[i : i + chunk_size],
+            targets[i : i + chunk_size],
+            criterion,
         ).detach()
         noise = chunk_grads - mean_grad
         del chunk_grads
 
         if compute_trace_grad:
-            trace_grad_sum += (noise**2).sum()
+            trace_grad_sum += t.linalg.vecdot(noise, noise).sum()
         if compute_trace_hess:
             hvps = _compute_batch_hvps(
                 model, params, buffers, inputs, targets, criterion, noise
             ).detach()
-            trace_hess_sum += (noise * hvps).sum()
+            trace_hess_sum += t.linalg.vecdot(noise, hvps).sum()
             del hvps
 
         del noise
 
     result = {}
     if compute_grad_norm:
-        result["grad_norm_squared"] = (mean_grad**2).sum().item()
+        result["grad_norm_squared"] = mean_grad.dot(mean_grad).item()
     if compute_trace_grad:
         result["trace_gradient_covariance"] = (trace_grad_sum / n_samples).item()
     if compute_trace_hess:
@@ -294,19 +408,29 @@ def _gradient_traces(
 
 @metric("trace_gradient_covariance")
 def trace_gradient_covariance(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
     chunks: int = 1,
 ) -> float:
     """Tr(Σ) = E[||n_i||²] where n_i = g_i - ḡ are the gradient noise vectors."""
     return _gradient_traces(
-        model, inputs, targets, criterion, chunks,
+        model,
+        inputs,
+        targets,
+        criterion,
+        chunks,
         compute_trace_grad=True,
     )["trace_gradient_covariance"]
 
 
 @metric("gradient_stats")
 def gradient_stats(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
     chunks: int = 1,
 ) -> dict[str, float]:
     """
@@ -318,26 +442,41 @@ def gradient_stats(
     per-sample grads needed for Tr(Σ)).
     """
     return _gradient_traces(
-        model, inputs, targets, criterion, chunks,
-        compute_grad_norm=True, compute_trace_grad=True,
+        model,
+        inputs,
+        targets,
+        criterion,
+        chunks,
+        compute_grad_norm=True,
+        compute_trace_grad=True,
     )
 
 
 @metric("trace_hessian_covariance")
 def trace_hessian_covariance(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
     chunks: int = 1,
 ) -> float:
     """Tr(HΣ) = E[nᵢᵀHnᵢ] via Hessian-vector products."""
     return _gradient_traces(
-        model, inputs, targets, criterion, chunks,
+        model,
+        inputs,
+        targets,
+        criterion,
+        chunks,
         compute_trace_hess=True,
     )["trace_hessian_covariance"]
 
 
 @metric("trace_covariances")
 def trace_covariances(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
     chunks: int = 1,
 ) -> dict[str, float]:
     """
@@ -355,8 +494,14 @@ def trace_covariances(
             Higher values use less memory but may be slower.
     """
     return _gradient_traces(
-        model, inputs, targets, criterion, chunks,
-        compute_grad_norm=True, compute_trace_grad=True, compute_trace_hess=True,
+        model,
+        inputs,
+        targets,
+        criterion,
+        chunks,
+        compute_grad_norm=True,
+        compute_trace_grad=True,
+        compute_trace_hess=True,
     )
 
 
@@ -366,16 +511,16 @@ def trace_covariances(
 @comparative_metric("param_distance")
 def param_distance(model_a: Module, model_b: Module) -> float:
     with t.no_grad():
-        flat_a = _flatten_params(model_a)
-        flat_b = _flatten_params(model_b)
+        flat_a = parameters_to_vector(model_a.parameters())
+        flat_b = parameters_to_vector(model_b.parameters())
         return (flat_a - flat_b).norm().item()
 
 
 @comparative_metric("param_cosine_sim")
 def param_cosine_sim(model_a: Module, model_b: Module) -> float:
     with t.no_grad():
-        flat_a = _flatten_params(model_a)
-        flat_b = _flatten_params(model_b)
+        flat_a = parameters_to_vector(model_a.parameters())
+        flat_b = parameters_to_vector(model_b.parameters())
         return F.cosine_similarity(flat_a, flat_b, dim=0).item()
 
 
