@@ -191,23 +191,35 @@ training:
 
 Metrics are computed on the test set at each evaluation step.
 
-| Metric | Description |
-|--------|-------------|
-| `weight_norm` | L2 norm of all parameters |
-| `trace_covariances` | Returns `grad_norm_squared`, `trace_gradient_covariance`, `trace_hessian_covariance` |
+| Metric | Returns | Description |
+| -------- | ------- | ----------- |
+| `weight_norm` | scalar | L2 norm of all parameters |
+| `layer_norms` | `layer_norm_0`, `layer_norm_1`, ... | Per-layer weight matrix norms |
+| `gram_norms` | `gram_norm_0`, `gram_norm_1`, ... | Per-layer Gram matrix (WW^T) norms |
+| `balance_diffs` | `balance_diff_0`, `balance_diff_1`, ... | Per-layer balance: \|\|WW^T - W_next^T W_next\|\| |
+| `effective_weight_norm` | scalar | Norm of the effective weight (product of all layers) |
+| `grad_norm_squared` | scalar | \|\|∇L\|\|², single backward pass (no per-sample grads) |
+| `trace_gradient_covariance` | scalar | Tr(Σ), gradient noise covariance trace |
+| `trace_hessian_covariance` | scalar | Tr(HΣ), Hessian-noise covariance trace (uses HVPs) |
+| `gradient_stats` | `grad_norm_squared`, `trace_gradient_covariance` | Both in one pass, sharing per-sample grads |
+| `trace_covariances` | `grad_norm_squared`, `trace_gradient_covariance`, `trace_hessian_covariance` | All three gradient traces in one pass |
+
+The per-sample gradient metrics (`trace_*`, `gradient_stats`) accept an optional `chunks` parameter to reduce peak VRAM.
 
 **Comparative metrics**:
 
-| Metric | Description |
-|--------|-------------|
-| `param_distance` | L2 distance between model parameters |
-| `param_cosine_sim` | Cosine similarity between model parameters |
+| Metric | Returns | Description |
+| -------- | ------- | ----------- |
+| `param_distance` | scalar | L2 distance between model parameters |
+| `param_cosine_sim` | scalar | Cosine similarity of flattened parameters |
+| `layer_distances` | `layer_distance_0`, `layer_distance_1`, ... | Per-layer L2 distances |
+| `frobenius_distance` | scalar | Frobenius distance between effective weights |
 
 ### Callbacks
 
 | Callback | Parameters | Description |
 |----------|------------|-------------|
-| `switch_batch_size` | `step`, `batch_size` | Switch batch size at a specific step |
+| `switch_batch_size` | `at_step`, `batch_size` | Switch batch size at a specific step |
 | `multi_switch_batch_size` | `schedule` | Switch batch size at multiple steps |
 | `lr_decay` | `decay_every`, `factor` | Multiply learning rate by factor every N steps |
 
@@ -217,7 +229,7 @@ Example:
 callbacks:
   - name: switch_batch_size
     params:
-      step: 1000
+      at_step: 1000
       batch_size: null
 ```
 

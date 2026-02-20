@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Callable, Type
+from typing import Any, Callable
 import torch as t
 from torch import Tensor, nn
 from torch.optim import Optimizer
@@ -9,14 +9,14 @@ from omegaconf import DictConfig
 from dln.metrics import compute_metrics
 
 
-def _get_optimizer_cls(name: str) -> Type[Optimizer]:
+def _get_optimizer_cls(name: str) -> type[Optimizer]:
     try:
         return getattr(t.optim, name)
     except AttributeError as e:
         raise ValueError(f"Unknown optimizer: '{name}'") from e
 
 
-def _get_criterion_cls(name: str) -> Type[nn.Module]:
+def _get_criterion_cls(name: str) -> type[nn.Module]:
     try:
         return getattr(nn, name)
     except AttributeError as e:
@@ -74,22 +74,22 @@ class Trainer:
             inputs, targets = next(self.train_loader)
 
             if step % evaluate_every == 0:
-                record = self._evaluate(step, metrics)
+                record = self.evaluate(step, metrics)
                 for k, v in record.items():
                     history[k].append(v)
 
-            self._training_step(inputs, targets)
+            self.training_step(inputs, targets)
 
         return dict(history)
 
-    def _training_step(self, inputs: Tensor, targets: Tensor) -> None:
+    def training_step(self, inputs: Tensor, targets: Tensor) -> None:
         self.optimizer.zero_grad(set_to_none=True)
         output = self.model(inputs)
         loss = self.criterion(output, targets)
         loss.backward()
         self.optimizer.step()
 
-    def _evaluate(self, step: int, metrics: list | None) -> dict[str, Any]:
+    def evaluate(self, step: int, metrics: list | None) -> dict[str, Any]:
         test_inputs, test_targets = self.test_data
 
         with t.inference_mode():

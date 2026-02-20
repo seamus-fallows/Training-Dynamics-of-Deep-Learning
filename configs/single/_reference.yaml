@@ -69,14 +69,22 @@ num_evaluations: 250    # int: number of times to evaluate/log metrics
 #   - dict: {metric_name: {param: value}} (with custom params)
 #
 # Available metrics:
-#   weight_norm          - L2 norm of all parameters
-#   layer_norms          - returns layer_norm_0, ... (per-layer Frobenius norms)
-#   gram_norms           - returns gram_norm_0, ... (per-layer ||W W^T||_F)
-#   balance_diffs        - returns balance_diff_0, ... (per-pair ||W_i W_i^T - W_{i+1}^T W_{i+1}||_F)
-#   effective_weight_norm - Frobenius norm of collapsed end-to-end matrix
-#   trace_covariances    - returns grad_norm_squared, trace_gradient_covariance,
-#                          trace_hessian_covariance
-#                          params: chunks (int, default 1) - split computation for lower VRAM
+#   weight_norm               - L2 norm of all parameters
+#   layer_norms               - returns layer_norm_0, ... (per-layer Frobenius norms)
+#   gram_norms                - returns gram_norm_0, ... (per-layer ||W W^T||_F)
+#   balance_diffs             - returns balance_diff_0, ... (per-pair ||W_i W_i^T - W_{i+1}^T W_{i+1}||_F)
+#   effective_weight_norm     - Frobenius norm of collapsed end-to-end matrix
+#   grad_norm_squared         - ||∇L||², single backward pass
+#   trace_gradient_covariance - Tr(Σ), per-sample gradient covariance trace
+#                               params: chunks (int, default 1)
+#   gradient_stats            - returns grad_norm_squared + trace_gradient_covariance
+#                               (shared computation, saves a backward pass vs separate)
+#                               params: chunks (int, default 1)
+#   trace_hessian_covariance  - Tr(HΣ), Hessian-gradient covariance trace
+#                               params: chunks (int, default 1)
+#   trace_covariances         - returns all three: grad_norm_squared,
+#                               trace_gradient_covariance, trace_hessian_covariance
+#                               params: chunks (int, default 1)
 metrics: []
 # Examples:
 #   metrics:
@@ -93,7 +101,7 @@ metrics: []
 #
 # Available callbacks:
 #   switch_batch_size       - change batch size at a specific step
-#                             params: step (int), batch_size (int or null)
+#                             params: at_step (int), batch_size (int or null)
 #   multi_switch_batch_size - change batch size at multiple steps
 #                             params: schedule (dict mapping step -> batch_size)
 #   lr_decay                - multiply learning rate by factor every N steps
@@ -102,7 +110,7 @@ callbacks: []
 # Examples:
 #   callbacks:
 #     - switch_batch_size:
-#         step: 1000
+#         at_step: 1000
 #         batch_size: null
 #     - lr_decay:
 #         decay_every: 5000

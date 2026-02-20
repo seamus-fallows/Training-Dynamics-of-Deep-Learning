@@ -40,9 +40,9 @@ def create_callbacks(specs: list | None) -> list[Callable]:
 
 
 @register_callback("switch_batch_size")
-def switch_batch_size(step: int, batch_size: int | None):
-    def callback(current_step: int, trainer) -> None:
-        if current_step == step:
+def switch_batch_size(at_step: int, batch_size: int | None):
+    def callback(step: int, trainer) -> None:
+        if step == at_step:
             trainer.train_loader.set_batch_size(batch_size)
 
     return callback

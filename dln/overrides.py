@@ -61,7 +61,7 @@ def parse_value(value_str: str) -> Any | list[Any]:
             return ListValue()
         return ListValue(_parse_single_value(v.strip()) for v in inner.split(","))
 
-    range_match = re.match(r"range\((\d+),\s*(\d+)(?:,\s*(\d+))?\)", value_str)
+    range_match = re.match(r"range\((\d+),\s*(\d+)(?:,\s*(\d+))?\)$", value_str)
     if range_match:
         start = int(range_match.group(1))
         stop = int(range_match.group(2))

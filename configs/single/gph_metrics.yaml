@@ -1,5 +1,5 @@
 experiment:
-  name: "gph"
+  name: gph
 
 model:
   in_dim: 5
@@ -12,9 +12,9 @@ model:
 training:
   lr: 0.0001
   batch_size: null
-  optimizer: "SGD"
+  optimizer: SGD
   optimizer_params: null
-  criterion: "MSELoss"
+  criterion: MSELoss
   batch_seed: 0
   track_train_loss: false
 
@@ -25,7 +25,7 @@ data:
   online: false
   noise_std: 0.0
   params:
-    matrix: "diagonal"
+    matrix: diagonal
     scale: 10.0
 
 metrics:

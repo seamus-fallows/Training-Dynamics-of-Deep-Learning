@@ -82,7 +82,7 @@ class SweepWriter:
         existing = list(self.parts_dir.glob("part_*.parquet"))
         if not existing:
             return 0
-        indices = [int(p.stem.split("_")[1]) for p in existing]
+        indices = [int(p.stem.removeprefix("part_")) for p in existing]
         return max(indices) + 1
 
     def _part_path(self, index: int) -> Path:

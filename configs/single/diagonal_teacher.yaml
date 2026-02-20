@@ -28,11 +28,11 @@ data:
     matrix: diagonal
     scale: 10.0
 
+max_steps: 10000
+num_evaluations: 250
+
 metrics:
   # - trace_covariances:
   #     chunks: 2
 
 callbacks: []
-
-max_steps: 10000
-num_evaluations: 250

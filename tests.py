@@ -1,3 +1,5 @@
+import json
+
 import polars as pl
 import pytest
 import yaml
@@ -1314,7 +1316,7 @@ class TestCallbacks:
             batch_sizes.append(x.shape[0])
 
         switch_callback = create_callback(
-            {"switch_batch_size": {"step": 25, "batch_size": None}}
+            {"switch_batch_size": {"at_step": 25, "batch_size": None}}
         )
         trainer.run(
             max_steps=50,
@@ -2511,8 +2513,6 @@ class TestMergeSweeps:
 
         out = tmp_path / "merged"
         merge_sweeps([dir_a, dir_b], out)
-
-        import json
 
         with (out / "_param_keys.json").open() as f:
             merged_keys = json.load(f)

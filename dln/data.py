@@ -67,11 +67,9 @@ class Dataset:
             self.train_data = self._sample(cfg.train_samples, train_gen)
             if self.noise_std > 0:
                 noise_gen = t.Generator().manual_seed(cfg.data_seed + 2)
-                noise = t.randn(self.train_data[1].shape, generator=noise_gen)
-                self.train_data = (
-                    self.train_data[0],
-                    self.train_data[1] + noise * self.noise_std,
-                )
+                x, y = self.train_data
+                noise = t.randn(y.shape, generator=noise_gen)
+                self.train_data = (x, y + noise * self.noise_std)
 
     def _sample(self, n: int, generator: t.Generator) -> tuple[Tensor, Tensor]:
         inputs = t.randn(n, self.in_dim, generator=generator)

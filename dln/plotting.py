@@ -1,3 +1,5 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
@@ -48,12 +50,9 @@ def _plot_series(
 ) -> None:
     """Plot a single RunResult or list of RunResults (with CI)."""
     if isinstance(series, RunResult):
-        steps = np.asarray(series["step"])
-        values = np.asarray(series[metric])
-        if smoothing:
-            values = smooth(values, smoothing)
-        ax.plot(steps, values, label=label)
-    elif len(series) == 1:
+        series = [series]
+
+    if len(series) == 1:
         steps = np.asarray(series[0]["step"])
         values = np.asarray(series[0][metric])
         if smoothing:
@@ -130,6 +129,7 @@ def plot(
 def plot_comparative(
     runs: RunResult | dict[str, RunResult | list[RunResult]],
     metric: str = "test_loss",
+    ylabel: str | None = None,
     suffixes: tuple[str, str] = ("A", "B"),
     ci: float = 0.95,
     smoothing: int | None = None,
@@ -147,61 +147,13 @@ def plot_comparative(
 
     for name, data in runs.items():
         prefix = f"{name} " if name is not None else ""
-
-        if isinstance(data, RunResult):
-            steps = np.asarray(data["step"])
-            values_a = np.asarray(data[f"{metric}_a"])
-            values_b = np.asarray(data[f"{metric}_b"])
-
-            if smoothing:
-                values_a = smooth(values_a, smoothing)
-                values_b = smooth(values_b, smoothing)
-
-            ax.plot(steps, values_a, label=f"{prefix}{suffixes[0]}")
-            ax.plot(steps, values_b, label=f"{prefix}{suffixes[1]}")
-
-        else:
-            steps = np.asarray(data[0]["step"])
-
-            if len(data) == 1:
-                values_a = np.asarray(data[0][f"{metric}_a"])
-                values_b = np.asarray(data[0][f"{metric}_b"])
-
-                if smoothing:
-                    values_a = smooth(values_a, smoothing)
-                    values_b = smooth(values_b, smoothing)
-
-                ax.plot(steps, values_a, label=f"{prefix}{suffixes[0]}")
-                ax.plot(steps, values_b, label=f"{prefix}{suffixes[1]}")
-
-            else:
-                curves_a = [r[f"{metric}_a"] for r in data]
-                curves_b = [r[f"{metric}_b"] for r in data]
-
-                mean_a, lower_a, upper_a = compute_ci(curves_a, ci)
-                mean_b, lower_b, upper_b = compute_ci(curves_b, ci)
-
-                if smoothing:
-                    mean_a = smooth(mean_a, smoothing)
-                    lower_a = smooth(lower_a, smoothing)
-                    upper_a = smooth(upper_a, smoothing)
-                    mean_b = smooth(mean_b, smoothing)
-                    lower_b = smooth(lower_b, smoothing)
-                    upper_b = smooth(upper_b, smoothing)
-
-                (line_a,) = ax.plot(steps, mean_a, label=f"{prefix}{suffixes[0]}")
-                ax.fill_between(
-                    steps, lower_a, upper_a, alpha=0.2, color=line_a.get_color()
-                )
-                (line_b,) = ax.plot(steps, mean_b, label=f"{prefix}{suffixes[1]}")
-                ax.fill_between(
-                    steps, lower_b, upper_b, alpha=0.2, color=line_b.get_color()
-                )
+        _plot_series(ax, data, f"{metric}_a", f"{prefix}{suffixes[0]}", ci, smoothing)
+        _plot_series(ax, data, f"{metric}_b", f"{prefix}{suffixes[1]}", ci, smoothing)
 
     if log_scale:
         ax.set_yscale("log")
     ax.set_xlabel("Step")
-    ax.set_ylabel(metric)
+    ax.set_ylabel(ylabel or metric)
     ax.legend(title=legend_title)
     if title:
         ax.set_title(title)
@@ -216,7 +168,7 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> plt.Figure:
 
     n_panels = 1 + len(metrics)
     n_cols = min(n_panels, 2)
-    n_rows = (n_panels + n_cols - 1) // n_cols
+    n_rows = math.ceil(n_panels / n_cols)
 
     fig, axes = plt.subplots(
         n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False

@@ -1,5 +1,5 @@
 experiment:
-  name: "gph_comparative_metrics"
+  name: gph_comparative_metrics
 
 shared:
   model:
@@ -11,9 +11,9 @@ shared:
     model_seed: 0
   training:
     lr: 0.0001
-    optimizer: "SGD"
+    optimizer: SGD
     optimizer_params: null
-    criterion: "MSELoss"
+    criterion: MSELoss
     batch_seed: 0
     track_train_loss: false
 
@@ -33,7 +33,7 @@ data:
   online: false
   noise_std: 0.0
   params:
-    matrix: "diagonal"
+    matrix: diagonal
     scale: 10.0
 
 max_steps: 10000

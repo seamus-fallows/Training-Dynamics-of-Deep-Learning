@@ -45,11 +45,6 @@ from dln.overrides import (
 )
 from dln.results_io import SweepWriter, NullWriter
 
-# Single-threaded BLAS: our matrix ops are too small for thread parallelism
-# to outweigh the wake/sync overhead. Also prevents thread contention in parallel sweeps.
-t.set_num_threads(1)
-t.set_num_interop_threads(1)
-
 
 def _fmt_time(seconds):
     h, remainder = divmod(int(seconds), 3600)
@@ -399,6 +394,13 @@ def _filter_jobs(
 
 
 if __name__ == "__main__":
+    # Single-threaded BLAS: our matrix ops are too small (e.g. 100x100) for
+    # thread parallelism to outweigh wake/sync overhead. Also prevents thread
+    # contention when running parallel sweeps (N workers × M BLAS threads).
+    # If running single jobs with hidden_dim >> 500, removing these may help.
+    t.set_num_threads(1)
+    t.set_num_interop_threads(1)
+
     args = parse_args()
 
     overrides = parse_overrides(args.overrides)

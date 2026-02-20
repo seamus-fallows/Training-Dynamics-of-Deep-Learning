@@ -50,8 +50,8 @@ class ComparativeTrainer:
             inputs_b, targets_b = next(self.trainer_b.train_loader)
 
             if step % evaluate_every == 0:
-                record_a = self.trainer_a._evaluate(step, effective_metrics_a)
-                record_b = self.trainer_b._evaluate(step, effective_metrics_b)
+                record_a = self.trainer_a.evaluate(step, effective_metrics_a)
+                record_b = self.trainer_b.evaluate(step, effective_metrics_b)
 
                 record = {"step": step}
                 record.update({f"{k}_a": v for k, v in record_a.items() if k != "step"})
@@ -69,7 +69,7 @@ class ComparativeTrainer:
                 for k, v in record.items():
                     history[k].append(v)
 
-            self.trainer_a._training_step(inputs_a, targets_a)
-            self.trainer_b._training_step(inputs_b, targets_b)
+            self.trainer_a.training_step(inputs_a, targets_a)
+            self.trainer_b.training_step(inputs_b, targets_b)
 
         return dict(history)

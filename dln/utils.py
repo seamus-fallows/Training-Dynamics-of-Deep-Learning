@@ -124,12 +124,10 @@ def resolve_config(
             OmegaConf.update(cfg, key, value, merge=True)
 
     if config_dir == "comparative" and "shared" in cfg:
-        if "model" in cfg.shared:
-            cfg.model_a = OmegaConf.merge(cfg.shared.model, cfg.model_a)
-            cfg.model_b = OmegaConf.merge(cfg.shared.model, cfg.model_b)
-        if "training" in cfg.shared:
-            cfg.training_a = OmegaConf.merge(cfg.shared.training, cfg.training_a)
-            cfg.training_b = OmegaConf.merge(cfg.shared.training, cfg.training_b)
+        for section in ("model", "training"):
+            if section in cfg.shared:
+                cfg[f"{section}_a"] = OmegaConf.merge(cfg.shared[section], cfg[f"{section}_a"])
+                cfg[f"{section}_b"] = OmegaConf.merge(cfg.shared[section], cfg[f"{section}_b"])
 
     OmegaConf.resolve(cfg)
     return cfg

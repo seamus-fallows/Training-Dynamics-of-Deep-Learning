@@ -197,15 +197,29 @@ def grad_norm_squared(
     return (mean_grad**2).sum().item()
 
 
-@metric("trace_gradient_covariance")
-def trace_gradient_covariance(
+# Per-sample gradient trace engine
+
+
+def _gradient_traces(
     model: Module,
     inputs: Tensor,
     targets: Tensor,
     criterion: Module,
-    chunks: int = 1,
-) -> float:
-    """Tr(Σ) = E[||n_i||²] where n_i = g_i - ḡ are the gradient noise vectors."""
+    chunks: int,
+    *,
+    compute_grad_norm: bool = False,
+    compute_trace_grad: bool = False,
+    compute_trace_hess: bool = False,
+) -> dict[str, float]:
+    """Shared engine for per-sample-gradient-based trace metrics.
+
+    Computes any combination of:
+        grad_norm_squared: ||∇L||² from mean of per-sample gradients
+        trace_gradient_covariance: Tr(Σ) = E[||nᵢ||²]
+        trace_hessian_covariance: Tr(HΣ) = E[nᵢᵀHnᵢ]
+
+    When chunks > 1, uses a two-pass algorithm to reduce peak VRAM.
+    """
     params, buffers = _extract_params(model)
     n_samples = len(inputs)
 
@@ -215,7 +229,18 @@ def trace_gradient_covariance(
         ).detach()
         mean_grad = per_sample_grads.mean(dim=0)
         noise = per_sample_grads - mean_grad
-        return (noise**2).sum(dim=1).mean().item()
+
+        result = {}
+        if compute_grad_norm:
+            result["grad_norm_squared"] = (mean_grad**2).sum().item()
+        if compute_trace_grad:
+            result["trace_gradient_covariance"] = (noise**2).sum(dim=1).mean().item()
+        if compute_trace_hess:
+            hvps = _compute_batch_hvps(
+                model, params, buffers, inputs, targets, criterion, noise
+            ).detach()
+            result["trace_hessian_covariance"] = (noise * hvps).sum(dim=1).mean().item()
+        return result
 
     chunk_size = (n_samples + chunks - 1) // chunks
 
@@ -234,26 +259,54 @@ def trace_gradient_covariance(
     mean_grad = grad_sum / n_samples
     del grad_sum
 
-    # Pass 2: trace (accumulate on-device to avoid per-chunk CUDA syncs)
-    trace_sum = t.zeros((), device=inputs.device)
+    # Pass 2: accumulate traces (on-device to avoid per-chunk CUDA syncs)
+    trace_grad_sum = t.zeros((), device=inputs.device) if compute_trace_grad else None
+    trace_hess_sum = t.zeros((), device=inputs.device) if compute_trace_hess else None
+
     for i in range(0, n_samples, chunk_size):
         chunk_grads = _compute_per_sample_grads(
             model, params, buffers,
             inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
         ).detach()
         noise = chunk_grads - mean_grad
-        trace_sum += (noise**2).sum()
-        del chunk_grads, noise
+        del chunk_grads
 
-    return (trace_sum / n_samples).item()
+        if compute_trace_grad:
+            trace_grad_sum += (noise**2).sum()
+        if compute_trace_hess:
+            hvps = _compute_batch_hvps(
+                model, params, buffers, inputs, targets, criterion, noise
+            ).detach()
+            trace_hess_sum += (noise * hvps).sum()
+            del hvps
+
+        del noise
+
+    result = {}
+    if compute_grad_norm:
+        result["grad_norm_squared"] = (mean_grad**2).sum().item()
+    if compute_trace_grad:
+        result["trace_gradient_covariance"] = (trace_grad_sum / n_samples).item()
+    if compute_trace_hess:
+        result["trace_hessian_covariance"] = (trace_hess_sum / n_samples).item()
+    return result
+
+
+@metric("trace_gradient_covariance")
+def trace_gradient_covariance(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
+    chunks: int = 1,
+) -> float:
+    """Tr(Σ) = E[||n_i||²] where n_i = g_i - ḡ are the gradient noise vectors."""
+    return _gradient_traces(
+        model, inputs, targets, criterion, chunks,
+        compute_trace_grad=True,
+    )["trace_gradient_covariance"]
 
 
 @metric("gradient_stats")
 def gradient_stats(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
     chunks: int = 1,
 ) -> dict[str, float]:
     """
@@ -264,117 +317,27 @@ def gradient_stats(
     backward pass to get the mean gradient, which we already get from the
     per-sample grads needed for Tr(Σ)).
     """
-    params, buffers = _extract_params(model)
-    n_samples = len(inputs)
-
-    if chunks == 1:
-        per_sample_grads = _compute_per_sample_grads(
-            model, params, buffers, inputs, targets, criterion
-        ).detach()
-        mean_grad = per_sample_grads.mean(dim=0)
-        noise = per_sample_grads - mean_grad
-        return {
-            "grad_norm_squared": (mean_grad**2).sum().item(),
-            "trace_gradient_covariance": (noise**2).sum(dim=1).mean().item(),
-        }
-
-    chunk_size = (n_samples + chunks - 1) // chunks
-
-    # Pass 1: mean gradient
-    grad_sum = None
-    for i in range(0, n_samples, chunk_size):
-        chunk_grads = _compute_per_sample_grads(
-            model, params, buffers,
-            inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
-        ).detach()
-        if grad_sum is None:
-            grad_sum = chunk_grads.sum(dim=0)
-        else:
-            grad_sum += chunk_grads.sum(dim=0)
-        del chunk_grads
-    mean_grad = grad_sum / n_samples
-    del grad_sum
-
-    # Pass 2: trace (accumulate on-device to avoid per-chunk CUDA syncs)
-    trace_sum = t.zeros((), device=inputs.device)
-    for i in range(0, n_samples, chunk_size):
-        chunk_grads = _compute_per_sample_grads(
-            model, params, buffers,
-            inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
-        ).detach()
-        noise = chunk_grads - mean_grad
-        trace_sum += (noise**2).sum()
-        del chunk_grads, noise
-
-    return {
-        "grad_norm_squared": (mean_grad**2).sum().item(),
-        "trace_gradient_covariance": (trace_sum / n_samples).item(),
-    }
+    return _gradient_traces(
+        model, inputs, targets, criterion, chunks,
+        compute_grad_norm=True, compute_trace_grad=True,
+    )
 
 
 @metric("trace_hessian_covariance")
 def trace_hessian_covariance(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
     chunks: int = 1,
 ) -> float:
     """Tr(HΣ) = E[nᵢᵀHnᵢ] via Hessian-vector products."""
-    params, buffers = _extract_params(model)
-    n_samples = len(inputs)
-
-    if chunks == 1:
-        per_sample_grads = _compute_per_sample_grads(
-            model, params, buffers, inputs, targets, criterion
-        ).detach()
-        mean_grad = per_sample_grads.mean(dim=0)
-        noise = per_sample_grads - mean_grad
-        hvps = _compute_batch_hvps(
-            model, params, buffers, inputs, targets, criterion, noise
-        ).detach()
-        return (noise * hvps).sum(dim=1).mean().item()
-
-    chunk_size = (n_samples + chunks - 1) // chunks
-
-    # Pass 1: mean gradient
-    grad_sum = None
-    for i in range(0, n_samples, chunk_size):
-        chunk_grads = _compute_per_sample_grads(
-            model, params, buffers,
-            inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
-        ).detach()
-        if grad_sum is None:
-            grad_sum = chunk_grads.sum(dim=0)
-        else:
-            grad_sum += chunk_grads.sum(dim=0)
-        del chunk_grads
-    mean_grad = grad_sum / n_samples
-    del grad_sum
-
-    # Pass 2: trace (accumulate on-device to avoid per-chunk CUDA syncs)
-    trace_sum = t.zeros((), device=inputs.device)
-    for i in range(0, n_samples, chunk_size):
-        chunk_grads = _compute_per_sample_grads(
-            model, params, buffers,
-            inputs[i : i + chunk_size], targets[i : i + chunk_size], criterion,
-        ).detach()
-        noise = chunk_grads - mean_grad
-        hvps = _compute_batch_hvps(
-            model, params, buffers, inputs, targets, criterion, noise
-        ).detach()
-        trace_sum += (noise * hvps).sum()
-        del chunk_grads, noise, hvps
-
-    return (trace_sum / n_samples).item()
+    return _gradient_traces(
+        model, inputs, targets, criterion, chunks,
+        compute_trace_hess=True,
+    )["trace_hessian_covariance"]
 
 
 @metric("trace_covariances")
 def trace_covariances(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module,
     chunks: int = 1,
 ) -> dict[str, float]:
     """
@@ -391,84 +354,10 @@ def trace_covariances(
         chunks: Split computation into chunks to reduce VRAM usage.
             Higher values use less memory but may be slower.
     """
-    params, buffers = _extract_params(model)
-    n_samples = len(inputs)
-    chunk_size = (n_samples + chunks - 1) // chunks
-
-    if chunks == 1:
-        per_sample_grads = _compute_per_sample_grads(
-            model, params, buffers, inputs, targets, criterion
-        ).detach()
-        mean_grad = per_sample_grads.mean(dim=0)
-        noise = per_sample_grads - mean_grad
-
-        grad_norm_sq = (mean_grad**2).sum()
-        trace_grad = (noise**2).sum(dim=1).mean()
-
-        hvps = _compute_batch_hvps(
-            model, params, buffers, inputs, targets, criterion, noise
-        ).detach()
-        trace_hess = (noise * hvps).sum(dim=1).mean()
-
-        return {
-            "grad_norm_squared": grad_norm_sq.item(),
-            "trace_gradient_covariance": trace_grad.item(),
-            "trace_hessian_covariance": trace_hess.item(),
-        }
-
-    # Chunked path: two passes
-
-    # Pass 1: Compute mean gradient
-    grad_sum = None
-    for i in range(0, n_samples, chunk_size):
-        chunk_grads = _compute_per_sample_grads(
-            model,
-            params,
-            buffers,
-            inputs[i : i + chunk_size],
-            targets[i : i + chunk_size],
-            criterion,
-        ).detach()
-
-        if grad_sum is None:
-            grad_sum = chunk_grads.sum(dim=0)
-        else:
-            grad_sum += chunk_grads.sum(dim=0)
-
-        del chunk_grads
-
-    mean_grad = grad_sum / n_samples
-    del grad_sum
-
-    # Pass 2: Compute traces (accumulate on-device to avoid per-chunk CUDA syncs)
-    trace_grad_sum = t.zeros((), device=inputs.device)
-    trace_hess_sum = t.zeros((), device=inputs.device)
-
-    for i in range(0, n_samples, chunk_size):
-        chunk_grads = _compute_per_sample_grads(
-            model,
-            params,
-            buffers,
-            inputs[i : i + chunk_size],
-            targets[i : i + chunk_size],
-            criterion,
-        ).detach()
-
-        noise = chunk_grads - mean_grad
-        trace_grad_sum += (noise**2).sum()
-
-        hvps = _compute_batch_hvps(
-            model, params, buffers, inputs, targets, criterion, noise
-        ).detach()
-        trace_hess_sum += (noise * hvps).sum()
-
-        del chunk_grads, noise, hvps
-
-    return {
-        "grad_norm_squared": (mean_grad**2).sum().item(),
-        "trace_gradient_covariance": (trace_grad_sum / n_samples).item(),
-        "trace_hessian_covariance": (trace_hess_sum / n_samples).item(),
-    }
+    return _gradient_traces(
+        model, inputs, targets, criterion, chunks,
+        compute_grad_norm=True, compute_trace_grad=True, compute_trace_hess=True,
+    )
 
 
 # Comparative metrics
