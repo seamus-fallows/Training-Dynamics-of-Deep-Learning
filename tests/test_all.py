@@ -930,20 +930,6 @@ class TestMetrics:
         assert abs(gs_unchunked["grad_norm_squared"] - gs_chunked["grad_norm_squared"]) < 1e-5
         assert abs(gs_unchunked["trace_gradient_covariance"] - gs_chunked["trace_gradient_covariance"]) < 1e-5
 
-    def test_absolute_rank(self):
-        model = create_model(model_seed=0, num_hidden=2)
-        inputs = t.randn(10, 5)
-        targets = t.randn(10, 5)
-        criterion = nn.MSELoss()
-
-        result = metrics.compute_metrics(
-            model, ["absolute_rank"], inputs, targets, criterion
-        )
-
-        W = model.effective_weight()
-        expected = t.linalg.matrix_rank(W).item()
-        assert result["absolute_rank"] == expected
-
     def test_relative_rank(self):
         model = create_model(model_seed=0, num_hidden=2)
         inputs = t.randn(10, 5)
@@ -965,20 +951,6 @@ class TestMetrics:
         expected = int((sv > 0.5 * sv[0]).sum().item())
         assert result["relative_rank"] == expected
 
-    def test_stable_rank(self):
-        model = create_model(model_seed=0, num_hidden=2)
-        inputs = t.randn(10, 5)
-        targets = t.randn(10, 5)
-        criterion = nn.MSELoss()
-
-        result = metrics.compute_metrics(
-            model, ["stable_rank"], inputs, targets, criterion
-        )
-
-        sv = t.linalg.svdvals(model.effective_weight())
-        expected = (sv.square().sum() / sv[0].square()).item()
-        assert abs(result["stable_rank"] - expected) < 1e-6
-
     def test_spectral_entropy_rank(self):
         model = create_model(model_seed=0, num_hidden=2)
         inputs = t.randn(10, 5)
@@ -994,21 +966,6 @@ class TestMetrics:
         expected = t.special.entr(p).sum().exp().item()
         assert abs(result["spectral_entropy_rank"] - expected) < 1e-6
 
-    def test_participation_ratio(self):
-        model = create_model(model_seed=0, num_hidden=2)
-        inputs = t.randn(10, 5)
-        targets = t.randn(10, 5)
-        criterion = nn.MSELoss()
-
-        result = metrics.compute_metrics(
-            model, ["participation_ratio"], inputs, targets, criterion
-        )
-
-        sv = t.linalg.svdvals(model.effective_weight())
-        sv_sq = sv.square()
-        expected = (sv_sq.sum().square() / sv_sq.square().sum()).item()
-        assert abs(result["participation_ratio"] - expected) < 1e-6
-
     def test_individual_rank_metrics_match_combined(self):
         """Individual rank metrics must agree with the combined rank_metrics."""
         model_seed, num_hidden = 0, 2
@@ -1020,11 +977,8 @@ class TestMetrics:
         ref = metrics.rank_metrics(model, inputs, targets, criterion)
 
         for name in [
-            "absolute_rank",
             "relative_rank",
-            "stable_rank",
             "spectral_entropy_rank",
-            "participation_ratio",
         ]:
             model = create_model(model_seed=model_seed, num_hidden=num_hidden)
             individual = metrics.compute_metrics(
@@ -1036,26 +990,13 @@ class TestMetrics:
         """Verify rank helpers on known singular value vectors."""
         # Uniform singular values: all rank measures equal d
         sv = t.ones(5)
-        assert metrics._absolute_rank(sv, 5) == 5
         assert metrics._relative_rank(sv, 0.01) == 5
-        assert abs(metrics._stable_rank(sv) - 5.0) < 1e-6
         assert abs(metrics._spectral_entropy_rank(sv) - 5.0) < 1e-6
-        assert abs(metrics._participation_ratio(sv) - 5.0) < 1e-6
 
         # One dominant singular value: all rank measures equal 1
         sv = t.tensor([10.0, 0.0, 0.0, 0.0, 0.0])
-        assert metrics._absolute_rank(sv, 5) == 1
         assert metrics._relative_rank(sv, 0.01) == 1
-        assert abs(metrics._stable_rank(sv) - 1.0) < 1e-6
         assert abs(metrics._spectral_entropy_rank(sv) - 1.0) < 1e-6
-        assert abs(metrics._participation_ratio(sv) - 1.0) < 1e-6
-
-        # Specific numerical case: [4, 2, 1]
-        sv = t.tensor([4.0, 2.0, 1.0])
-        sv_sq = sv.square()
-        expected_pr = (sv_sq.sum().square() / sv_sq.square().sum()).item()
-        assert abs(metrics._participation_ratio(sv) - expected_pr) < 1e-5
-        assert abs(expected_pr - 441.0 / 273.0) < 1e-5
 
     def test_compute_metrics_expands_rank_metrics(self):
         model = create_model(model_seed=0, num_hidden=2)
@@ -1067,11 +1008,8 @@ class TestMetrics:
             model, ["rank_metrics"], inputs, targets, criterion
         )
 
-        assert "absolute_rank" in results
         assert "relative_rank" in results
-        assert "stable_rank" in results
         assert "spectral_entropy_rank" in results
-        assert "participation_ratio" in results
 
     def test_singular_values(self):
         model = create_model(model_seed=0, num_hidden=2)

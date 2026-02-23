@@ -171,15 +171,7 @@ def effective_weight_norm(
 
 # Rank metrics (singular-value-based)
 #
-# Helpers take singular values (descending) as input, decoupled from how the
-# matrix is obtained.  This supports future extension to partial weight products.
-# All helpers assume at least one nonzero singular value (sv[0] > 0).
-
-
-def _absolute_rank(sv: Tensor, max_dim: int) -> int:
-    """Count of sigma_i > eps * max_dim * sigma_max."""
-    tol = t.finfo(sv.dtype).eps * max_dim * sv[0]
-    return int((sv > tol).sum().item())
+# Helpers take singular values (descending) as input and assume sv[0] > 0.
 
 
 def _relative_rank(sv: Tensor, tol: float, abs_tol: float = 0.0) -> int:
@@ -188,30 +180,10 @@ def _relative_rank(sv: Tensor, tol: float, abs_tol: float = 0.0) -> int:
     return int((sv > threshold).sum().item())
 
 
-def _stable_rank(sv: Tensor) -> float:
-    """||W||_F^2 / ||W||_2^2 = sum(sigma_i^2) / sigma_max^2."""
-    return (sv.square().sum() / sv[0].square()).item()
-
-
 def _spectral_entropy_rank(sv: Tensor) -> float:
     """exp(H) where H = -sum(p_i * log(p_i)), p_i = sigma_i / sum(sigma_j)."""
     p = sv / sv.sum()
     return t.special.entr(p).sum().exp().item()
-
-
-def _participation_ratio(sv: Tensor) -> float:
-    """(sum(sigma_i^2))^2 / sum(sigma_i^4)."""
-    sv_sq = sv.square()
-    return (sv_sq.sum().square() / sv_sq.square().sum()).item()
-
-
-@metric("absolute_rank")
-def absolute_rank(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
-) -> float:
-    W = model.effective_weight()
-    sv = t.linalg.svdvals(W)
-    return _absolute_rank(sv, max(W.shape))
 
 
 @metric("relative_rank")
@@ -228,28 +200,12 @@ def relative_rank(
     return _relative_rank(sv, tol, abs_tol)
 
 
-@metric("stable_rank")
-def stable_rank(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
-) -> float:
-    sv = t.linalg.svdvals(model.effective_weight())
-    return _stable_rank(sv)
-
-
 @metric("spectral_entropy_rank")
 def spectral_entropy_rank(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
     sv = t.linalg.svdvals(model.effective_weight())
     return _spectral_entropy_rank(sv)
-
-
-@metric("participation_ratio")
-def participation_ratio(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
-) -> float:
-    sv = t.linalg.svdvals(model.effective_weight())
-    return _participation_ratio(sv)
 
 
 @metric("rank_metrics")
@@ -262,16 +218,11 @@ def rank_metrics(
     abs_tol: float = 0.0,
     **kwargs,
 ) -> dict[str, float]:
-    """All rank metrics from a single SVD: absolute_rank, relative_rank,
-    stable_rank, spectral_entropy_rank, participation_ratio."""
-    W = model.effective_weight()
-    sv = t.linalg.svdvals(W)
+    """All rank metrics from a single SVD: relative_rank, spectral_entropy_rank."""
+    sv = t.linalg.svdvals(model.effective_weight())
     return {
-        "absolute_rank": _absolute_rank(sv, max(W.shape)),
         "relative_rank": _relative_rank(sv, tol, abs_tol),
-        "stable_rank": _stable_rank(sv),
         "spectral_entropy_rank": _spectral_entropy_rank(sv),
-        "participation_ratio": _participation_ratio(sv),
     }
 
 
