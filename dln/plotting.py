@@ -30,6 +30,8 @@ def compute_ci(
 def smooth(values: list[float] | np.ndarray, window: int) -> np.ndarray:
     """Moving average with edge padding to preserve length."""
     values = np.asarray(values)
+    if window <= 1:
+        return values
     kernel = np.ones(window) / window
     padded = np.pad(values, (window - 1, 0), mode="edge")
     return np.convolve(padded, kernel, mode="valid")
@@ -164,7 +166,9 @@ def plot_comparative(
 def plot_run(result: RunResult, metrics: list[str] | None = None) -> plt.Figure:
     """Quick visualization of a single run: loss + all tracked metrics."""
     if metrics is None:
-        metrics = [m for m in result.metric_names() if m != "test_loss"]
+        metrics = [
+            m for m in result.metric_names() if m not in ("test_loss", "train_loss")
+        ]
 
     n_panels = 1 + len(metrics)
     n_cols = min(n_panels, 2)
@@ -178,6 +182,8 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> plt.Figure:
     steps = result["step"]
 
     axes[0].plot(steps, result["test_loss"], label="test")
+    if "train_loss" in result:
+        axes[0].plot(steps, result["train_loss"], label="train")
     axes[0].set_yscale("log")
     axes[0].set_xlabel("Step")
     axes[0].set_ylabel("Loss")

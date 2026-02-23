@@ -51,8 +51,8 @@ data:
                         #   "diagonal" - diagonal matrix with entries scale * [1, 2, ..., d]
                         #     requires: scale (float)
                         #   "power_law" - diagonal matrix with entries scale * i^(-alpha)
-#     requires: scale (float), alpha (float)
-#   "identity" - identity matrix, requires out_dim == in_dim
+                        #     requires: scale (float), alpha (float)
+                        #   "identity" - identity matrix, requires out_dim == in_dim
     scale: 10.0         # (for diagonal)
 
 # -----------------------------------------------------------------------------
@@ -98,6 +98,7 @@ num_evaluations: 250    # int: number of times to evaluate/log metrics
 #   rank_metrics              - returns all five rank metrics from a single SVD
 #                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
 #   singular_values           - returns sv_0, sv_1, ... (all singular values of effective weight)
+#   layer_singular_values     - returns layer_0_sv_0, ... (per-layer singular values)
 metrics: []
 # Examples:
 #   metrics:

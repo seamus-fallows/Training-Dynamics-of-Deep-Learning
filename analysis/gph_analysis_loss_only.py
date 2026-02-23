@@ -37,22 +37,20 @@ import numpy as np
 import polars as pl
 from scipy import stats as scipy_stats
 
+from _common import (
+    BATCH_KEY_COLS, BL_KEY_COLS, CACHE_DIR, GAMMA_NAMES,
+    build_filter, fmt_seeds, mean_centered_spread, sort_parquet, suptitle_params,
+)
+
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-_CACHE_DIR = Path(__file__).resolve().parent / ".cache"
-
-GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
-
-BL_KEY_COLS = ["model.hidden_dim", "model.gamma", "data.noise_std", "model.model_seed"]
-BATCH_KEY_COLS = BL_KEY_COLS[:3]  # columns used for batched parquet reads
-
 EXPERIMENTS = {
     "offline": {
         "base_path": Path("outputs/gph/gph_offline_loss"),
-        "cache_path": _CACHE_DIR / "gph_offline_loss.pkl",
+        "cache_path": CACHE_DIR / "gph_offline_loss.pkl",
         "figures_path": Path("figures/gph_offline_loss"),
         "baseline_subdir": "full_batch",
         "sgd_subdir": "mini_batch",
@@ -62,7 +60,7 @@ EXPERIMENTS = {
     },
     "online": {
         "base_path": Path("outputs/gph/gph_online_loss"),
-        "cache_path": _CACHE_DIR / "gph_online_loss.pkl",
+        "cache_path": CACHE_DIR / "gph_online_loss.pkl",
         "figures_path": Path("figures/gph_online_loss"),
         "baseline_subdir": "large_batch",
         "sgd_subdir": "mini_batch",
@@ -135,41 +133,6 @@ def _extract_curves(df: pl.DataFrame) -> np.ndarray:
     return np.vstack(df["test_loss"].to_list())
 
 
-def _mean_centered_spread(
-    curves: np.ndarray, mean: np.ndarray, coverage: float = 0.90,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute mean-centered spread bands capturing `coverage` of runs.
-
-    For each half of the distribution (above/below the mean), captures
-    `coverage` of runs in that half. This centers the band on the mean
-    rather than the median, giving asymmetric bands for skewed distributions.
-    """
-    n_runs, n_steps = curves.shape
-    tail = 1.0 - coverage
-
-    # Fraction of runs at or below the mean at each step
-    f_below = (curves <= mean[np.newaxis, :]).sum(axis=0) / n_runs
-
-    # Target quantiles (vary per step to center on mean)
-    q_lo = tail * f_below
-    q_hi = tail * f_below + coverage
-
-    # Sort once and interpolate per-step quantiles
-    sorted_curves = np.sort(curves, axis=0)
-    step_idx = np.arange(n_steps)
-
-    def _interp(q):
-        idx_f = q * (n_runs - 1)
-        lo = np.clip(np.floor(idx_f).astype(int), 0, n_runs - 2)
-        frac = idx_f - lo
-        return (
-            sorted_curves[lo, step_idx] * (1 - frac)
-            + sorted_curves[lo + 1, step_idx] * frac
-        )
-
-    return _interp(q_lo), _interp(q_hi)
-
-
 def _welch_t_crit(
     se_a: np.ndarray, n_a: int, se_b: np.ndarray, n_b: int,
 ) -> np.ndarray:
@@ -206,7 +169,7 @@ def _compute_baseline_stats(subset: pl.DataFrame) -> BaselineStats | None:
         return BaselineStats(steps, curves[0], None, 1, None, None, None, None)
 
     mean = curves.mean(axis=0)
-    spread_lo, spread_hi = _mean_centered_spread(curves, mean)
+    spread_lo, spread_hi = mean_centered_spread(curves, mean)
 
     return BaselineStats(
         steps=steps,
@@ -233,7 +196,7 @@ def _compute_sgd_config_stats(
     mean = curves.mean(axis=0)
     var = curves.var(axis=0, ddof=1) if n > 1 else np.zeros(curves.shape[1])
     spread_lo, spread_hi = (
-        _mean_centered_spread(curves, mean) if n > 1 else (mean, mean)
+        mean_centered_spread(curves, mean) if n > 1 else (mean, mean)
     )
 
     # Log-space statistics
@@ -315,14 +278,6 @@ def _compute_sgd_config_stats(
 # =============================================================================
 
 
-def _build_filter(key_cols: list[str], values: tuple) -> pl.Expr:
-    """Build a polars filter expression matching key columns to values."""
-    expr = pl.lit(True)
-    for col, val in zip(key_cols, values):
-        expr = expr & (pl.col(col) == val)
-    return expr
-
-
 def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
     baseline_dir = exp_config["base_path"] / exp_config["baseline_subdir"]
     sgd_dir = exp_config["base_path"] / exp_config["sgd_subdir"]
@@ -366,7 +321,7 @@ def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
     completed = 0
     for batch_key, batch_bl_keys in key_batches.items():
         chunk = (
-            sgd_lf.filter(_build_filter(BATCH_KEY_COLS, batch_key))
+            sgd_lf.filter(build_filter(BATCH_KEY_COLS, batch_key))
             .select(sgd_select)
             .collect()
         )
@@ -442,28 +397,6 @@ def get_stats(
 # =============================================================================
 # Plotting
 # =============================================================================
-
-
-def _fmt_seeds(n) -> str:
-    """Format seed count for titles, e.g. 10000 → '10,000'."""
-    if isinstance(n, int):
-        return f"{n:,}"
-    return str(n)
-
-
-def _suptitle_params(
-    exp_config: dict, gamma: float, noise: float,
-) -> str:
-    """Build pipe-separated shared parameter string for figure suptitles."""
-    baseline_bs = exp_config["baseline_batch_size"]
-    regime = "Online (infinite data)" if baseline_bs is not None else "Fixed train set (N=500)"
-
-    parts = [
-        regime,
-        f"{GAMMA_NAMES[gamma]} initialisation (\u03b3 = {gamma})",
-        f"Label noise std = {noise}",
-    ]
-    return " | ".join(parts)
 
 
 def _get_n_seeds(stats: dict[tuple, ConfigStats]):
@@ -577,15 +510,15 @@ def plot_loss_ratio(
         prefix = (
             f"$E(L_{{B={baseline_bs}}})$ vs "
             f"$E(L_{{B={batch_size}}})$ over "
-            f"{_fmt_seeds(n_batch_seeds)} batch seeds"
+            f"{fmt_seeds(n_batch_seeds)} batch seeds"
         )
     else:
         prefix = (
             f"$L_{{\\mathrm{{GD}}}}$ vs "
             f"$E(L_{{\\mathrm{{SGD}}}})$ over "
-            f"{_fmt_seeds(n_batch_seeds)} batch partitions | batch size = {batch_size}"
+            f"{fmt_seeds(n_batch_seeds)} batch partitions | batch size = {batch_size}"
         )
-    params = _suptitle_params(exp_config, gamma, noise)
+    params = suptitle_params(exp_config, gamma, noise)
     fig.suptitle(
         f"{prefix} | {params}",
         fontsize=13,
@@ -703,14 +636,14 @@ def plot_loss_variability(
         prefix = (
             f"$L_{{B={baseline_bs}}}$ and "
             f"$L_{{B={batch_size}}}$ across "
-            f"{_fmt_seeds(n_batch_seeds)} batch seeds"
+            f"{fmt_seeds(n_batch_seeds)} batch seeds"
         )
     else:
         prefix = (
             f"$L_{{\\mathrm{{SGD}}}}$ across "
-            f"{_fmt_seeds(n_batch_seeds)} batch partitions | batch size = {batch_size}"
+            f"{fmt_seeds(n_batch_seeds)} batch partitions | batch size = {batch_size}"
         )
-    params = _suptitle_params(exp_config, gamma, noise)
+    params = suptitle_params(exp_config, gamma, noise)
     fig.suptitle(
         f"{prefix} | {params}",
         fontsize=13,
@@ -779,38 +712,6 @@ def generate_all_plots(exp_config: dict, stats: dict[tuple, ConfigStats]) -> Non
             )
 
     print(f"\nAll plots saved to {figures_path}/")
-
-
-# =============================================================================
-# Parquet Sorting
-# =============================================================================
-
-
-def sort_parquet(exp_config: dict) -> None:
-    """Sort parquet files by key columns for efficient predicate pushdown.
-
-    Parquet stores per-row-group column statistics (min/max). When rows are
-    sorted by the columns used in filter predicates, each row group has tight
-    value ranges, allowing polars to skip irrelevant row groups entirely.
-    Without sorting, every row group spans the full value range and nothing
-    can be skipped — each filtered read must scan the entire file.
-    """
-    for subdir in [exp_config["baseline_subdir"], exp_config["sgd_subdir"]]:
-        path = exp_config["base_path"] / subdir / "results.parquet"
-        if not path.exists():
-            print(f"  Skipping {path} (not found)")
-            continue
-
-        lf = pl.scan_parquet(path)
-        schema_cols = lf.collect_schema().names()
-        sort_cols = [c for c in BL_KEY_COLS if c in schema_cols]
-        if "training.batch_size" in schema_cols:
-            sort_cols.append("training.batch_size")
-
-        print(f"  Sorting {path} by {sort_cols}...")
-        df = lf.sort(sort_cols).collect(engine="streaming")
-        df.write_parquet(path, row_group_size=50_000)
-        print(f"  Rewritten ({len(df):,} rows, {path.stat().st_size / 1e6:.0f} MB)")
 
 
 # =============================================================================

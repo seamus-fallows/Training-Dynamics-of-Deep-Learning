@@ -127,51 +127,46 @@ def _compute_batch_hvps(
 def weight_norm(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    with t.no_grad():
-        return parameters_to_vector(model.parameters()).norm().item()
+    return parameters_to_vector(model.parameters()).norm().item()
 
 
 @metric("layer_norms")
 def layer_norms(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> dict[str, float]:
-    with t.no_grad():
-        return {
-            f"layer_norm_{i}": layer.weight.norm().item()
-            for i, layer in enumerate(model.layers)
-        }
+    return {
+        f"layer_norm_{i}": layer.weight.norm().item()
+        for i, layer in enumerate(model.layers)
+    }
 
 
 @metric("gram_norms")
 def gram_norms(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> dict[str, float]:
-    with t.no_grad():
-        return {
-            f"gram_norm_{i}": (layer.weight @ layer.weight.T).norm().item()
-            for i, layer in enumerate(model.layers)
-        }
+    return {
+        f"gram_norm_{i}": (layer.weight @ layer.weight.T).norm().item()
+        for i, layer in enumerate(model.layers)
+    }
 
 
 @metric("balance_diffs")
 def balance_diffs(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> dict[str, float]:
-    with t.no_grad():
-        results = {}
-        for i in range(len(model.layers) - 1):
-            W = model.layers[i].weight
-            W_next = model.layers[i + 1].weight
-            results[f"balance_diff_{i}"] = (W @ W.T - W_next.T @ W_next).norm().item()
-        return results
+    results = {}
+    for i in range(len(model.layers) - 1):
+        W = model.layers[i].weight
+        W_next = model.layers[i + 1].weight
+        results[f"balance_diff_{i}"] = (W @ W.T - W_next.T @ W_next).norm().item()
+    return results
 
 
 @metric("effective_weight_norm")
 def effective_weight_norm(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    with t.no_grad():
-        return model.effective_weight().norm().item()
+    return model.effective_weight().norm().item()
 
 
 # Rank metrics (singular-value-based)
@@ -214,10 +209,9 @@ def _participation_ratio(sv: Tensor) -> float:
 def absolute_rank(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    with t.no_grad():
-        W = model.effective_weight()
-        sv = t.linalg.svdvals(W)
-        return _absolute_rank(sv, max(W.shape))
+    W = model.effective_weight()
+    sv = t.linalg.svdvals(W)
+    return _absolute_rank(sv, max(W.shape))
 
 
 @metric("relative_rank")
@@ -230,36 +224,32 @@ def relative_rank(
     abs_tol: float = 0.0,
     **kwargs,
 ) -> float:
-    with t.no_grad():
-        sv = t.linalg.svdvals(model.effective_weight())
-        return _relative_rank(sv, tol, abs_tol)
+    sv = t.linalg.svdvals(model.effective_weight())
+    return _relative_rank(sv, tol, abs_tol)
 
 
 @metric("stable_rank")
 def stable_rank(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    with t.no_grad():
-        sv = t.linalg.svdvals(model.effective_weight())
-        return _stable_rank(sv)
+    sv = t.linalg.svdvals(model.effective_weight())
+    return _stable_rank(sv)
 
 
 @metric("spectral_entropy_rank")
 def spectral_entropy_rank(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    with t.no_grad():
-        sv = t.linalg.svdvals(model.effective_weight())
-        return _spectral_entropy_rank(sv)
+    sv = t.linalg.svdvals(model.effective_weight())
+    return _spectral_entropy_rank(sv)
 
 
 @metric("participation_ratio")
 def participation_ratio(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    with t.no_grad():
-        sv = t.linalg.svdvals(model.effective_weight())
-        return _participation_ratio(sv)
+    sv = t.linalg.svdvals(model.effective_weight())
+    return _participation_ratio(sv)
 
 
 @metric("rank_metrics")
@@ -274,25 +264,35 @@ def rank_metrics(
 ) -> dict[str, float]:
     """All rank metrics from a single SVD: absolute_rank, relative_rank,
     stable_rank, spectral_entropy_rank, participation_ratio."""
-    with t.no_grad():
-        W = model.effective_weight()
-        sv = t.linalg.svdvals(W)
-        return {
-            "absolute_rank": _absolute_rank(sv, max(W.shape)),
-            "relative_rank": _relative_rank(sv, tol, abs_tol),
-            "stable_rank": _stable_rank(sv),
-            "spectral_entropy_rank": _spectral_entropy_rank(sv),
-            "participation_ratio": _participation_ratio(sv),
-        }
+    W = model.effective_weight()
+    sv = t.linalg.svdvals(W)
+    return {
+        "absolute_rank": _absolute_rank(sv, max(W.shape)),
+        "relative_rank": _relative_rank(sv, tol, abs_tol),
+        "stable_rank": _stable_rank(sv),
+        "spectral_entropy_rank": _spectral_entropy_rank(sv),
+        "participation_ratio": _participation_ratio(sv),
+    }
 
 
 @metric("singular_values")
 def singular_values(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> dict[str, float]:
-    with t.no_grad():
-        sv = t.linalg.svdvals(model.effective_weight())
-        return {f"sv_{i}": v for i, v in enumerate(sv.tolist())}
+    sv = t.linalg.svdvals(model.effective_weight())
+    return {f"sv_{i}": v for i, v in enumerate(sv.tolist())}
+
+
+@metric("layer_singular_values")
+def layer_singular_values(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> dict[str, float]:
+    results = {}
+    for i, layer in enumerate(model.layers):
+        sv = t.linalg.svdvals(layer.weight)
+        for j, v in enumerate(sv.tolist()):
+            results[f"layer_{i}_sv_{j}"] = v
+    return results
 
 
 @metric("grad_norm_squared")
@@ -522,38 +522,35 @@ def trace_covariances(
 
 @comparative_metric("param_distance")
 def param_distance(model_a: Module, model_b: Module) -> float:
-    with t.no_grad():
-        flat_a = parameters_to_vector(model_a.parameters())
-        flat_b = parameters_to_vector(model_b.parameters())
-        return (flat_a - flat_b).norm().item()
+    flat_a = parameters_to_vector(model_a.parameters())
+    flat_b = parameters_to_vector(model_b.parameters())
+    return (flat_a - flat_b).norm().item()
 
 
 @comparative_metric("param_cosine_sim")
 def param_cosine_sim(model_a: Module, model_b: Module) -> float:
-    with t.no_grad():
-        flat_a = parameters_to_vector(model_a.parameters())
-        flat_b = parameters_to_vector(model_b.parameters())
-        return F.cosine_similarity(flat_a, flat_b, dim=0).item()
+    flat_a = parameters_to_vector(model_a.parameters())
+    flat_b = parameters_to_vector(model_b.parameters())
+    return F.cosine_similarity(flat_a, flat_b, dim=0).item()
 
 
 @comparative_metric("layer_distances")
 def layer_distances(model_a: Module, model_b: Module) -> dict[str, float]:
-    with t.no_grad():
-        return {
-            f"layer_distance_{i}": (a.weight - b.weight).norm().item()
-            for i, (a, b) in enumerate(zip(model_a.layers, model_b.layers))
-        }
+    return {
+        f"layer_distance_{i}": (a.weight - b.weight).norm().item()
+        for i, (a, b) in enumerate(zip(model_a.layers, model_b.layers))
+    }
 
 
 @comparative_metric("frobenius_distance")
 def frobenius_distance(model_a: Module, model_b: Module) -> float:
-    with t.no_grad():
-        return (model_a.effective_weight() - model_b.effective_weight()).norm().item()
+    return (model_a.effective_weight() - model_b.effective_weight()).norm().item()
 
 
 # Compute functions
 
 
+@t.no_grad()
 def compute_metrics(
     model: Module,
     specs: list[str | dict],
@@ -569,6 +566,11 @@ def compute_metrics(
             name = next(iter(spec))
             params = spec[name] or {}
 
+        if name not in METRICS:
+            raise ValueError(
+                f"Unknown metric '{name}'. Available metrics: {sorted(METRICS.keys())}"
+            )
+
         value = METRICS[name](model, inputs, targets, criterion, **params)
 
         if isinstance(value, dict):
@@ -579,6 +581,7 @@ def compute_metrics(
     return results
 
 
+@t.no_grad()
 def compute_comparative_metrics(
     model_a: Module,
     model_b: Module,
@@ -586,6 +589,11 @@ def compute_comparative_metrics(
 ) -> dict[str, float]:
     results = {}
     for name in names:
+        if name not in COMPARATIVE_METRICS:
+            raise ValueError(
+                f"Unknown comparative metric '{name}'. "
+                f"Available comparative metrics: {sorted(COMPARATIVE_METRICS.keys())}"
+            )
         value = COMPARATIVE_METRICS[name](model_a, model_b)
         if isinstance(value, dict):
             results.update(value)

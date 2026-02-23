@@ -9,6 +9,7 @@ dependencies = [
     "matplotlib",
     "scipy",
     "polars",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]

@@ -80,6 +80,8 @@ class Trainer:
 
             self.training_step(inputs, targets)
 
+        # Convert defaultdict to plain dict so callers get clean serialization
+        # and don't accidentally auto-vivify keys
         return dict(history)
 
     def training_step(self, inputs: Tensor, targets: Tensor) -> None:

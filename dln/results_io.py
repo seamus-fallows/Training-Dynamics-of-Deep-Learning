@@ -38,7 +38,10 @@ def _consolidate(
     combined = pl.concat(frames)
 
     if param_keys:
-        # Add explicit row order so "last" is well-defined after dedup
+        # Add explicit row order so "last" is well-defined after dedup.
+        # The sort is necessary: unique() doesn't guarantee input order,
+        # so we must sort by _order to ensure keep="last" picks the
+        # most recently appended row among duplicates.
         combined = (
             combined.with_row_index("_order")
             .sort("_order")
@@ -158,7 +161,7 @@ def _save_param_keys(output_dir: Path, param_keys: list[str]) -> None:
     """Sidecar JSON file — needed by load_sweep for deduplication."""
     path = output_dir / "_param_keys.json"
     with path.open("w") as f:
-        json.dump(param_keys, f)
+        json.dump(param_keys, f, indent=2)
 
 
 def _load_param_keys(sweep_dir: Path) -> list[str] | None:

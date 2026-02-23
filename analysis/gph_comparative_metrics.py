@@ -46,19 +46,17 @@ import numpy as np
 import polars as pl
 from scipy import stats as scipy_stats
 
+from _common import CACHE_DIR, GAMMA_NAMES, fmt_seeds
+
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-_CACHE_DIR = Path(__file__).resolve().parent / ".cache"
-
-GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
-
 DEFAULT_INPUT = Path("outputs/gph_comparative_metrics/comparative")
 DEFAULT_GD_INPUT = Path("outputs/gph_comparative_metrics/gd_metrics")
 DEFAULT_OUTPUT = Path("figures/gph_comparative_metrics")
-DEFAULT_CACHE = _CACHE_DIR / "gph_comparative_metrics.pkl"
+DEFAULT_CACHE = CACHE_DIR / "gph_comparative_metrics.pkl"
 
 # Columns that define a unique configuration (batch_seed is averaged over)
 GROUP_COLS = [
@@ -522,10 +520,6 @@ def get_stats(
 # =============================================================================
 
 
-def _fmt_seeds(n) -> str:
-    return f"{n:,}" if isinstance(n, int) else str(n)
-
-
 def _suptitle(
     title: str, gamma: float, noise: float,
     width: int, batch_size: int, n_seeds: int | str,
@@ -533,7 +527,7 @@ def _suptitle(
     gamma_name = GAMMA_NAMES.get(gamma, f"γ={gamma}")
     return (
         f"{title} | {gamma_name} (γ={gamma}) | noise={noise}"
-        f" | width={width} | B={batch_size} | {_fmt_seeds(n_seeds)} batch seeds"
+        f" | width={width} | B={batch_size} | {fmt_seeds(n_seeds)} batch seeds"
     )
 
 
@@ -915,7 +909,7 @@ def plot_distances(
 
     fig.suptitle(
         f"Distances | {gamma_name} (γ={gamma}) | noise={noise}"
-        f" | width={width} | {_fmt_seeds(n_seeds)} batch seeds",
+        f" | width={width} | {fmt_seeds(n_seeds)} batch seeds",
         fontsize=12, fontweight="bold",
     )
     fig.tight_layout()

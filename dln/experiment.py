@@ -41,10 +41,10 @@ def run_experiment(
     device: str = "cuda",
 ) -> RunResult:
 
-    device = resolve_device(device)
+    resolved_device = resolve_device(device)
 
     dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
-    test_data = to_device(dataset.test_data, device)
+    test_data = to_device(dataset.test_data, resolved_device)
     callbacks = create_callbacks(cfg.callbacks)
 
     trainer = create_trainer(
@@ -52,7 +52,7 @@ def run_experiment(
         training_cfg=cfg.training,
         dataset=dataset,
         test_data=test_data,
-        device=device,
+        device=resolved_device,
     )
 
     history = trainer.run(
@@ -70,10 +70,10 @@ def run_comparative_experiment(
     device: str = "cuda",
 ) -> RunResult:
 
-    device = resolve_device(device)
+    resolved_device = resolve_device(device)
 
     dataset = Dataset(cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim)
-    test_data = to_device(dataset.test_data, device)
+    test_data = to_device(dataset.test_data, resolved_device)
     callbacks_a = create_callbacks(cfg.callbacks_a)
     callbacks_b = create_callbacks(cfg.callbacks_b)
 
@@ -82,14 +82,14 @@ def run_comparative_experiment(
         training_cfg=cfg.training_a,
         dataset=dataset,
         test_data=test_data,
-        device=device,
+        device=resolved_device,
     )
     trainer_b = create_trainer(
         model_cfg=cfg.model_b,
         training_cfg=cfg.training_b,
         dataset=dataset,
         test_data=test_data,
-        device=device,
+        device=resolved_device,
     )
 
     comparative_trainer = ComparativeTrainer(trainer_a, trainer_b)

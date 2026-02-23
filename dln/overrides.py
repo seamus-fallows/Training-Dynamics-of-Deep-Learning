@@ -61,14 +61,14 @@ def parse_value(value_str: str) -> Any | list[Any]:
             return ListValue()
         return ListValue(_parse_single_value(v.strip()) for v in inner.split(","))
 
-    range_match = re.match(r"range\((\d+),\s*(\d+)(?:,\s*(\d+))?\)$", value_str)
+    range_match = re.match(r"range\((-?\d+),\s*(-?\d+)(?:,\s*(-?\d+))?\)$", value_str)
     if range_match:
         start = int(range_match.group(1))
         stop = int(range_match.group(2))
         step = int(range_match.group(3)) if range_match.group(3) else 1
         return list(range(start, stop, step))
 
-    range_shorthand = re.match(r"(\d+)\.\.(\d+)(?:\.\.(\d+))?$", value_str)
+    range_shorthand = re.match(r"(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$", value_str)
     if range_shorthand:
         start = int(range_shorthand.group(1))
         stop = int(range_shorthand.group(2))

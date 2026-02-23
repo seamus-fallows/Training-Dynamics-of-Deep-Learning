@@ -46,14 +46,15 @@ from dln.overrides import (
 from dln.results_io import SweepWriter, NullWriter
 
 
-def _fmt_time(seconds):
+def _fmt_time(seconds: float) -> str:
     h, remainder = divmod(int(seconds), 3600)
     m, s = divmod(remainder, 60)
     if h:
         return f"{h}h {m}m {s}s"
     if m:
         return f"{m}m {s}s"
-    return f"{s}s"
+    # Show one decimal place for short durations where fractions matter
+    return f"{seconds:.1f}s"
 
 
 # =============================================================================
@@ -132,7 +133,7 @@ def parse_args() -> argparse.Namespace:
 # Worker Pool
 # =============================================================================
 
-_worker_state = {}
+_worker_state: dict[str, Any] = {}
 
 
 def _worker_init(resolved_base, config_dir, device):
