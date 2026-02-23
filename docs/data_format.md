@@ -14,6 +14,7 @@ df = load_sweep(Path("outputs/my_experiment/2025-01-15_143022"))
 There are two kinds of columns:
 
 **Scalar columns** — sweep hyperparameters. Dotted names matching the config key path. Native types (int, float, str).
+
 ```
 model.gamma          Float64     0.75, 1.0, 1.5
 model.hidden_dim     Int64       10, 50, 100
@@ -21,6 +22,7 @@ training.batch_seed  Int64       0, 1, 2, ...
 ```
 
 **List columns** — metric time series. Each cell is a `list[float]` containing the full curve for that run.
+
 ```
 step                 List[Float64]   [0, 100, 200, ...]
 test_loss            List[Float64]   [5.2, 3.1, 0.8, ...]
