@@ -773,28 +773,28 @@ class TestMetrics:
 
         assert abs(distance - expected) < 1e-6
 
-    def test_effective_weight(self):
+    def test_end_to_end_weight(self):
         model = create_model(model_seed=0, num_hidden=2)
         weights = [layer.weight for layer in reversed(model.layers)]
         expected = weights[0]
         for w in weights[1:]:
             expected = expected @ w
 
-        result = model.effective_weight()
+        result = model.end_to_end_weight()
         assert t.allclose(result, expected, atol=1e-6)
 
-    def test_effective_weight_norm(self):
+    def test_end_to_end_weight_norm(self):
         model = create_model(model_seed=0, num_hidden=2)
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
         criterion = nn.MSELoss()
 
         result = metrics.compute_metrics(
-            model, ["effective_weight_norm"], inputs, targets, criterion
+            model, ["end_to_end_weight_norm"], inputs, targets, criterion
         )
 
-        expected = model.effective_weight().norm().item()
-        assert abs(result["effective_weight_norm"] - expected) < 1e-6
+        expected = model.end_to_end_weight().norm().item()
+        assert abs(result["end_to_end_weight_norm"] - expected) < 1e-6
 
     def test_layer_norms(self):
         model = create_model(model_seed=0, num_hidden=2)
@@ -865,7 +865,7 @@ class TestMetrics:
             model_a, model_b, ["frobenius_distance"]
         )
 
-        expected = (model_a.effective_weight() - model_b.effective_weight()).norm().item()
+        expected = (model_a.end_to_end_weight() - model_b.end_to_end_weight()).norm().item()
         assert abs(result["frobenius_distance"] - expected) < 1e-6
 
     def test_individual_metrics_match_trace_covariances(self):
@@ -940,7 +940,7 @@ class TestMetrics:
         result = metrics.compute_metrics(
             model, ["relative_rank"], inputs, targets, criterion
         )
-        sv = t.linalg.svdvals(model.effective_weight())
+        sv = t.linalg.svdvals(model.end_to_end_weight())
         expected = int((sv > 0.01 * sv[0]).sum().item())
         assert result["relative_rank"] == expected
 
@@ -961,7 +961,7 @@ class TestMetrics:
             model, ["spectral_entropy_rank"], inputs, targets, criterion
         )
 
-        sv = t.linalg.svdvals(model.effective_weight())
+        sv = t.linalg.svdvals(model.end_to_end_weight())
         p = sv / sv.sum()
         expected = t.special.entr(p).sum().exp().item()
         assert abs(result["spectral_entropy_rank"] - expected) < 1e-6
@@ -1021,7 +1021,7 @@ class TestMetrics:
             model, ["singular_values"], inputs, targets, criterion
         )
 
-        sv = t.linalg.svdvals(model.effective_weight())
+        sv = t.linalg.svdvals(model.end_to_end_weight())
         for i, v in enumerate(sv.tolist()):
             assert f"sv_{i}" in result
             assert abs(result[f"sv_{i}"] - v) < 1e-6
@@ -1230,13 +1230,13 @@ class TestComparativeTrainer:
             max_steps=20,
             num_evaluations=2,
             metrics_a=["weight_norm"],
-            metrics_b=["effective_weight_norm"],
+            metrics_b=["end_to_end_weight_norm"],
         )
 
         assert "weight_norm_a" in history
         assert "weight_norm_b" not in history
-        assert "effective_weight_norm_b" in history
-        assert "effective_weight_norm_a" not in history
+        assert "end_to_end_weight_norm_b" in history
+        assert "end_to_end_weight_norm_a" not in history
 
     def test_per_model_metrics_suppress_one_model(self):
         """metrics_a=[] suppresses metrics for model A while shared metrics apply to B."""
@@ -1297,14 +1297,14 @@ class TestComparativeTrainer:
         history = comp_trainer.run(
             max_steps=20,
             num_evaluations=2,
-            metrics=["weight_norm", "effective_weight_norm"],
+            metrics=["weight_norm", "end_to_end_weight_norm"],
         )
 
         # Both models get all shared metrics
         assert "weight_norm_a" in history
         assert "weight_norm_b" in history
-        assert "effective_weight_norm_a" in history
-        assert "effective_weight_norm_b" in history
+        assert "end_to_end_weight_norm_a" in history
+        assert "end_to_end_weight_norm_b" in history
 
 
 # ===========================================================================

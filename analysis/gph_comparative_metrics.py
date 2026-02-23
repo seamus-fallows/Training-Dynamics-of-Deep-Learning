@@ -15,7 +15,7 @@ Data sources:
     frobenius_distance, plus SGD model metrics as _b-suffixed columns (via
     metrics_a=[] so only model_b metrics are tracked).
   - GD-only sweep (--gd-input): layer_norms, gram_norms, balance_diffs,
-    effective_weight_norm for the deterministic GD side.
+    end_to_end_weight_norm for the deterministic GD side.
 
 Usage (run from the project root):
 
@@ -106,7 +106,7 @@ class CompConfigStats:
 
     # GD model metrics (from GD-only fallback)
     gd_param_norm: np.ndarray | None
-    gd_effective_weight_norm: np.ndarray | None
+    gd_end_to_end_weight_norm: np.ndarray | None
     gd_layer_norms: dict[int, np.ndarray]
     gd_gram_norms: dict[int, np.ndarray]
     gd_balance_diffs: dict[int, np.ndarray]
@@ -117,7 +117,7 @@ class CompConfigStats:
     sgd_gram_norms: dict[int, MetricStats]
     sgd_balance_diffs: dict[int, MetricStats]
     sgd_balance_ratios: dict[int, MetricStats]
-    sgd_effective_weight_norm: MetricStats | None
+    sgd_end_to_end_weight_norm: MetricStats | None
 
 
 # =============================================================================
@@ -245,8 +245,8 @@ def _load_gd_fallback(
             param_norm = np.sqrt(sum(v ** 2 for v in layer_norms.values()))
 
         eff = None
-        if "effective_weight_norm" in row and row["effective_weight_norm"] is not None:
-            eff = np.array(row["effective_weight_norm"])
+        if "end_to_end_weight_norm" in row and row["end_to_end_weight_norm"] is not None:
+            eff = np.array(row["end_to_end_weight_norm"])
 
         result[key] = {
             "layer_norms": layer_norms,
@@ -254,7 +254,7 @@ def _load_gd_fallback(
             "balance_diffs": balance_diffs,
             "balance_ratios": balance_ratios,
             "param_norm": param_norm,
-            "effective_weight_norm": eff,
+            "end_to_end_weight_norm": eff,
         }
 
     print(f"  {len(result)} GD configs loaded as fallback")
@@ -340,14 +340,14 @@ def compute_all_stats(
         gd_balance_diffs = gd.get("balance_diffs", {})
         gd_balance_ratios = gd.get("balance_ratios", {})
         gd_param_norm = gd.get("param_norm")
-        gd_effective_weight_norm = gd.get("effective_weight_norm")
+        gd_end_to_end_weight_norm = gd.get("end_to_end_weight_norm")
 
         # -- SGD model metrics & cosine sim --
         sgd_layer_norms: dict[int, MetricStats] = {}
         sgd_gram_norms: dict[int, MetricStats] = {}
         sgd_balance_diffs_out: dict[int, MetricStats] = {}
         sgd_balance_ratios_out: dict[int, MetricStats] = {}
-        sgd_effective_weight_norm: MetricStats | None = None
+        sgd_end_to_end_weight_norm: MetricStats | None = None
         cosine_sim: MetricStats | None = None
 
         if has_sgd_metrics:
@@ -369,8 +369,8 @@ def compute_all_stats(
                     diff_curves / np.maximum(gl + gr, 1e-30)
                 )
 
-            sgd_effective_weight_norm = _make_stats(
-                _extract_curves(gdf, "effective_weight_norm_b")
+            sgd_end_to_end_weight_norm = _make_stats(
+                _extract_curves(gdf, "end_to_end_weight_norm_b")
             )
 
             # Cosine sim (per-run, derived from layer norms + param distance)
@@ -391,7 +391,7 @@ def compute_all_stats(
             layer_distances=layer_distances,
             cosine_sim=cosine_sim,
             gd_param_norm=gd_param_norm,
-            gd_effective_weight_norm=gd_effective_weight_norm,
+            gd_end_to_end_weight_norm=gd_end_to_end_weight_norm,
             gd_layer_norms=gd_layer_norms,
             gd_gram_norms=gd_gram_norms,
             gd_balance_diffs=gd_balance_diffs,
@@ -400,7 +400,7 @@ def compute_all_stats(
             sgd_gram_norms=sgd_gram_norms,
             sgd_balance_diffs=sgd_balance_diffs_out,
             sgd_balance_ratios=sgd_balance_ratios_out,
-            sgd_effective_weight_norm=sgd_effective_weight_norm,
+            sgd_end_to_end_weight_norm=sgd_end_to_end_weight_norm,
         )
 
         if (idx + 1) % 20 == 0 or idx + 1 == total:
@@ -447,7 +447,7 @@ def _save_cache(stats: dict[tuple, CompConfigStats], path: Path) -> None:
             "layer_distances": _ser_dict_ms(cs.layer_distances),
             "cosine_sim": _ser_ms(cs.cosine_sim),
             "gd_param_norm": cs.gd_param_norm,
-            "gd_effective_weight_norm": cs.gd_effective_weight_norm,
+            "gd_end_to_end_weight_norm": cs.gd_end_to_end_weight_norm,
             "gd_layer_norms": dict(cs.gd_layer_norms),
             "gd_gram_norms": dict(cs.gd_gram_norms),
             "gd_balance_diffs": dict(cs.gd_balance_diffs),
@@ -456,7 +456,7 @@ def _save_cache(stats: dict[tuple, CompConfigStats], path: Path) -> None:
             "sgd_gram_norms": _ser_dict_ms(cs.sgd_gram_norms),
             "sgd_balance_diffs": _ser_dict_ms(cs.sgd_balance_diffs),
             "sgd_balance_ratios": _ser_dict_ms(cs.sgd_balance_ratios),
-            "sgd_effective_weight_norm": _ser_ms(cs.sgd_effective_weight_norm),
+            "sgd_end_to_end_weight_norm": _ser_ms(cs.sgd_end_to_end_weight_norm),
         }
     with open(path, "wb") as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -479,7 +479,7 @@ def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
                 layer_distances=_de_dict_ms(d["layer_distances"]),
                 cosine_sim=_de_ms(d.get("cosine_sim")),
                 gd_param_norm=d.get("gd_param_norm"),
-                gd_effective_weight_norm=d.get("gd_effective_weight_norm"),
+                gd_end_to_end_weight_norm=d.get("gd_end_to_end_weight_norm"),
                 gd_layer_norms=dict(d.get("gd_layer_norms", {})),
                 gd_gram_norms=dict(d.get("gd_gram_norms", {})),
                 gd_balance_diffs=dict(d.get("gd_balance_diffs", {})),
@@ -488,7 +488,7 @@ def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
                 sgd_gram_norms=_de_dict_ms(d.get("sgd_gram_norms", {})),
                 sgd_balance_diffs=_de_dict_ms(d.get("sgd_balance_diffs", {})),
                 sgd_balance_ratios=_de_dict_ms(d.get("sgd_balance_ratios", {})),
-                sgd_effective_weight_norm=_de_ms(d.get("sgd_effective_weight_norm")),
+                sgd_end_to_end_weight_norm=_de_ms(d.get("sgd_end_to_end_weight_norm")),
             )
             for key, d in data.items()
         }
@@ -645,13 +645,13 @@ def plot_model_metrics(
 
         # Row 5: Effective weight norm
         ax = axes[5, col]
-        if s.gd_effective_weight_norm is not None:
+        if s.gd_end_to_end_weight_norm is not None:
             ax.plot(
-                s.steps, s.gd_effective_weight_norm,
+                s.steps, s.gd_end_to_end_weight_norm,
                 color="C0", linewidth=1.5, label="GD",
             )
-        if s.sgd_effective_weight_norm is not None:
-            ms = s.sgd_effective_weight_norm
+        if s.sgd_end_to_end_weight_norm is not None:
+            ms = s.sgd_end_to_end_weight_norm
             ax.plot(
                 s.steps, ms.mean,
                 color="C1", linewidth=1.5, linestyle="--", label="SGD",
@@ -776,8 +776,8 @@ def plot_distances(
 
             # Relative effective matrix distance
             ax = axes[row_frob, col]
-            if s.gd_effective_weight_norm is not None:
-                norm = np.maximum(s.gd_effective_weight_norm, 1e-30)
+            if s.gd_end_to_end_weight_norm is not None:
+                norm = np.maximum(s.gd_end_to_end_weight_norm, 1e-30)
                 ax.plot(s.steps, s.frobenius_distance.mean / norm,
                         color=color, linewidth=1.5, label=lbl)
                 ax.fill_between(
@@ -848,7 +848,7 @@ def plot_distances(
         if col == 0:
             any_key = next((k for k in ((width, gamma, noise, seed, b)
                            for b in batch_sizes) if k in stats), None)
-            has_eff = any_key and stats[any_key].gd_effective_weight_norm is not None
+            has_eff = any_key and stats[any_key].gd_end_to_end_weight_norm is not None
             if has_eff:
                 axes[row_frob, col].set_ylabel(
                     r"$\|W_{\mathrm{eff}}^{\mathrm{SGD}} - W_{\mathrm{eff}}^{\mathrm{GD}}\|_F"
@@ -959,7 +959,7 @@ def _precompute_seed_overlay_data(
 
         gd = gd_fallback.get((width, gamma, noise, seed), {})
         gd_param_norm = gd.get("param_norm")
-        gd_eff_norm = gd.get("effective_weight_norm")
+        gd_eff_norm = gd.get("end_to_end_weight_norm")
         if gd_param_norm is None:
             continue
 

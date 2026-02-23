@@ -162,11 +162,11 @@ def balance_diffs(
     return results
 
 
-@metric("effective_weight_norm")
-def effective_weight_norm(
+@metric("end_to_end_weight_norm")
+def end_to_end_weight_norm(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    return model.effective_weight().norm().item()
+    return model.end_to_end_weight().norm().item()
 
 
 # Rank metrics (singular-value-based)
@@ -196,7 +196,7 @@ def relative_rank(
     abs_tol: float = 0.0,
     **kwargs,
 ) -> float:
-    sv = t.linalg.svdvals(model.effective_weight())
+    sv = t.linalg.svdvals(model.end_to_end_weight())
     return _relative_rank(sv, tol, abs_tol)
 
 
@@ -204,7 +204,7 @@ def relative_rank(
 def spectral_entropy_rank(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
-    sv = t.linalg.svdvals(model.effective_weight())
+    sv = t.linalg.svdvals(model.end_to_end_weight())
     return _spectral_entropy_rank(sv)
 
 
@@ -219,7 +219,7 @@ def rank_metrics(
     **kwargs,
 ) -> dict[str, float]:
     """All rank metrics from a single SVD: relative_rank, spectral_entropy_rank."""
-    sv = t.linalg.svdvals(model.effective_weight())
+    sv = t.linalg.svdvals(model.end_to_end_weight())
     return {
         "relative_rank": _relative_rank(sv, tol, abs_tol),
         "spectral_entropy_rank": _spectral_entropy_rank(sv),
@@ -230,7 +230,7 @@ def rank_metrics(
 def singular_values(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> dict[str, float]:
-    sv = t.linalg.svdvals(model.effective_weight())
+    sv = t.linalg.svdvals(model.end_to_end_weight())
     return {f"sv_{i}": v for i, v in enumerate(sv.tolist())}
 
 
@@ -495,7 +495,7 @@ def layer_distances(model_a: Module, model_b: Module) -> dict[str, float]:
 
 @comparative_metric("frobenius_distance")
 def frobenius_distance(model_a: Module, model_b: Module) -> float:
-    return (model_a.effective_weight() - model_b.effective_weight()).norm().item()
+    return (model_a.end_to_end_weight() - model_b.end_to_end_weight()).norm().item()
 
 
 # Compute functions

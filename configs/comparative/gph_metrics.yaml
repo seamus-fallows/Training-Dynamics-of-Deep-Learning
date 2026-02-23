@@ -46,7 +46,7 @@ metrics:
   - layer_norms
   - gram_norms
   - balance_diffs
-  - effective_weight_norm
+  - end_to_end_weight_norm
 
 comparative_metrics:
   - param_distance

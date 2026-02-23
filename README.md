@@ -201,7 +201,7 @@ Metrics are computed on the test set at each evaluation step.
 | `layer_norms` | `layer_norm_0`, `layer_norm_1`, ... | Per-layer weight matrix norms |
 | `gram_norms` | `gram_norm_0`, `gram_norm_1`, ... | Per-layer Gram matrix (WW^T) norms |
 | `balance_diffs` | `balance_diff_0`, `balance_diff_1`, ... | Per-layer balance: \|\|WW^T - W_next^T W_next\|\| |
-| `effective_weight_norm` | scalar | Norm of the effective weight (product of all layers) |
+| `end_to_end_weight_norm` | scalar | Norm of the effective weight (product of all layers) |
 | `grad_norm_squared` | scalar | \|\|∇L\|\|², single backward pass (no per-sample grads) |
 | `trace_gradient_covariance` | scalar | Tr(Σ), gradient noise covariance trace |
 | `trace_hessian_covariance` | scalar | Tr(HΣ), Hessian-noise covariance trace (uses HVPs) |

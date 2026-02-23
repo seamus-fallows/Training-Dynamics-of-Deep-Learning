@@ -7,7 +7,7 @@ OUTPUT=outputs/gph_comparative_metrics
 # =============================================================================
 # GD-only model metrics (deterministic — one run per config)
 # =============================================================================
-# layer_norms, gram_norms, balance_diffs, effective_weight_norm are identical
+# layer_norms, gram_norms, balance_diffs, end_to_end_weight_norm are identical
 # across batch_seeds on the GD side, so we collect them once via a single-model
 # sweep with full-batch training (batch_size=null).
 
@@ -28,7 +28,7 @@ python sweep.py -cn=gph_gd_model_metrics \
 # =============================================================================
 # Sweeps over many batch_seeds. Comparative metrics (param_distance,
 # layer_distances, frobenius_distance) and SGD model metrics (layer_norms,
-# gram_norms, balance_diffs, effective_weight_norm) are collected via
+# gram_norms, balance_diffs, end_to_end_weight_norm) are collected via
 # metrics_a=[] so only model_b is tracked.
 
 echo "=== Comparative: GD vs SGD ==="
