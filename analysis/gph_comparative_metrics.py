@@ -1,33 +1,36 @@
 """
 GPH Comparative Metrics Analysis
 
-Plots GD vs SGD comparative metrics and model metrics, with SGD quantities
-averaged over batch seeds.
+Plots comparative metrics and model metrics between a baseline model (A) and
+comparison models (B), with model B quantities averaged over batch seeds.
+
+Supports two modes:
+  - offline: A = full-batch GD (deterministic), B = mini-batch SGD
+  - online:  A = large-batch B=500 (fixed seed), B = mini-batch
 
 Two figure types per (gamma, noise, width, batch_size) configuration:
 
   - Distances: loss context, relative param/frobenius/layer distances, cosine similarity
   - Model Metrics: loss context, layer norms, gram norms, balance diffs/ratio,
-    effective weight norm  (GD solid vs SGD dashed + 95% CI)
+    effective weight norm  (A solid vs B dashed + 95% CI)
 
 Data sources:
   - Comparative sweep (--input): test_loss_a/b, param_distance, layer_distances,
-    frobenius_distance, plus SGD model metrics as _b-suffixed columns (via
+    frobenius_distance, plus model B metrics as _b-suffixed columns (via
     metrics_a=[] so only model_b metrics are tracked).
-  - GD-only sweep (--gd-input): layer_norms, gram_norms, balance_diffs,
-    end_to_end_weight_norm for the deterministic GD side.
+  - Baseline sweep (--baseline-input): layer_norms, gram_norms, balance_diffs,
+    end_to_end_weight_norm for the baseline (model A) side.
 
 Usage (run from the project root):
 
     python analysis/gph_comparative_metrics.py --recompute
+    python analysis/gph_comparative_metrics.py --mode=online --recompute
 
 Options:
+    --mode MODE        offline (default) or online
     --input PATH       Override comparative input dir
-                       (default: outputs/gph_comparative_metrics/comparative)
-    --gd-input PATH    Override GD-only metrics input dir
-                       (default: outputs/gph_comparative_metrics/gd_metrics)
+    --baseline-input PATH  Override baseline metrics input dir
     --output PATH      Override output figures dir
-                       (default: figures/gph_comparative_metrics)
     --cache PATH       Override cache file path
     --recompute        Force recompute statistics (ignore cache)
 """
@@ -53,16 +56,67 @@ from _common import CACHE_DIR, GAMMA_NAMES, fmt_seeds
 # Configuration
 # =============================================================================
 
-DEFAULT_INPUT = Path("outputs/gph_comparative_metrics/comparative")
-DEFAULT_GD_INPUT = Path("outputs/gph_comparative_metrics/gd_metrics")
-DEFAULT_OUTPUT = Path("figures/gph_comparative_metrics")
-DEFAULT_CACHE = CACHE_DIR / "gph_comparative_metrics.pkl"
+MODE_CONFIGS = {
+    "offline": {
+        "input": Path("outputs/gph_comparative_metrics/comparative"),
+        "baseline_input": Path("outputs/gph_comparative_metrics/gd_metrics"),
+        "output": Path("figures/gph_comparative_metrics"),
+        "cache": CACHE_DIR / "gph_comparative_metrics.pkl",
+        # Labels
+        "a_label": "GD",
+        "b_label_fmt": "SGD (B={bs})",  # formatted with batch_size
+        "b_short": "SGD",               # for per-layer legends
+        "sub_a": "GD",                  # LaTeX subscripts
+        "sub_b": "SGD",
+    },
+    "online": {
+        "input": Path("outputs/gph_online_comparative_metrics/comparative"),
+        "baseline_input": Path("outputs/gph_online_comparative_metrics/large_batch_metrics"),
+        "output": Path("figures/gph_online_comparative_metrics"),
+        "cache": CACHE_DIR / "gph_online_comparative_metrics.pkl",
+        # Labels
+        "a_label": "B=500",
+        "b_label_fmt": "B={bs}",
+        "b_short": "B={bs}",
+        "sub_a": "A",
+        "sub_b": "B",
+    },
+}
 
 # Columns that define a unique configuration (batch_seed is averaged over)
 GROUP_COLS = [
     "model.hidden_dim", "model.gamma", "data.noise_std",
     "model.model_seed", "training_b.batch_size",
 ]
+
+
+def _axis_labels(sub_a: str, sub_b: str) -> dict[str, str]:
+    """Build parametrized LaTeX axis labels for distance/cosine plots."""
+    A = r"\mathrm{" + sub_a + "}"
+    B = r"\mathrm{" + sub_b + "}"
+    thA, thB = r"\theta_{" + A + "}", r"\theta_{" + B + "}"
+    wA = r"W_{\mathrm{eff}}^{" + A + "}"
+    wB = r"W_{\mathrm{eff}}^{" + B + "}"
+    wiA, wiB = r"W_i^{" + A + "}", r"W_i^{" + B + "}"
+    return {
+        "param_rel":  r"$\|" + thB + " - " + thA + r"\| / \|" + thA + r"\|$",
+        "param_abs":  r"$\|" + thB + " - " + thA + r"\|$",
+        "eff_rel":    r"$\|" + wB + " - " + wA + r"\|_F / \|" + wA + r"\|_F$",
+        "eff_abs":    r"$\|" + wB + " - " + wA + r"\|_F$",
+        "cosine":     r"$\cos(" + thA + ", " + thB + ")$",
+        "layer_rel":  r"$\|" + wiB + " - " + wiA + r"\|_F / \|" + wiA + r"\|_F$",
+        "layer_abs":  r"$\|" + wiB + " - " + wiA + r"\|_F$",
+    }
+
+
+def _b_label(mcfg: dict, batch_size: int) -> str:
+    """Full comparison label, e.g. 'SGD (B=10)' or 'B=10'."""
+    return mcfg["b_label_fmt"].format(bs=batch_size)
+
+
+def _b_short(mcfg: dict, batch_size: int) -> str:
+    """Short comparison label for per-layer legends, e.g. 'SGD' or 'B=10'."""
+    return mcfg["b_short"].format(bs=batch_size)
 
 
 # =============================================================================
@@ -86,8 +140,8 @@ class MetricStats:
 class CompConfigStats:
     """Statistics for one (width, gamma, noise, model_seed, batch_size) group.
 
-    GD quantities are deterministic and stored as plain arrays.
-    SGD quantities are averaged over batch seeds and stored as MetricStats.
+    Baseline (A) quantities are deterministic and stored as plain arrays.
+    Comparison (B) quantities are averaged over batch seeds and stored as MetricStats.
     """
 
     steps: np.ndarray
@@ -101,10 +155,10 @@ class CompConfigStats:
     frobenius_distance: MetricStats
     layer_distances: dict[int, MetricStats]
 
-    # Cosine similarity — None when SGD layer norms are unavailable
+    # Cosine similarity — None when B layer norms are unavailable
     cosine_sim: MetricStats | None
 
-    # GD model metrics (from GD-only fallback)
+    # Baseline (A) model metrics (from separate baseline sweep)
     gd_param_norm: np.ndarray | None
     gd_end_to_end_weight_norm: np.ndarray | None
     gd_layer_norms: dict[int, np.ndarray]
@@ -112,7 +166,7 @@ class CompConfigStats:
     gd_balance_diffs: dict[int, np.ndarray]
     gd_balance_ratios: dict[int, np.ndarray]
 
-    # SGD model metrics (from _b columns or standalone SGD sweep)
+    # Comparison (B) model metrics (from _b columns)
     sgd_layer_norms: dict[int, MetricStats]
     sgd_gram_norms: dict[int, MetricStats]
     sgd_balance_diffs: dict[int, MetricStats]
@@ -187,24 +241,24 @@ def _make_stats_linear_ci(curves: np.ndarray) -> MetricStats:
 
 
 # =============================================================================
-# GD-Only Fallback
+# Baseline Fallback
 # =============================================================================
 
 
-def _load_gd_fallback(
-    gd_dir: Path,
+def _load_baseline_fallback(
+    baseline_dir: Path,
 ) -> dict[tuple, dict]:
-    """Load GD-only model metrics for normalisation and model_metrics figure.
+    """Load baseline model metrics for normalisation and model_metrics figure.
 
     Returns a dict keyed by (width, gamma, noise, seed) with layer norms,
     gram norms, balance diffs/ratios, param norm, and effective weight norm.
     """
-    path = gd_dir / "results.parquet"
+    path = baseline_dir / "results.parquet"
     if not path.exists():
-        print(f"  GD fallback not found at {path}")
+        print(f"  Baseline fallback not found at {path}")
         return {}
 
-    print(f"  Loading GD fallback from {path}...")
+    print(f"  Loading baseline fallback from {path}...")
     df = pl.read_parquet(path)
 
     # Detect layers
@@ -257,7 +311,7 @@ def _load_gd_fallback(
             "end_to_end_weight_norm": eff,
         }
 
-    print(f"  {len(result)} GD configs loaded as fallback")
+    print(f"  {len(result)} baseline configs loaded as fallback")
     return result
 
 
@@ -283,13 +337,13 @@ def _detect_sgd_model_layers(df: pl.DataFrame) -> int:
 
 def compute_all_stats(
     input_dir: Path,
-    gd_fallback: dict,
+    baseline_fallback: dict,
 ) -> dict[tuple, CompConfigStats]:
     """Load comparative results and compute per-config stats over batch seeds.
 
-    SGD model metrics are sourced from _b columns in comparative data (via
+    Model B metrics are sourced from _b columns in comparative data (via
     metrics_a=[] so only model_b metrics are tracked).
-    GD model metrics always come from gd_fallback.
+    Baseline (A) model metrics always come from baseline_fallback.
     """
     path = input_dir / "results.parquet"
     print(f"Loading {path}...")
@@ -303,9 +357,9 @@ def compute_all_stats(
 
     print(f"  {n_comp_layers} layer distance cols")
     if has_sgd_metrics:
-        print(f"  {n_sgd_layers} SGD model layers (_b columns)")
+        print(f"  {n_sgd_layers} model B layers (_b columns)")
     else:
-        print(f"  No SGD model metrics (re-run comparative sweep with model metrics enabled)")
+        print(f"  No model B metrics (re-run comparative sweep with model metrics enabled)")
 
     groups = df.partition_by(GROUP_COLS, as_dict=True)
     total = len(groups)
@@ -332,17 +386,17 @@ def compute_all_stats(
         for i in range(n_comp_layers):
             layer_distances[i] = _make_stats(_extract_curves(gdf, f"layer_distance_{i}"))
 
-        # -- GD model metrics (always from fallback) --
-        gd_key = (width, gamma, noise, seed)
-        gd = gd_fallback.get(gd_key, {})
-        gd_layer_norms = gd.get("layer_norms", {})
-        gd_gram_norms = gd.get("gram_norms", {})
-        gd_balance_diffs = gd.get("balance_diffs", {})
-        gd_balance_ratios = gd.get("balance_ratios", {})
-        gd_param_norm = gd.get("param_norm")
-        gd_end_to_end_weight_norm = gd.get("end_to_end_weight_norm")
+        # -- Baseline (A) model metrics (always from fallback) --
+        bl_key = (width, gamma, noise, seed)
+        bl = baseline_fallback.get(bl_key, {})
+        gd_layer_norms = bl.get("layer_norms", {})
+        gd_gram_norms = bl.get("gram_norms", {})
+        gd_balance_diffs = bl.get("balance_diffs", {})
+        gd_balance_ratios = bl.get("balance_ratios", {})
+        gd_param_norm = bl.get("param_norm")
+        gd_end_to_end_weight_norm = bl.get("end_to_end_weight_norm")
 
-        # -- SGD model metrics & cosine sim --
+        # -- Model B metrics & cosine sim --
         sgd_layer_norms: dict[int, MetricStats] = {}
         sgd_gram_norms: dict[int, MetricStats] = {}
         sgd_balance_diffs_out: dict[int, MetricStats] = {}
@@ -351,7 +405,7 @@ def compute_all_stats(
         cosine_sim: MetricStats | None = None
 
         if has_sgd_metrics:
-            # SGD metrics from _b columns in comparative data
+            # B metrics from _b columns in comparative data
             sgd_ln_curves: dict[int, np.ndarray] = {}
             for i in range(n_sgd_layers):
                 sgd_ln_curves[i] = _extract_curves(gdf, f"layer_norm_{i}_b")
@@ -499,7 +553,7 @@ def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
 
 def get_stats(
     input_dir: Path,
-    gd_dir: Path,
+    baseline_fallback: dict,
     cache_path: Path,
     force_recompute: bool = False,
 ) -> dict[tuple, CompConfigStats]:
@@ -509,8 +563,7 @@ def get_stats(
             print(f"Loaded {len(cached)} configurations from cache")
             return cached
 
-    gd_fallback = _load_gd_fallback(gd_dir)
-    stats = compute_all_stats(input_dir, gd_fallback)
+    stats = compute_all_stats(input_dir, baseline_fallback)
     _save_cache(stats, cache_path)
     return stats
 
@@ -536,12 +589,15 @@ def _get_n_seeds(stats: dict[tuple, CompConfigStats]) -> int | str:
     return stats[key].loss_sgd.n if key else "?"
 
 
-def _plot_loss_row(ax: plt.Axes, s: CompConfigStats, batch_size: int) -> None:
-    """Plot GD vs SGD loss on a single axes (used as top row of each figure)."""
-    ax.plot(s.steps, s.loss_gd, label="GD", color="C0", linewidth=1.5)
+def _plot_loss_row(
+    ax: plt.Axes, s: CompConfigStats, batch_size: int,
+    mcfg: dict,
+) -> None:
+    """Plot baseline vs comparison loss on a single axes (used as top row of each figure)."""
+    ax.plot(s.steps, s.loss_gd, label=mcfg["a_label"], color="C0", linewidth=1.5)
     ax.plot(
         s.steps, s.loss_sgd.mean,
-        label=f"SGD (B={batch_size})", color="C1", linewidth=1.5,
+        label=_b_label(mcfg, batch_size), color="C1", linewidth=1.5,
     )
     ax.fill_between(
         s.steps, s.loss_sgd.ci_lo, s.loss_sgd.ci_hi,
@@ -559,19 +615,21 @@ def _plot_gd_vs_sgd_layers(
     sgd_dict: dict[int, MetricStats],
     ylabel: str,
     log_scale: bool = False,
+    a_label: str = "GD",
+    b_label: str = "SGD",
 ) -> None:
-    """Plot per-layer GD (solid) vs SGD (dashed + CI) comparison."""
+    """Plot per-layer baseline (solid) vs comparison (dashed + CI)."""
     for i in sorted(gd_dict.keys()):
         color = f"C{i}"
         ax.plot(
             steps, gd_dict[i], color=color, linewidth=1.5,
-            label=f"L{i} GD",
+            label=f"L{i} {a_label}",
         )
         if i in sgd_dict:
             ms = sgd_dict[i]
             ax.plot(
                 steps, ms.mean, color=color, linewidth=1.5,
-                linestyle="--", label=f"L{i} SGD",
+                linestyle="--", label=f"L{i} {b_label}",
             )
             ax.fill_between(
                 steps, ms.ci_lo, ms.ci_hi, alpha=0.15, color=color,
@@ -594,6 +652,7 @@ def plot_model_metrics(
     width: int,
     batch_size: int,
     model_seeds: list,
+    mcfg: dict,
 ) -> plt.Figure:
     """6 rows: loss, layer norms, gram norms, balance diffs, balance ratio, eff weight norm."""
     n_cols = len(model_seeds)
@@ -601,6 +660,9 @@ def plot_model_metrics(
     fig, axes = plt.subplots(
         n_rows, n_cols, figsize=(5 * n_cols, 2.5 * n_rows), squeeze=False,
     )
+
+    a_lbl = mcfg["a_label"]
+    b_lbl = _b_short(mcfg, batch_size)
 
     for col, seed in enumerate(model_seeds):
         key = (width, gamma, noise, seed, batch_size)
@@ -612,7 +674,7 @@ def plot_model_metrics(
         s = stats[key]
 
         # Row 0: Loss
-        _plot_loss_row(axes[0, col], s, batch_size)
+        _plot_loss_row(axes[0, col], s, batch_size, mcfg)
         axes[0, col].set_title(f"Model Seed {seed}")
 
         # Row 1: Layer norms
@@ -620,6 +682,7 @@ def plot_model_metrics(
             axes[1, col], s.steps,
             s.gd_layer_norms, s.sgd_layer_norms,
             ylabel=r"$\|W_i\|_F$",
+            a_label=a_lbl, b_label=b_lbl,
         )
 
         # Row 2: Gram norms
@@ -627,6 +690,7 @@ def plot_model_metrics(
             axes[2, col], s.steps,
             s.gd_gram_norms, s.sgd_gram_norms,
             ylabel=r"$\|W_i W_i^T\|_F$",
+            a_label=a_lbl, b_label=b_lbl,
         )
 
         # Row 3: Balance diffs
@@ -634,6 +698,7 @@ def plot_model_metrics(
             axes[3, col], s.steps,
             s.gd_balance_diffs, s.sgd_balance_diffs,
             ylabel=r"$\|G_l\|_F$",
+            a_label=a_lbl, b_label=b_lbl,
         )
 
         # Row 4: Balance ratio
@@ -641,6 +706,7 @@ def plot_model_metrics(
             axes[4, col], s.steps,
             s.gd_balance_ratios, s.sgd_balance_ratios,
             ylabel=r"$r_l$",
+            a_label=a_lbl, b_label=b_lbl,
         )
 
         # Row 5: Effective weight norm
@@ -648,13 +714,13 @@ def plot_model_metrics(
         if s.gd_end_to_end_weight_norm is not None:
             ax.plot(
                 s.steps, s.gd_end_to_end_weight_norm,
-                color="C0", linewidth=1.5, label="GD",
+                color="C0", linewidth=1.5, label=a_lbl,
             )
         if s.sgd_end_to_end_weight_norm is not None:
             ms = s.sgd_end_to_end_weight_norm
             ax.plot(
                 s.steps, ms.mean,
-                color="C1", linewidth=1.5, linestyle="--", label="SGD",
+                color="C1", linewidth=1.5, linestyle="--", label=b_lbl,
             )
             ax.fill_between(s.steps, ms.ci_lo, ms.ci_hi, alpha=0.2, color="C1")
         if col == 0:
@@ -663,8 +729,9 @@ def plot_model_metrics(
         ax.legend(fontsize=6, loc="best")
 
     n_seeds = _get_n_seeds(stats)
+    title_vs = f"{a_lbl} (solid) vs {b_lbl} (dashed)"
     fig.suptitle(
-        _suptitle("Weight Structure: GD (solid) vs SGD (dashed)", gamma, noise, width, batch_size, n_seeds),
+        _suptitle(f"Weight Structure: {title_vs}", gamma, noise, width, batch_size, n_seeds),
         fontsize=12, fontweight="bold",
     )
     fig.tight_layout()
@@ -688,12 +755,16 @@ def plot_distances(
     width: int,
     batch_sizes: list[int],
     model_seeds: list,
+    mcfg: dict,
 ) -> plt.Figure | None:
     """Distances figure: all batch sizes overlaid per model seed.
 
     Rows: loss, relative param distance, relative effective matrix distance,
     cosine similarity (optional), relative layer distances.
     """
+    labels = _axis_labels(mcfg["sub_a"], mcfg["sub_b"])
+    a_label = mcfg["a_label"]
+
     has_cosine = any(
         stats.get((width, gamma, noise, s, b), None) is not None
         and stats[(width, gamma, noise, s, b)].cosine_sim is not None
@@ -725,7 +796,7 @@ def plot_distances(
     cosine_data_max = -np.inf
 
     for col, seed in enumerate(model_seeds):
-        # Loss row: GD once + each batch size for SGD
+        # Loss row: baseline once + each batch size for comparison
         first_key = None
         for b in batch_sizes:
             k = (width, gamma, noise, seed, b)
@@ -735,7 +806,7 @@ def plot_distances(
         if first_key is not None:
             s0 = stats[first_key]
             axes[row_loss, col].plot(
-                s0.steps, s0.loss_gd, label="GD", color="black", linewidth=1.5,
+                s0.steps, s0.loss_gd, label=a_label, color="black", linewidth=1.5,
             )
 
         for batch_size in batch_sizes:
@@ -833,15 +904,9 @@ def plot_distances(
             any_key = next((k for k in ((width, gamma, noise, seed, b)
                            for b in batch_sizes) if k in stats), None)
             has_norm = any_key and stats[any_key].gd_param_norm is not None
-            if has_norm:
-                axes[row_param, col].set_ylabel(
-                    r"$\|\theta_{\mathrm{SGD}} - \theta_{\mathrm{GD}}\|"
-                    r" / \|\theta_{\mathrm{GD}}\|$"
-                )
-            else:
-                axes[row_param, col].set_ylabel(
-                    r"$\|\theta_{\mathrm{SGD}} - \theta_{\mathrm{GD}}\|$"
-                )
+            axes[row_param, col].set_ylabel(
+                labels["param_rel"] if has_norm else labels["param_abs"]
+            )
 
         axes[row_frob, col].set_yscale("log")
         axes[row_frob, col].legend(fontsize=5, loc="best", ncols=2)
@@ -849,15 +914,9 @@ def plot_distances(
             any_key = next((k for k in ((width, gamma, noise, seed, b)
                            for b in batch_sizes) if k in stats), None)
             has_eff = any_key and stats[any_key].gd_end_to_end_weight_norm is not None
-            if has_eff:
-                axes[row_frob, col].set_ylabel(
-                    r"$\|W_{\mathrm{eff}}^{\mathrm{SGD}} - W_{\mathrm{eff}}^{\mathrm{GD}}\|_F"
-                    r" / \|W_{\mathrm{eff}}^{\mathrm{GD}}\|_F$"
-                )
-            else:
-                axes[row_frob, col].set_ylabel(
-                    r"$\|W_{\mathrm{eff}}^{\mathrm{SGD}} - W_{\mathrm{eff}}^{\mathrm{GD}}\|_F$"
-                )
+            axes[row_frob, col].set_ylabel(
+                labels["eff_rel"] if has_eff else labels["eff_abs"]
+            )
 
         if row_cosine is not None:
             axes[row_cosine, col].axhline(
@@ -865,9 +924,7 @@ def plot_distances(
             )
             axes[row_cosine, col].legend(fontsize=5, loc="best", ncols=2)
             if col == 0:
-                axes[row_cosine, col].set_ylabel(
-                    r"$\cos(\theta_{\mathrm{GD}}, \theta_{\mathrm{SGD}})$"
-                )
+                axes[row_cosine, col].set_ylabel(labels["cosine"])
 
         if row_layer is not None:
             axes[row_layer, col].set_yscale("log")
@@ -876,15 +933,9 @@ def plot_distances(
                 any_key = next((k for k in ((width, gamma, noise, seed, b)
                                for b in batch_sizes) if k in stats), None)
                 has_ln = any_key and stats[any_key].gd_layer_norms
-                if has_ln:
-                    axes[row_layer, col].set_ylabel(
-                        r"$\|W_i^{\mathrm{SGD}} - W_i^{\mathrm{GD}}\|_F"
-                        r" / \|W_i^{\mathrm{GD}}\|_F$"
-                    )
-                else:
-                    axes[row_layer, col].set_ylabel(
-                        r"$\|W_i^{\mathrm{SGD}} - W_i^{\mathrm{GD}}\|_F$"
-                    )
+                axes[row_layer, col].set_ylabel(
+                    labels["layer_rel"] if has_ln else labels["layer_abs"]
+                )
                 axes[row_layer, col].legend(fontsize=4, loc="best", ncols=4)
 
     # Synchronize cosine similarity y-axes across columns
@@ -935,7 +986,7 @@ class _SeedOverlayData:
 
 def _precompute_seed_overlay_data(
     input_dir: Path,
-    gd_fallback: dict,
+    baseline_fallback: dict,
 ) -> dict[tuple, _SeedOverlayData]:
     """Load parquet once and pre-extract per-run curves for seed overlay plots."""
     comp_path = input_dir / "results.parquet"
@@ -957,9 +1008,9 @@ def _precompute_seed_overlay_data(
             continue
         width, gamma, noise, seed, batch_size = key
 
-        gd = gd_fallback.get((width, gamma, noise, seed), {})
-        gd_param_norm = gd.get("param_norm")
-        gd_eff_norm = gd.get("end_to_end_weight_norm")
+        bl = baseline_fallback.get((width, gamma, noise, seed), {})
+        gd_param_norm = bl.get("param_norm")
+        gd_eff_norm = bl.get("end_to_end_weight_norm")
         if gd_param_norm is None:
             continue
 
@@ -1000,12 +1051,15 @@ def plot_seed_overlay(
     width: int,
     batch_size: int,
     model_seeds: list,
+    mcfg: dict,
 ) -> plt.Figure | None:
     """Plot individual batch-seed runs overlaid.
 
     3 rows: relative param distance, cosine similarity, relative effective
     matrix distance.  One column per model seed.
     """
+    labels = _axis_labels(mcfg["sub_a"], mcfg["sub_b"])
+
     has_cosine = any(
         data.get((width, gamma, noise, s, batch_size), None) is not None
         and data[(width, gamma, noise, s, batch_size)].cosine_sim is not None
@@ -1054,10 +1108,7 @@ def plot_seed_overlay(
         ax.set_title(f"Model Seed {seed}")
         ax.legend(fontsize=6, loc="best")
         if col == 0:
-            ax.set_ylabel(
-                r"$\|\theta_{\mathrm{SGD}} - \theta_{\mathrm{GD}}\|"
-                r" / \|\theta_{\mathrm{GD}}\|$"
-            )
+            ax.set_ylabel(labels["param_rel"])
 
         # Cosine similarity
         if row_cosine is not None and d.cosine_sim is not None:
@@ -1068,7 +1119,7 @@ def plot_seed_overlay(
             ax.axhline(1.0, color="black", linestyle="--", alpha=0.4, linewidth=0.8)
             ax.legend(fontsize=6, loc="best")
             if col == 0:
-                ax.set_ylabel(r"$\cos(\theta_{\mathrm{GD}}, \theta_{\mathrm{SGD}})$")
+                ax.set_ylabel(labels["cosine"])
             cosine_data_min = min(cosine_data_min, np.nanmin(d.cosine_sim))
             cosine_data_max = max(cosine_data_max, np.nanmax(d.cosine_sim))
 
@@ -1084,10 +1135,7 @@ def plot_seed_overlay(
             ax.legend(fontsize=6, loc="best")
             ax.set_xlabel("Training step")
             if col == 0:
-                ax.set_ylabel(
-                    r"$\|W_{\mathrm{eff}}^{\mathrm{SGD}} - W_{\mathrm{eff}}^{\mathrm{GD}}\|_F"
-                    r" / \|W_{\mathrm{eff}}^{\mathrm{GD}}\|_F$"
-                )
+                ax.set_ylabel(labels["eff_rel"])
 
     # Synchronize cosine similarity y-axes across columns
     if row_cosine is not None and np.isfinite(cosine_data_min):
@@ -1112,18 +1160,20 @@ _seed_overlay_ctx: dict = {}
 
 
 def _init_seed_overlay_worker(
-    precomputed: dict, output_dir: str,
+    precomputed: dict, output_dir: str, mcfg: dict,
 ) -> None:
     _seed_overlay_ctx["data"] = precomputed
     _seed_overlay_ctx["output_dir"] = output_dir
+    _seed_overlay_ctx["mcfg"] = mcfg
 
 
 def _run_seed_overlay_task(task: tuple) -> None:
     gamma, noise, width, batch_size, model_seeds, filename = task
     data = _seed_overlay_ctx["data"]
     output_dir = Path(_seed_overlay_ctx["output_dir"])
+    mcfg = _seed_overlay_ctx["mcfg"]
 
-    fig = plot_seed_overlay(data, gamma, noise, width, batch_size, model_seeds)
+    fig = plot_seed_overlay(data, gamma, noise, width, batch_size, model_seeds, mcfg)
     if fig is None:
         return
 
@@ -1133,11 +1183,12 @@ def _run_seed_overlay_task(task: tuple) -> None:
 
 def generate_seed_overlay_plots(
     input_dir: Path,
-    gd_fallback: dict,
+    baseline_fallback: dict,
     output_dir: Path,
+    mcfg: dict,
 ) -> None:
     """Generate per-config seed overlay plots from raw parquet data."""
-    precomputed = _precompute_seed_overlay_data(input_dir, gd_fallback)
+    precomputed = _precompute_seed_overlay_data(input_dir, baseline_fallback)
     if not precomputed:
         print("  Seed overlay: no data available, skipping.")
         return
@@ -1165,7 +1216,7 @@ def generate_seed_overlay_plots(
     with Pool(
         n_workers,
         initializer=_init_seed_overlay_worker,
-        initargs=(precomputed, str(output_dir)),
+        initargs=(precomputed, str(output_dir), mcfg),
     ) as pool:
         for i, _ in enumerate(pool.imap_unordered(_run_seed_overlay_task, tasks), 1):
             if i % 10 == 0 or i == len(tasks):
@@ -1184,21 +1235,23 @@ def generate_seed_overlay_plots(
 _worker_ctx: dict = {}
 
 
-def _init_plot_worker(all_stats: dict, output_dir: str) -> None:
+def _init_plot_worker(all_stats: dict, output_dir: str, mcfg: dict) -> None:
     _worker_ctx["stats"] = all_stats
     _worker_ctx["output_dir"] = output_dir
+    _worker_ctx["mcfg"] = mcfg
 
 
 def _run_plot_task(task: tuple) -> None:
     plot_type, gamma, noise, width, batch_size, model_seeds, filename = task
     stats = _worker_ctx["stats"]
     output_dir = Path(_worker_ctx["output_dir"])
+    mcfg = _worker_ctx["mcfg"]
 
     if plot_type == "distances":
         # batch_size field carries the full batch_sizes list
-        fig = plot_distances(stats, gamma, noise, width, batch_size, model_seeds)
+        fig = plot_distances(stats, gamma, noise, width, batch_size, model_seeds, mcfg)
     elif plot_type == "model_metrics":
-        fig = plot_model_metrics(stats, gamma, noise, width, batch_size, model_seeds)
+        fig = plot_model_metrics(stats, gamma, noise, width, batch_size, model_seeds, mcfg)
     else:
         return
 
@@ -1212,6 +1265,7 @@ def _run_plot_task(task: tuple) -> None:
 def generate_all_plots(
     stats: dict[tuple, CompConfigStats],
     output_dir: Path,
+    mcfg: dict,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1223,7 +1277,7 @@ def generate_all_plots(
     model_seeds = sorted({k[3] for k in stats})
     batch_sizes = sorted({k[4] for k in stats})
 
-    # Check if any config has SGD model metrics (for model_metrics figure)
+    # Check if any config has model B metrics (for model_metrics figure)
     has_sgd_metrics = any(len(cs.sgd_layer_norms) > 0 for cs in stats.values())
 
     tasks = []
@@ -1244,7 +1298,7 @@ def generate_all_plots(
                         tasks.append(("model_metrics", *common, f"model_metrics_{tag_b}"))
 
     if not has_sgd_metrics:
-        print("  Note: SGD model metrics not available — skipping model_metrics figures.")
+        print("  Note: model B metrics not available — skipping model_metrics figures.")
         print("  Re-run the comparative sweep with model metrics enabled.")
 
     n_workers = min(os.cpu_count() or 1, len(tasks))
@@ -1253,7 +1307,7 @@ def generate_all_plots(
     with Pool(
         n_workers,
         initializer=_init_plot_worker,
-        initargs=(stats, str(output_dir)),
+        initargs=(stats, str(output_dir), mcfg),
     ) as pool:
         for i, _ in enumerate(pool.imap_unordered(_run_plot_task, tasks), 1):
             print(
@@ -1271,22 +1325,29 @@ def generate_all_plots(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot GD vs SGD comparative metrics and model metrics",
+        description="Plot comparative metrics and model metrics (offline or online)",
     )
     parser.add_argument(
-        "--input", type=Path, default=DEFAULT_INPUT,
+        "--mode", choices=["offline", "online"], default="offline",
+        help="Experiment mode: offline (GD vs SGD) or online (large-batch vs mini-batch)",
+    )
+    parser.add_argument(
+        "--input", type=Path, default=None,
         help="Comparative results directory",
     )
     parser.add_argument(
-        "--gd-input", type=Path, default=DEFAULT_GD_INPUT,
-        help="GD-only model metrics directory (fallback for normalisation)",
+        "--baseline-input", type=Path, default=None,
+        help="Baseline model metrics directory (for normalisation)",
     )
+    # Keep --gd-input as hidden alias for backward compatibility
+    parser.add_argument("--gd-input", type=Path, default=None, dest="gd_input_compat",
+                        help=argparse.SUPPRESS)
     parser.add_argument(
-        "--output", type=Path, default=DEFAULT_OUTPUT,
+        "--output", type=Path, default=None,
         help="Output figures directory",
     )
     parser.add_argument(
-        "--cache", type=Path, default=DEFAULT_CACHE,
+        "--cache", type=Path, default=None,
         help="Cache file for computed statistics",
     )
     parser.add_argument(
@@ -1295,18 +1356,25 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"Input:     {args.input}")
-    print(f"GD input:  {args.gd_input}")
-    print(f"Output:    {args.output}")
+    mcfg = MODE_CONFIGS[args.mode]
+    input_dir = args.input or mcfg["input"]
+    baseline_dir = args.baseline_input or args.gd_input_compat or mcfg["baseline_input"]
+    output_dir = args.output or mcfg["output"]
+    cache_path = args.cache or mcfg["cache"]
 
-    gd_fallback = _load_gd_fallback(args.gd_input)
+    print(f"Mode:      {args.mode}")
+    print(f"Input:     {input_dir}")
+    print(f"Baseline:  {baseline_dir}")
+    print(f"Output:    {output_dir}")
+
+    baseline_fallback = _load_baseline_fallback(baseline_dir)
 
     stats = get_stats(
-        args.input, args.gd_input,
-        args.cache, args.recompute,
+        input_dir, baseline_fallback,
+        cache_path, args.recompute,
     )
-    generate_all_plots(stats, args.output)
-    generate_seed_overlay_plots(args.input, gd_fallback, args.output)
+    generate_all_plots(stats, output_dir, mcfg)
+    generate_seed_overlay_plots(input_dir, baseline_fallback, output_dir, mcfg)
 
     print("\nDone!")
 
