@@ -19,7 +19,7 @@ Options:
 
 Expects sweep outputs in outputs/gph/gph_offline_loss/ or outputs/gph/gph_online_loss/.
 Saves figures to figures/gph_offline_loss/ or figures/gph_online_loss/.
-Caches computed statistics in .analysis_cache/gph_offline_loss.pkl or .analysis_cache/gph_online_loss.pkl.
+Caches computed statistics in analysis/.cache/gph_offline_loss.pkl or analysis/.cache/gph_online_loss.pkl.
 """
 
 import argparse
@@ -42,6 +42,8 @@ from scipy import stats as scipy_stats
 # Configuration
 # =============================================================================
 
+_CACHE_DIR = Path(__file__).resolve().parent / ".cache"
+
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 
 BL_KEY_COLS = ["model.hidden_dim", "model.gamma", "data.noise_std", "model.model_seed"]
@@ -50,7 +52,7 @@ BATCH_KEY_COLS = BL_KEY_COLS[:3]  # columns used for batched parquet reads
 EXPERIMENTS = {
     "offline": {
         "base_path": Path("outputs/gph/gph_offline_loss"),
-        "cache_path": Path(".analysis_cache/gph_offline_loss.pkl"),
+        "cache_path": _CACHE_DIR / "gph_offline_loss.pkl",
         "figures_path": Path("figures/gph_offline_loss"),
         "baseline_subdir": "full_batch",
         "sgd_subdir": "mini_batch",
@@ -60,7 +62,7 @@ EXPERIMENTS = {
     },
     "online": {
         "base_path": Path("outputs/gph/gph_online_loss"),
-        "cache_path": Path(".analysis_cache/gph_online_loss.pkl"),
+        "cache_path": _CACHE_DIR / "gph_online_loss.pkl",
         "figures_path": Path("figures/gph_online_loss"),
         "baseline_subdir": "large_batch",
         "sgd_subdir": "mini_batch",

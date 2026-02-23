@@ -5,7 +5,7 @@ A research codebase for studying training dynamics of deep linear networks, with
 ## Quick Start
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 
 # Train a model with default settings
 python sweep.py -cn=diagonal_teacher
@@ -34,6 +34,10 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
   * `experiment.py`: Core experiment execution.
   * `utils.py`: Utilities (device selection, config resolution).
 * **`configs/`**: YAML configuration files.
+* **`tests/`**: Test suite.
+* **`analysis/`**: Post-hoc analysis and plotting scripts.
+* **`scripts/`**: Shell scripts for launching experiment sweeps.
+* **`docs/`**: Additional documentation (data format, cheat sheet).
 
 ## Usage
 
@@ -269,8 +273,8 @@ outputs/experiment_name/timestamp/
 ```
 
 Each row in `results.parquet` contains:
-- **Scalar columns**: sweep parameter values (e.g., `training.batch_seed`, `model.gamma`)
-- **List columns**: metric curves (e.g., `step`, `test_loss`, `weight_norm`)
+* **Scalar columns**: sweep parameter values (e.g., `training.batch_seed`, `model.gamma`)
+* **List columns**: metric curves (e.g., `step`, `test_loss`, `weight_norm`)
 
 ## Extending the Codebase
 
@@ -315,6 +319,6 @@ def my_callback(param1: int, param2: float):
 ## Running Tests
 
 ```bash
-pip install pytest
-python -m pytest tests.py -v
+pip install -e ".[dev]"
+python -m pytest
 ```

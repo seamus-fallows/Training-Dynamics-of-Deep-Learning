@@ -1,6 +1,0 @@
-omegaconf
-torch
-numpy
-matplotlib
-scipy
-polars

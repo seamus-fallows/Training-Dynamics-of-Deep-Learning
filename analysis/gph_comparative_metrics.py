@@ -51,12 +51,14 @@ from scipy import stats as scipy_stats
 # Configuration
 # =============================================================================
 
+_CACHE_DIR = Path(__file__).resolve().parent / ".cache"
+
 GAMMA_NAMES = {0.75: "NTK", 1.0: "Mean-Field", 1.5: "Saddle-to-Saddle"}
 
 DEFAULT_INPUT = Path("outputs/gph_comparative_metrics/comparative")
 DEFAULT_GD_INPUT = Path("outputs/gph_comparative_metrics/gd_metrics")
 DEFAULT_OUTPUT = Path("figures/gph_comparative_metrics")
-DEFAULT_CACHE = Path(".analysis_cache/gph_comparative_metrics.pkl")
+DEFAULT_CACHE = _CACHE_DIR / "gph_comparative_metrics.pkl"
 
 # Columns that define a unique configuration (batch_seed is averaged over)
 GROUP_COLS = [

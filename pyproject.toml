@@ -1,3 +1,26 @@
+[project]
+name = "dln"
+version = "0.0.1"
+requires-python = ">=3.11"
+dependencies = [
+    "omegaconf",
+    "torch",
+    "numpy",
+    "matplotlib",
+    "scipy",
+    "polars",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "nvitop"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["dln"]
+
 [tool.ruff.lint]
 
 extend-ignore = ["F722"]

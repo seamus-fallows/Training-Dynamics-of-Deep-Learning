@@ -26,6 +26,19 @@ def create_diagonal_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     return scale * t.diag(t.arange(1, in_dim + 1).float())
 
 
+@register_matrix("power_law")
+def create_power_law_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
+    if out_dim != in_dim:
+        raise ValueError(
+            f"Power-law matrix requires out_dim == in_dim, "
+            f"but got in_dim={in_dim}, out_dim={out_dim}."
+        )
+    scale = params["scale"]
+    alpha = params["alpha"]
+    indices = t.arange(1, in_dim + 1).float()
+    return scale * t.diag(indices.pow(-alpha))
+
+
 @register_matrix("identity")
 def create_identity_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     if out_dim != in_dim:

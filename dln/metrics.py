@@ -187,9 +187,10 @@ def _absolute_rank(sv: Tensor, max_dim: int) -> int:
     return int((sv > tol).sum().item())
 
 
-def _relative_rank(sv: Tensor, tol: float) -> int:
-    """Count of sigma_i > tol * sigma_max."""
-    return int((sv > tol * sv[0]).sum().item())
+def _relative_rank(sv: Tensor, tol: float, abs_tol: float = 0.0) -> int:
+    """Count of sigma_i > max(tol * sigma_max, abs_tol)."""
+    threshold = max(tol * sv[0].item(), abs_tol)
+    return int((sv > threshold).sum().item())
 
 
 def _stable_rank(sv: Tensor) -> float:
@@ -226,11 +227,12 @@ def relative_rank(
     targets: Tensor,
     criterion: Module,
     tol: float = 0.01,
+    abs_tol: float = 0.0,
     **kwargs,
 ) -> float:
     with t.no_grad():
         sv = t.linalg.svdvals(model.effective_weight())
-        return _relative_rank(sv, tol)
+        return _relative_rank(sv, tol, abs_tol)
 
 
 @metric("stable_rank")
@@ -267,6 +269,7 @@ def rank_metrics(
     targets: Tensor,
     criterion: Module,
     tol: float = 0.01,
+    abs_tol: float = 0.0,
     **kwargs,
 ) -> dict[str, float]:
     """All rank metrics from a single SVD: absolute_rank, relative_rank,
@@ -276,11 +279,20 @@ def rank_metrics(
         sv = t.linalg.svdvals(W)
         return {
             "absolute_rank": _absolute_rank(sv, max(W.shape)),
-            "relative_rank": _relative_rank(sv, tol),
+            "relative_rank": _relative_rank(sv, tol, abs_tol),
             "stable_rank": _stable_rank(sv),
             "spectral_entropy_rank": _spectral_entropy_rank(sv),
             "participation_ratio": _participation_ratio(sv),
         }
+
+
+@metric("singular_values")
+def singular_values(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> dict[str, float]:
+    with t.no_grad():
+        sv = t.linalg.svdvals(model.effective_weight())
+        return {f"sv_{i}": v for i, v in enumerate(sv.tolist())}
 
 
 @metric("grad_norm_squared")

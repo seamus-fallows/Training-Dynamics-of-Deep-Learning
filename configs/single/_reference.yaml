@@ -50,7 +50,9 @@ data:
     matrix: diagonal    # string: matrix type
                         #   "diagonal" - diagonal matrix with entries scale * [1, 2, ..., d]
                         #     requires: scale (float)
-                        #   "identity" - identity matrix, requires out_dim == in_dim
+                        #   "power_law" - diagonal matrix with entries scale * i^(-alpha)
+#     requires: scale (float), alpha (float)
+#   "identity" - identity matrix, requires out_dim == in_dim
     scale: 10.0         # (for diagonal)
 
 # -----------------------------------------------------------------------------
@@ -85,12 +87,25 @@ num_evaluations: 250    # int: number of times to evaluate/log metrics
 #   trace_covariances         - returns all three: grad_norm_squared,
 #                               trace_gradient_covariance, trace_hessian_covariance
 #                               params: chunks (int, default 1)
+#   absolute_rank             - numerical rank (count sigma_i above machine-epsilon tolerance)
+#   relative_rank             - rank with user-specified tolerance
+#                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
+#                               threshold = max(tol * sigma_max, abs_tol)
+#                               set abs_tol > 0 so near-zero matrices get rank 0
+#   stable_rank               - ||W||_F^2 / ||W||_2^2
+#   spectral_entropy_rank     - exp(-sum p_i log p_i), p_i = sigma_i / sum(sigma_j)
+#   participation_ratio       - (sum sigma_i^2)^2 / sum(sigma_i^4)
+#   rank_metrics              - returns all five rank metrics from a single SVD
+#                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
+#   singular_values           - returns sv_0, sv_1, ... (all singular values of effective weight)
 metrics: []
 # Examples:
 #   metrics:
 #     - weight_norm
 #     - trace_covariances:
 #         chunks: 10
+#     - rank_metrics:
+#         tol: 0.05
 
 
 # -----------------------------------------------------------------------------
