@@ -951,65 +951,13 @@ class TestMetrics:
         expected = int((sv > 0.5 * sv[0]).sum().item())
         assert result["relative_rank"] == expected
 
-    def test_spectral_entropy_rank(self):
-        model = create_model(model_seed=0, num_hidden=2)
-        inputs = t.randn(10, 5)
-        targets = t.randn(10, 5)
-        criterion = nn.MSELoss()
-
-        result = metrics.compute_metrics(
-            model, ["spectral_entropy_rank"], inputs, targets, criterion
-        )
-
-        sv = t.linalg.svdvals(model.end_to_end_weight())
-        p = sv / sv.sum()
-        expected = t.special.entr(p).sum().exp().item()
-        assert abs(result["spectral_entropy_rank"] - expected) < 1e-6
-
-    def test_individual_rank_metrics_match_combined(self):
-        """Individual rank metrics must agree with the combined rank_metrics."""
-        model_seed, num_hidden = 0, 2
-        inputs = t.randn(10, 5)
-        targets = t.randn(10, 5)
-        criterion = nn.MSELoss()
-
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden)
-        ref = metrics.rank_metrics(model, inputs, targets, criterion)
-
-        for name in [
-            "relative_rank",
-            "spectral_entropy_rank",
-        ]:
-            model = create_model(model_seed=model_seed, num_hidden=num_hidden)
-            individual = metrics.compute_metrics(
-                model, [name], inputs, targets, criterion
-            )
-            assert abs(individual[name] - ref[name]) < 1e-6
-
     def test_rank_helpers_known_values(self):
         """Verify rank helpers on known singular value vectors."""
-        # Uniform singular values: all rank measures equal d
         sv = t.ones(5)
         assert metrics._relative_rank(sv, 0.01) == 5
-        assert abs(metrics._spectral_entropy_rank(sv) - 5.0) < 1e-6
 
-        # One dominant singular value: all rank measures equal 1
         sv = t.tensor([10.0, 0.0, 0.0, 0.0, 0.0])
         assert metrics._relative_rank(sv, 0.01) == 1
-        assert abs(metrics._spectral_entropy_rank(sv) - 1.0) < 1e-6
-
-    def test_compute_metrics_expands_rank_metrics(self):
-        model = create_model(model_seed=0, num_hidden=2)
-        inputs = t.randn(10, 5)
-        targets = t.randn(10, 5)
-        criterion = nn.MSELoss()
-
-        results = metrics.compute_metrics(
-            model, ["rank_metrics"], inputs, targets, criterion
-        )
-
-        assert "relative_rank" in results
-        assert "spectral_entropy_rank" in results
 
     def test_singular_values(self):
         model = create_model(model_seed=0, num_hidden=2)
@@ -1028,6 +976,99 @@ class TestMetrics:
 
         # Should have exactly min(in_dim, out_dim) = 5 singular values
         assert len([k for k in result if k.startswith("sv_")]) == 5
+
+    def test_partial_product_correctness(self):
+        model = create_model(model_seed=0, num_hidden=3)
+        L = len(model.layers)
+        weights = [layer.weight for layer in model.layers]
+
+        # Single layer: P(1,1) = W_1
+        assert t.allclose(model.partial_product(1, 1), weights[1], atol=1e-6)
+
+        # Two layers: P(0,1) = W_1 @ W_0
+        assert t.allclose(model.partial_product(0, 1), weights[1] @ weights[0], atol=1e-6)
+
+        # Full product matches end_to_end_weight
+        assert t.allclose(
+            model.partial_product(0, L - 1),
+            model.end_to_end_weight(),
+            atol=1e-6,
+        )
+
+    def test_partial_product_metrics_structure(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+        L = len(model.layers)
+
+        results = metrics.compute_metrics(
+            model, ["partial_product_metrics"], inputs, targets, criterion
+        )
+
+        # Should have L(L+1)/2 SV keys and L(L+1)/2 rank keys
+        n_products = L * (L + 1) // 2
+        sv_keys = [k for k in results if k.endswith("_sv")]
+        rank_keys = [k for k in results if k.endswith("_relative_rank")]
+        assert len(sv_keys) == n_products
+        assert len(rank_keys) == n_products
+
+        # SV values are lists, rank values are scalars
+        for k in sv_keys:
+            assert isinstance(results[k], list)
+            assert all(isinstance(v, float) for v in results[k])
+        for k in rank_keys:
+            assert isinstance(results[k], (int, float))
+
+    def test_partial_product_metrics_correctness(self):
+        model = create_model(model_seed=0, num_hidden=2)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+        L = len(model.layers)
+
+        results = metrics.compute_metrics(
+            model, ["partial_product_metrics"], inputs, targets, criterion
+        )
+
+        # P(0, L-1) SVs match the singular_values metric
+        sv_ref = metrics.compute_metrics(
+            model, ["singular_values"], inputs, targets, criterion
+        )
+        pp_svs = results[f"pp_0_{L-1}_sv"]
+        for i, v in enumerate(pp_svs):
+            assert abs(v - sv_ref[f"sv_{i}"]) < 1e-6
+
+        # P(i,i) SVs match manual svdvals(W_i)
+        for i in range(L):
+            expected = t.linalg.svdvals(model.layers[i].weight).tolist()
+            assert results[f"pp_{i}_{i}_sv"] == pytest.approx(expected, abs=1e-6)
+
+    def test_partial_product_individual_metrics_match_bundle(self):
+        model_seed, num_hidden = 0, 2
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden)
+        bundle = metrics.compute_metrics(
+            model, ["partial_product_metrics"], inputs, targets, criterion
+        )
+
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden)
+        svs_only = metrics.compute_metrics(
+            model, ["partial_product_singular_values"], inputs, targets, criterion
+        )
+
+        model = create_model(model_seed=model_seed, num_hidden=num_hidden)
+        ranks_only = metrics.compute_metrics(
+            model, ["partial_product_rank_metrics"], inputs, targets, criterion
+        )
+
+        for k, v in svs_only.items():
+            assert v == pytest.approx(bundle[k], abs=1e-6)
+        for k, v in ranks_only.items():
+            assert abs(v - bundle[k]) < 1e-6
 
 
 # ============================================================================

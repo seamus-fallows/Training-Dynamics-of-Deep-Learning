@@ -3,7 +3,7 @@ Rank metrics analysis: visualize loss and numerical rank evolution during traini
 
 Produces one figure per hidden_dim with two rows:
   - Top: test loss (spanning full width)
-  - Bottom: 5 rank metric panels
+  - Bottom: rank metric panels
   - Lines: each model_seed as a thin transparent line, colored by batch_size
 
 Usage:
@@ -36,19 +36,11 @@ DEFAULT_INPUT = Path("outputs/rank_sweep")
 OUTPUT_PATH = Path("figures/rank_sweep")
 
 METRICS = [
-    "absolute_rank",
     "relative_rank",
-    "stable_rank",
-    "spectral_entropy_rank",
-    "participation_ratio",
 ]
 
 METRIC_LABELS = {
-    "absolute_rank": "Absolute Rank",
     "relative_rank": "Relative Rank",
-    "stable_rank": "Stable Rank",
-    "spectral_entropy_rank": "Spectral Entropy Rank",
-    "participation_ratio": "Participation Ratio",
 }
 
 # batch_size -> (color, label)
@@ -79,7 +71,7 @@ def load_results(sweep_dir: Path) -> dict[tuple, list[dict]]:
     """Load sweep results, grouped by (hidden_dim, batch_size).
 
     Returns dict mapping (hidden_dim, batch_size) -> list of history dicts.
-    Each history dict has keys: "step", "test_loss", "absolute_rank", etc.
+    Each history dict has keys: "step", "test_loss", "relative_rank", etc.
     """
     df = load_sweep(sweep_dir)
 
@@ -379,42 +371,6 @@ def make_seed_grid_figure(results, hidden_dim, rank_metric, sv_scale_value):
     return fig
 
 
-def make_seed_grid_entropy_figure(results, hidden_dim):
-    """Seed grid with spectral entropy rank; SVs scaled to match entropy range."""
-    seeds = SEED_GRID_SEEDS
-    n_sv = _get_n_sv(results, hidden_dim)
-
-    # Compute scaling: map max SV to max observed spectral entropy rank
-    max_sv, max_entropy = 0.0, 0.0
-    for batch_size in BATCH_STYLES:
-        key = (hidden_dim, batch_size)
-        for history in results.get(key, []):
-            if history.get("_model_seed") not in seeds:
-                continue
-            entropy_vals = history.get("spectral_entropy_rank")
-            if entropy_vals:
-                max_entropy = max(max_entropy, max(entropy_vals))
-            for i in range(n_sv):
-                sv_vals = history.get(f"sv_{i}")
-                if sv_vals:
-                    max_sv = max(max_sv, max(sv_vals))
-
-    sv_scale = max_entropy / max_sv if max_sv > 0 else 1.0
-
-    fig = make_seed_grid_figure(
-        results, hidden_dim, "spectral_entropy_rank", sv_scale,
-    )
-    axes = fig.axes
-    # Fix the y-label for the SV row
-    axes[2 * len(seeds)].set_ylabel(f"SV × {sv_scale:.3f}")
-
-    fig.suptitle(
-        f"h={hidden_dim} — Loss / Spectral Entropy Rank / Scaled SVs",
-        fontsize=14, fontweight="bold",
-    )
-    return fig
-
-
 # =============================================================================
 # Main
 # =============================================================================
@@ -480,13 +436,6 @@ def main():
             fontsize=14, fontweight="bold",
         )
         output_file = args.output / f"seed_grid_relative_rank_h{hidden_dim}.png"
-        fig.savefig(output_file, dpi=150, bbox_inches="tight")
-        print(f"Saved: {output_file}")
-        plt.close(fig)
-
-        # Seed grid: spectral entropy rank + scaled SVs
-        fig = make_seed_grid_entropy_figure(results, hidden_dim)
-        output_file = args.output / f"seed_grid_entropy_rank_h{hidden_dim}.png"
         fig.savefig(output_file, dpi=150, bbox_inches="tight")
         print(f"Saved: {output_file}")
         plt.close(fig)

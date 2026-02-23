@@ -87,25 +87,26 @@ num_evaluations: 250    # int: number of times to evaluate/log metrics
 #   trace_covariances         - returns all three: grad_norm_squared,
 #                               trace_gradient_covariance, trace_hessian_covariance
 #                               params: chunks (int, default 1)
-#   absolute_rank             - numerical rank (count sigma_i above machine-epsilon tolerance)
 #   relative_rank             - rank with user-specified tolerance
 #                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
 #                               threshold = max(tol * sigma_max, abs_tol)
 #                               set abs_tol > 0 so near-zero matrices get rank 0
-#   stable_rank               - ||W||_F^2 / ||W||_2^2
-#   spectral_entropy_rank     - exp(-sum p_i log p_i), p_i = sigma_i / sum(sigma_j)
-#   participation_ratio       - (sum sigma_i^2)^2 / sum(sigma_i^4)
-#   rank_metrics              - returns all five rank metrics from a single SVD
-#                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
 #   singular_values           - returns sv_0, sv_1, ... (all singular values of effective weight)
 #   layer_singular_values     - returns layer_0_sv_0, ... (per-layer singular values)
+#   partial_product_singular_values - returns pp_0_0_sv, pp_0_1_sv, ...
+#                               (singular value vectors for all partial products P(i,j) = W_j...W_i)
+#   partial_product_rank_metrics    - returns pp_0_0_relative_rank, pp_0_1_relative_rank, ...
+#                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
+#   partial_product_metrics   - returns both SVs and rank for all partial products
+#                               from a single SVD per product (preferred bundle metric)
+#                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
 metrics: []
 # Examples:
 #   metrics:
 #     - weight_norm
 #     - trace_covariances:
 #         chunks: 10
-#     - rank_metrics:
+#     - relative_rank:
 #         tol: 0.05
 
 

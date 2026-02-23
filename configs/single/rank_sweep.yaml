@@ -29,7 +29,7 @@ data:
     scale: 10.0
 
 metrics:
-  - rank_metrics:
+  - relative_rank:
       abs_tol: 1.0
   - singular_values
 

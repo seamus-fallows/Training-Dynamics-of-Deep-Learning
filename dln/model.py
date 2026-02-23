@@ -1,3 +1,5 @@
+from functools import reduce
+
 import torch as t
 import torch.nn as nn
 from torch import Tensor
@@ -27,6 +29,10 @@ class DeepLinearNetwork(nn.Module):
                 layer.weight.data = (
                     t.randn(layer.weight.shape, generator=generator) * std
                 )
+
+    def partial_product(self, i: int, j: int) -> Tensor:
+        """W_j @ W_{j-1} @ ... @ W_i (0-indexed, inclusive)."""
+        return reduce(t.matmul, [layer.weight for layer in reversed(self.layers[i:j+1])])
 
     def end_to_end_weight(self) -> Tensor:
         return t.linalg.multi_dot([layer.weight for layer in reversed(self.layers)])

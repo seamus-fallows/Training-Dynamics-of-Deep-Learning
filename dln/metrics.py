@@ -2,6 +2,37 @@
 Model metrics: fn(model, inputs, targets, criterion) -> float | dict[str, float]
 Comparative metrics: fn(model_a, model_b) -> float
 
+Available metrics
+=================
+
+Model metrics:
+    weight_norm              L2 norm of all parameters concatenated.
+    layer_norms              L2 norm of each layer's weight matrix. → layer_norm_{i}
+    gram_norms               ||WᵢWᵢᵀ|| for each layer. → gram_norm_{i}
+    balance_diffs            ||WᵢWᵢᵀ - Wᵢ₊₁ᵀWᵢ₊₁|| between consecutive layers. → balance_diff_{i}
+    end_to_end_weight_norm   L2 norm of the end-to-end weight W_L···W_1.
+    singular_values          Singular values of the end-to-end weight. → sv_{i}
+    layer_singular_values    Singular values per layer. → layer_{i}_sv_{j}
+    relative_rank            Count of σᵢ > max(tol·σ_max, abs_tol). Params: tol, abs_tol.
+    partial_product_singular_values   SVs of all P(i,j) = W_j···W_i. → pp_{i}_{j}_sv (list)
+    partial_product_rank_metrics      relative_rank of all P(i,j). → pp_{i}_{j}_relative_rank
+    partial_product_metrics           SVs + rank for all P(i,j), shared SVD per product.
+    grad_norm_squared        ||∇L||², squared norm of the mean gradient.
+    trace_gradient_covariance  Tr(Σ), trace of gradient noise covariance. Params: chunks.
+    trace_hessian_covariance   Tr(HΣ), Hessian-covariance alignment. Params: chunks.
+    gradient_stats           grad_norm_squared + Tr(Σ), shared computation. Params: chunks.
+    trace_covariances        grad_norm_squared + Tr(Σ) + Tr(HΣ), shared computation. Params: chunks.
+
+Comparative metrics:
+    param_distance           L2 distance between flattened parameter vectors.
+    param_cosine_sim         Cosine similarity between flattened parameter vectors.
+    layer_distances          L2 distance between corresponding layers. → layer_distance_{i}
+    frobenius_distance       ||W_e2e_A - W_e2e_B||_F of end-to-end weights.
+
+Metrics returning dicts show their output key pattern after →.
+Bundle metrics (partial_product_metrics, gradient_stats, trace_covariances) share
+expensive computation across their constituent values — prefer them over individual calls.
+
 Efficient computation of Tr(HΣ)
 ================================
 The Hessian-gradient covariance trace Tr(HΣ) measures the alignment between
@@ -170,20 +201,12 @@ def end_to_end_weight_norm(
 
 
 # Rank metrics (singular-value-based)
-#
-# Helpers take singular values (descending) as input and assume sv[0] > 0.
 
 
 def _relative_rank(sv: Tensor, tol: float, abs_tol: float = 0.0) -> int:
     """Count of sigma_i > max(tol * sigma_max, abs_tol)."""
     threshold = max(tol * sv[0].item(), abs_tol)
     return int((sv > threshold).sum().item())
-
-
-def _spectral_entropy_rank(sv: Tensor) -> float:
-    """exp(H) where H = -sum(p_i * log(p_i)), p_i = sigma_i / sum(sigma_j)."""
-    p = sv / sv.sum()
-    return t.special.entr(p).sum().exp().item()
 
 
 @metric("relative_rank")
@@ -198,32 +221,6 @@ def relative_rank(
 ) -> float:
     sv = t.linalg.svdvals(model.end_to_end_weight())
     return _relative_rank(sv, tol, abs_tol)
-
-
-@metric("spectral_entropy_rank")
-def spectral_entropy_rank(
-    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
-) -> float:
-    sv = t.linalg.svdvals(model.end_to_end_weight())
-    return _spectral_entropy_rank(sv)
-
-
-@metric("rank_metrics")
-def rank_metrics(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    tol: float = 0.01,
-    abs_tol: float = 0.0,
-    **kwargs,
-) -> dict[str, float]:
-    """All rank metrics from a single SVD: relative_rank, spectral_entropy_rank."""
-    sv = t.linalg.svdvals(model.end_to_end_weight())
-    return {
-        "relative_rank": _relative_rank(sv, tol, abs_tol),
-        "spectral_entropy_rank": _spectral_entropy_rank(sv),
-    }
 
 
 @metric("singular_values")
@@ -243,6 +240,71 @@ def layer_singular_values(
         sv = t.linalg.svdvals(layer.weight)
         for j, v in enumerate(sv.tolist()):
             results[f"layer_{i}_sv_{j}"] = v
+    return results
+
+
+# Partial product metrics
+#
+# Track singular values and ranks of all contiguous partial products
+# P(i,j) = W_j @ ... @ W_i for 0 <= i <= j < L.
+
+
+def _partial_product_svds(model: Module):
+    """Yields (i, j, sv) for all partial products, computed incrementally.
+
+    For each starting layer i, extends j by left-multiplying W_j.
+    Reuses P(i, j-1) to compute P(i, j) = W_j @ P(i, j-1).
+    Total: L(L-1)/2 matmuls + L(L+1)/2 SVDs.
+    """
+    L = len(model.layers)
+    for i in range(L):
+        P = model.layers[i].weight
+        yield i, i, t.linalg.svdvals(P)
+        for j in range(i + 1, L):
+            P = model.layers[j].weight @ P
+            yield i, j, t.linalg.svdvals(P)
+
+
+@metric("partial_product_singular_values")
+def partial_product_singular_values(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> dict[str, list[float]]:
+    """Singular values of all contiguous partial products P(i,j) = W_j @ ... @ W_i."""
+    return {f"pp_{i}_{j}_sv": sv.tolist() for i, j, sv in _partial_product_svds(model)}
+
+
+@metric("partial_product_rank_metrics")
+def partial_product_rank_metrics(
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    tol: float = 0.01,
+    abs_tol: float = 0.0,
+    **kwargs,
+) -> dict[str, float]:
+    """Relative rank of all contiguous partial products P(i,j) = W_j @ ... @ W_i."""
+    return {
+        f"pp_{i}_{j}_relative_rank": _relative_rank(sv, tol, abs_tol)
+        for i, j, sv in _partial_product_svds(model)
+    }
+
+
+@metric("partial_product_metrics")
+def partial_product_metrics(
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    tol: float = 0.01,
+    abs_tol: float = 0.0,
+    **kwargs,
+) -> dict[str, float | list[float]]:
+    """Singular values and relative rank of all partial products, sharing SVDs."""
+    results = {}
+    for i, j, sv in _partial_product_svds(model):
+        results[f"pp_{i}_{j}_sv"] = sv.tolist()
+        results[f"pp_{i}_{j}_relative_rank"] = _relative_rank(sv, tol, abs_tol)
     return results
 
 
