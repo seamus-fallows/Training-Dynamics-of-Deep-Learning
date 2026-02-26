@@ -39,6 +39,21 @@ def create_power_law_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     return scale * t.diag(indices.pow(-alpha))
 
 
+@register_matrix("power_law_topk")
+def create_power_law_topk_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
+    if out_dim != in_dim:
+        raise ValueError(
+            f"Power-law top-k matrix requires out_dim == in_dim, "
+            f"but got in_dim={in_dim}, out_dim={out_dim}."
+        )
+    scale = params["scale"]
+    alpha = params["alpha"]
+    k = params["k"]
+    diag_vals = t.zeros(in_dim)
+    diag_vals[:k] = scale * t.arange(1, k + 1).float().pow(-alpha)
+    return t.diag(diag_vals)
+
+
 @register_matrix("identity")
 def create_identity_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     if out_dim != in_dim:
