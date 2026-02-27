@@ -24,18 +24,17 @@ class DeepLinearNetwork(nn.Module):
         self._init_weights(std, gen)
 
     def _init_weights(self, std: float, generator: t.Generator) -> None:
-        with t.no_grad():
-            for layer in self.layers:
-                layer.weight.data = (
-                    t.randn(layer.weight.shape, generator=generator) * std
-                )
+        for layer in self.layers:
+            layer.weight.data = (
+                t.randn(layer.weight.shape, generator=generator) * std
+            )
 
     def partial_product(self, i: int, j: int) -> Tensor:
         """W_j @ W_{j-1} @ ... @ W_i (0-indexed, inclusive)."""
         return reduce(t.matmul, [layer.weight for layer in reversed(self.layers[i:j+1])])
 
     def end_to_end_weight(self) -> Tensor:
-        return t.linalg.multi_dot([layer.weight for layer in reversed(self.layers)])
+        return self.partial_product(0, len(self.layers) - 1)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)

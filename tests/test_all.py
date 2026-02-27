@@ -386,6 +386,37 @@ class TestOverrides:
         assert not isinstance(fixed["metrics"], ListValue)
         assert sweep == {"model.gamma": [0.75, 1.0]}
 
+    def test_comparative_overrides_order_independent(self):
+        """Resolved comparative config must not depend on CLI override ordering."""
+        from itertools import permutations
+
+        base = load_base_config("_test", "comparative")
+
+        overrides_items = [
+            ("model.gamma", 1.5),
+            ("model_a.gamma", 2.0),
+            ("training.lr", 0.05),
+            ("training_b.lr", 0.1),
+            ("max_steps", 20),
+        ]
+
+        configs = []
+        for perm in permutations(overrides_items):
+            cfg = resolve_config(base, "comparative", dict(perm))
+            configs.append(OmegaConf.to_container(cfg, resolve=True))
+
+        for i, c in enumerate(configs[1:], 1):
+            assert c == configs[0], (
+                f"Override permutation {i} produced different config"
+            )
+
+        # Explicit per-model overrides take priority over short-form
+        ref = configs[0]
+        assert ref["model_a"]["gamma"] == 2.0
+        assert ref["model_b"]["gamma"] == 1.5
+        assert ref["training_a"]["lr"] == 0.05
+        assert ref["training_b"]["lr"] == 0.1
+
 
 # ============================================================================
 # Seed Isolation Tests

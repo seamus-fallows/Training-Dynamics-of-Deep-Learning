@@ -19,5 +19,3 @@ class RunResult:
 
     def metric_names(self) -> list[str]:
         return [k for k in self.history.keys() if k != "step"]
-
-

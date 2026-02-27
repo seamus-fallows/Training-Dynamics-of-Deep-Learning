@@ -95,15 +95,20 @@ def _expand_comparative_overrides(
         if key.startswith("model.") and not key.startswith(("model_a.", "model_b.")):
             suffix = key[len("model."):]
             expanded[f"shared.model.{suffix}"] = value
-            expanded[f"model_a.{suffix}"] = value
-            expanded[f"model_b.{suffix}"] = value
+            # Explicit per-model overrides take priority over short-form
+            if f"model_a.{suffix}" not in overrides:
+                expanded[f"model_a.{suffix}"] = value
+            if f"model_b.{suffix}" not in overrides:
+                expanded[f"model_b.{suffix}"] = value
         elif key.startswith("training.") and not key.startswith(
             ("training_a.", "training_b.")
         ):
             suffix = key[len("training."):]
             expanded[f"shared.training.{suffix}"] = value
-            expanded[f"training_a.{suffix}"] = value
-            expanded[f"training_b.{suffix}"] = value
+            if f"training_a.{suffix}" not in overrides:
+                expanded[f"training_a.{suffix}"] = value
+            if f"training_b.{suffix}" not in overrides:
+                expanded[f"training_b.{suffix}"] = value
         else:
             expanded[key] = value
     return expanded

@@ -563,6 +563,8 @@ def frobenius_distance(model_a: Module, model_b: Module) -> float:
 # Compute functions
 
 
+# torch.func transforms (grad, vmap, jvp) work independently of no_grad —
+# they create their own autograd level, so gradient-based metrics are unaffected.
 @t.no_grad()
 def compute_metrics(
     model: Module,

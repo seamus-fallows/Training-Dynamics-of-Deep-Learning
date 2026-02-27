@@ -231,8 +231,7 @@ Example:
 
 ```yaml
 callbacks:
-  - name: switch_batch_size
-    params:
+  - switch_batch_size:
       at_step: 1000
       batch_size: null
 ```
