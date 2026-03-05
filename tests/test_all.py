@@ -19,7 +19,7 @@ from dln.overrides import (
     expand_sweep_params,
     split_overrides,
 )
-from dln.utils import (
+from dln.config import (
     save_sweep_config,
     resolve_config,
     load_base_config,
@@ -35,7 +35,7 @@ from dln.results_io import (
 )
 from dln.experiment import run_experiment, run_comparative_experiment
 import dln.metrics as metrics
-from sweep import run_single_job, run_sweep, run_jobs_sequential, _build_rerun_set
+from dln.sweep import run_single_job, run_sweep, run_jobs_sequential, _build_rerun_set
 
 
 # ============================================================================

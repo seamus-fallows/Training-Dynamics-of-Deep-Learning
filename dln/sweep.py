@@ -3,16 +3,16 @@ Lightweight experiment runner with parallel sweep support.
 
 Usage:
     # Single run
-    python sweep.py -cn=gph model.gamma=0.75
+    python -m dln.sweep -cn=gph model.gamma=0.75
 
     # Parallel sweep
-    python sweep.py -cn=gph training.batch_seed=0..100 --workers=40
+    python -m dln.sweep -cn=gph training.batch_seed=0..100 --workers=40
 
     # Covarying params
-    python sweep.py -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000 --zip=model.gamma,max_steps
+    python -m dln.sweep -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000 --zip=model.gamma,max_steps
 
     # Full example
-    python sweep.py -cn=gph \\
+    python -m dln.sweep -cn=gph \\
         model.gamma=0.75,1.0,1.5 \\
         max_steps=5000,10000,27000 \\
         training.batch_seed=0..100 \\
@@ -22,7 +22,7 @@ Usage:
         --output=outputs/my_experiment
 
     # Re-run specific jobs
-    python sweep.py -cn=gph training.batch_seed=0..100 --rerun training.batch_seed=42..50
+    python -m dln.sweep -cn=gph training.batch_seed=0..100 --rerun training.batch_seed=42..50
 """
 
 import torch as t
@@ -35,15 +35,15 @@ import traceback
 
 from omegaconf import OmegaConf
 
-from dln.experiment import run_experiment, run_comparative_experiment
-from dln.utils import load_base_config, resolve_config, save_sweep_config
-from dln.overrides import (
+from .experiment import run_experiment, run_comparative_experiment
+from .config import load_base_config, resolve_config, save_sweep_config
+from .overrides import (
     parse_overrides,
     split_overrides,
     expand_sweep_params,
     get_output_dir,
 )
-from dln.results_io import SweepWriter, NullWriter
+from .results_io import SweepWriter, NullWriter
 
 
 def _fmt_time(seconds: float) -> str:
@@ -394,7 +394,7 @@ def _filter_jobs(
 # =============================================================================
 
 
-if __name__ == "__main__":
+def main():
     # Single-threaded BLAS: our matrix ops are too small (e.g. 100x100) for
     # thread parallelism to outweigh wake/sync overhead. Also prevents thread
     # contention when running parallel sweeps (N workers × M BLAS threads).
@@ -448,3 +448,7 @@ if __name__ == "__main__":
         device=args.device,
         skipped=skipped,
     )
+
+
+if __name__ == "__main__":
+    main()

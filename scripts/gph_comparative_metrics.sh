@@ -12,7 +12,7 @@ OUTPUT=outputs/gph_comparative_metrics
 # sweep with full-batch training (batch_size=null).
 
 echo "=== GD model metrics ==="
-python sweep.py -cn=gph_gd_model_metrics \
+python -m dln.sweep -cn=gph_gd_model_metrics \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \
@@ -32,7 +32,7 @@ python sweep.py -cn=gph_gd_model_metrics \
 # metrics_a=[] so only model_b is tracked.
 
 echo "=== Comparative: GD vs SGD ==="
-python sweep.py --comparative -cn=gph_metrics \
+python -m dln.sweep --comparative -cn=gph_metrics \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \

@@ -1,33 +1,7 @@
-import os
 import yaml
 from pathlib import Path
 from typing import Any
-import torch as t
-from torch import Tensor
 from omegaconf import OmegaConf, DictConfig
-
-
-def resolve_device(device: str) -> t.device:
-    if device == "cpu":
-        return t.device("cpu")
-    if device == "cuda":
-        n_gpus = t.cuda.device_count()
-        if n_gpus > 1:
-            gpu_id = os.getpid() % n_gpus
-            return t.device(f"cuda:{gpu_id}")
-        return t.device("cuda")
-    if device == "mps":
-        return t.device("mps")
-    raise ValueError(f"Unknown device: {device}")
-
-
-def to_device(
-    data: tuple[Tensor, Tensor] | None, device: t.device
-) -> tuple[Tensor, Tensor] | None:
-    if data is None:
-        return None
-    inputs, targets = data
-    return inputs.to(device), targets.to(device)
 
 
 # =============================================================================

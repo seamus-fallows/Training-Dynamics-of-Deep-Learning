@@ -1,14 +1,38 @@
+import os
+
 import torch as t
 from torch import Tensor
 from omegaconf import DictConfig
 
-from .utils import resolve_device, to_device
 from .data import Dataset, TrainLoader
 from .model import DeepLinearNetwork
 from .train import Trainer
 from .callbacks import create_callbacks
 from .comparative import ComparativeTrainer
 from .results import RunResult
+
+
+def resolve_device(device: str) -> t.device:
+    if device == "cpu":
+        return t.device("cpu")
+    if device == "cuda":
+        n_gpus = t.cuda.device_count()
+        if n_gpus > 1:
+            gpu_id = os.getpid() % n_gpus
+            return t.device(f"cuda:{gpu_id}")
+        return t.device("cuda")
+    if device == "mps":
+        return t.device("mps")
+    raise ValueError(f"Unknown device: {device}")
+
+
+def _to_device(
+    data: tuple[Tensor, Tensor] | None, device: t.device
+) -> tuple[Tensor, Tensor] | None:
+    if data is None:
+        return None
+    inputs, targets = data
+    return inputs.to(device), targets.to(device)
 
 
 def create_trainer(
@@ -44,7 +68,7 @@ def run_experiment(
     resolved_device = resolve_device(device)
 
     dataset = Dataset(cfg.data, in_dim=cfg.model.in_dim, out_dim=cfg.model.out_dim)
-    test_data = to_device(dataset.test_data, resolved_device)
+    test_data = _to_device(dataset.test_data, resolved_device)
     callbacks = create_callbacks(cfg.callbacks)
 
     trainer = create_trainer(
@@ -73,7 +97,7 @@ def run_comparative_experiment(
     resolved_device = resolve_device(device)
 
     dataset = Dataset(cfg.data, in_dim=cfg.model_a.in_dim, out_dim=cfg.model_a.out_dim)
-    test_data = to_device(dataset.test_data, resolved_device)
+    test_data = _to_device(dataset.test_data, resolved_device)
     callbacks_a = create_callbacks(cfg.callbacks_a)
     callbacks_b = create_callbacks(cfg.callbacks_b)
 

@@ -7,7 +7,7 @@ OUTPUT=outputs/sv_dynamics_topk
 
 # Params ordered slowest-first so long jobs get dispatched early in parallel runs.
 echo "=== Offline: Full Batch (GD) + SGD (batch_size=1) ==="
-python sweep.py -cn=sv_dynamics_topk \
+python -m dln.sweep -cn=sv_dynamics_topk \
     data.params.k=2,3,4 \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,7000 \
@@ -20,7 +20,7 @@ python sweep.py -cn=sv_dynamics_topk \
     --output=$OUTPUT/offline
 
 echo "=== Online: Full Batch (batch_size=500) + SGD (batch_size=1) ==="
-python sweep.py -cn=sv_dynamics_topk \
+python -m dln.sweep -cn=sv_dynamics_topk \
     data.online=true \
     data.params.k=2,3,4 \
     model.gamma=1.5,1.0,0.75 \

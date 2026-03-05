@@ -5,7 +5,7 @@ WORKERS=32
 OUTPUT=outputs/gph_offline_metrics
 
 echo "=== Full Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     metrics=[trace_covariances] \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
@@ -19,7 +19,7 @@ python sweep.py -cn=gph \
     --output=$OUTPUT/full_batch
 
 echo "=== Mini Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     metrics=[trace_covariances] \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \

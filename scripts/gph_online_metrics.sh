@@ -5,7 +5,7 @@ WORKERS=32
 OUTPUT=outputs/gph_online_metrics
 
 echo "=== Large Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     data.online=true \
     metrics=[trace_covariances] \
     model.gamma=1.5,1.0,0.75 \
@@ -21,7 +21,7 @@ python sweep.py -cn=gph \
     --output=$OUTPUT/large_batch
 
 echo "=== Mini Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     data.online=true \
     metrics=[trace_covariances] \
     model.gamma=1.5,1.0,0.75 \

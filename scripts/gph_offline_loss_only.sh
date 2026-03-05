@@ -5,7 +5,7 @@ WORKERS=300
 OUTPUT=outputs/gph_offline
 
 echo "=== Full Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \
@@ -18,7 +18,7 @@ python sweep.py -cn=gph \
     --output=$OUTPUT/full_batch
 
 echo "=== Mini Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \

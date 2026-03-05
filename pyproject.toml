@@ -12,6 +12,9 @@ dependencies = [
     "pyyaml",
 ]
 
+[project.scripts]
+sweep = "dln.sweep:main"
+
 [project.optional-dependencies]
 dev = ["pytest", "nvitop"]
 

@@ -8,19 +8,19 @@ A research codebase for studying training dynamics of deep linear networks, with
 pip install -e .
 
 # Train a model with default settings
-python sweep.py -cn=diagonal_teacher
+python -m dln.sweep -cn=diagonal_teacher
 
 # Train with custom parameters
-python sweep.py -cn=diagonal_teacher training.batch_size=10 training.lr=0.001
+python -m dln.sweep -cn=diagonal_teacher training.batch_size=10 training.lr=0.001
 
 # Run a parameter sweep in parallel
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
+python -m dln.sweep -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 ```
 
 ## Project Structure
 
-* **`sweep.py`**: CLI entry point for single runs and parallel sweeps.
 * **`dln/`**: Core library.
+  * `sweep.py`: CLI entry point for single runs and parallel sweeps.
   * `model.py`: `DeepLinearNetwork` architecture.
   * `data.py`: Synthetic data generators and `TrainLoader` for batch iteration.
   * `train.py`: `Trainer` class and training loop.
@@ -32,7 +32,7 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
   * `overrides.py`: CLI parsing and sweep expansion utilities.
   * `plotting.py`: Visualization functions.
   * `experiment.py`: Core experiment execution.
-  * `utils.py`: Utilities (device selection, config resolution).
+  * `config.py`: Config loading, resolution, saving, and diffing.
 * **`configs/`**: YAML configuration files.
 * **`tests/`**: Test suite.
 * **`analysis/`**: Post-hoc analysis and plotting scripts.
@@ -46,34 +46,34 @@ python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 #### Single Run
 
 ```bash
-python sweep.py -cn=diagonal_teacher
-python sweep.py -cn=diagonal_teacher training.lr=0.001 model.gamma=1.5
+python -m dln.sweep -cn=diagonal_teacher
+python -m dln.sweep -cn=diagonal_teacher training.lr=0.001 model.gamma=1.5
 ```
 
 #### Parameter Sweeps
 
 ```bash
 # Sweep over learning rates
-python sweep.py -cn=diagonal_teacher training.lr=0.0005,0.001,0.002
+python -m dln.sweep -cn=diagonal_teacher training.lr=0.0005,0.001,0.002
 
 # Sweep over batch seeds (range shorthand)
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100
+python -m dln.sweep -cn=diagonal_teacher training.batch_seed=0..100
 
 # With step: 0, 10, 20, ..., 90
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100..10
+python -m dln.sweep -cn=diagonal_teacher training.batch_seed=0..100..10
 
 # Multiple sweep parameters (cartesian product)
-python sweep.py -cn=diagonal_teacher training.lr=0.001,0.01 model.num_hidden=2,3,4
+python -m dln.sweep -cn=diagonal_teacher training.lr=0.001,0.01 model.num_hidden=2,3,4
 ```
 
 #### Parallel Execution
 
 ```bash
 # Run sweep with 40 parallel workers
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
+python -m dln.sweep -cn=diagonal_teacher training.batch_seed=0..100 --workers=40
 
 # Re-run specific jobs (default is to skip already-completed jobs)
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 --workers=40 \
+python -m dln.sweep -cn=diagonal_teacher training.batch_seed=0..100 --workers=40 \
     --rerun training.batch_seed=42..50
 ```
 
@@ -83,29 +83,29 @@ By default, multiple sweep parameters take a cartesian product. Use `--zip` to v
 
 ```bash
 # Without zip: 3 × 3 = 9 jobs
-python sweep.py -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000
+python -m dln.sweep -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000
 
 # With zip: 3 jobs (gamma and max_steps vary together)
-python sweep.py -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000 --zip=model.gamma,max_steps
+python -m dln.sweep -cn=gph model.gamma=0.75,1.0,1.5 max_steps=5000,10000,27000 --zip=model.gamma,max_steps
 ```
 
 #### Output Directory Control
 
 ```bash
 # Custom output directory
-python sweep.py -cn=diagonal_teacher --output=outputs/my_experiment
+python -m dln.sweep -cn=diagonal_teacher --output=outputs/my_experiment
 ```
 
 #### Selective Re-runs
 
 ```bash
 # Re-run specific jobs from a completed sweep
-python sweep.py -cn=diagonal_teacher training.batch_seed=0..100 \
+python -m dln.sweep -cn=diagonal_teacher training.batch_seed=0..100 \
     --output=outputs/my_experiment \
     --rerun training.batch_seed=42..50
 
 # Re-run all jobs with a particular parameter value
-python sweep.py -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..100 \
+python -m dln.sweep -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..100 \
     --output=outputs/gph_study \
     --rerun model.gamma=0.75
 ```

@@ -5,7 +5,7 @@ WORKERS=256
 OUTPUT=outputs/gph_online
 
 echo "=== Large Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     data.online=true \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
@@ -20,7 +20,7 @@ python sweep.py -cn=gph \
     --output=$OUTPUT/large_batch
 
 echo "=== Mini Batch Training ==="
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     data.online=true \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \

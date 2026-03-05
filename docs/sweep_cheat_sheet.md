@@ -4,29 +4,29 @@
 
 ```bash
 # Run with defaults
-python sweep.py -cn=diagonal_teacher
+python -m dln.sweep -cn=diagonal_teacher
 
 # Override parameters
-python sweep.py -cn=gph model.gamma=0.75 training.lr=0.001
+python -m dln.sweep -cn=gph model.gamma=0.75 training.lr=0.001
 
 # Use a different config
-python sweep.py -cn=gph
+python -m dln.sweep -cn=gph
 ```
 
 ## Parameter Sweeps
 
 ```bash
 # Comma-separated values
-python sweep.py -cn=gph training.lr=0.001,0.01,0.1
+python -m dln.sweep -cn=gph training.lr=0.001,0.01,0.1
 
 # Range (exclusive end)
-python sweep.py -cn=gph training.batch_seed=0..100
+python -m dln.sweep -cn=gph training.batch_seed=0..100
 
 # Range with step
-python sweep.py -cn=gph training.batch_seed=0..100..10
+python -m dln.sweep -cn=gph training.batch_seed=0..100..10
 
 # Multiple params (cartesian product)
-python sweep.py -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..10
+python -m dln.sweep -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..10
 # → 2 × 10 = 20 jobs
 ```
 
@@ -34,14 +34,14 @@ python sweep.py -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..10
 
 ```bash
 # Vary together instead of cartesian product
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     model.gamma=0.75,1.0,1.5 \
     max_steps=5000,10000,27000 \
     --zip=model.gamma,max_steps
 # → 3 jobs (not 9)
 
 # Zip + cartesian
-python sweep.py -cn=gph \
+python -m dln.sweep -cn=gph \
     model.gamma=0.75,1.0 \
     max_steps=5000,10000 \
     training.batch_seed=0..5 \
@@ -53,10 +53,10 @@ python sweep.py -cn=gph \
 
 ```bash
 # Run with 40 workers
-python sweep.py -cn=gph training.batch_seed=0..100 --workers=40
+python -m dln.sweep -cn=gph training.batch_seed=0..100 --workers=40
 
 # Force CPU
-python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 --device=cpu
+python -m dln.sweep -cn=gph training.batch_seed=0..100 --workers=40 --device=cpu
 ```
 
 ## Output Control
@@ -67,11 +67,11 @@ All results are stored in a single `results.parquet` file (one row per job).
 
 ```bash
 # Example
-python sweep.py -cn=gph training.batch_seed=0..10
+python -m dln.sweep -cn=gph training.batch_seed=0..10
 # → outputs/gph/2025-01-21_14-30-45/results.parquet
 
 # Custom output directory
-python sweep.py -cn=gph training.batch_seed=0..10 \
+python -m dln.sweep -cn=gph training.batch_seed=0..10 \
     --output=outputs/my_experiment
 ```
 
@@ -79,7 +79,7 @@ python sweep.py -cn=gph training.batch_seed=0..10 \
 
 ```bash
 # Requires --output so path is stable; existing jobs are skipped by default
-python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 \
+python -m dln.sweep -cn=gph training.batch_seed=0..100 --workers=40 \
     --output=outputs/gph_study
 ```
 
@@ -87,12 +87,12 @@ python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 \
 
 ```bash
 # Re-run specific jobs from a completed sweep
-python sweep.py -cn=gph training.batch_seed=0..100 --workers=40 \
+python -m dln.sweep -cn=gph training.batch_seed=0..100 --workers=40 \
     --output=outputs/gph_study \
     --rerun training.batch_seed=42..50
 
 # Re-run everything with a particular param value
-python sweep.py -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..100 \
+python -m dln.sweep -cn=gph model.gamma=0.75,1.0 training.batch_seed=0..100 \
     --output=outputs/gph_study \
     --rerun model.gamma=0.75
 ```
@@ -112,7 +112,7 @@ python -m dln.results_io merge dir_a dir_b dir_c -o outputs/merged --keep=last
 
 ```bash
 # Stop on first failure
-python sweep.py -cn=gph training.batch_seed=0..100 --fail-fast
+python -m dln.sweep -cn=gph training.batch_seed=0..100 --fail-fast
 
 # Default: continue and report errors at end
 ```
@@ -121,10 +121,10 @@ python sweep.py -cn=gph training.batch_seed=0..100 --fail-fast
 
 ```bash
 # Two models trained side-by-side
-python sweep.py -cn=diagonal_teacher --comparative
+python -m dln.sweep -cn=diagonal_teacher --comparative
 
 # Override model B only
-python sweep.py -cn=diagonal_teacher --comparative training_b.batch_size=10
+python -m dln.sweep -cn=diagonal_teacher --comparative training_b.batch_size=10
 ```
 
 ## Value Syntax Reference
