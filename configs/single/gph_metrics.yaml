@@ -25,8 +25,9 @@ data:
   online: false
   noise_std: 0.0
   params:
-    matrix: diagonal
-    scale: 10.0
+    matrix: power_law
+    scale: 50
+    alpha: 1.0
 
 metrics:
   - trace_covariances

@@ -1,5 +1,5 @@
 experiment:
-  name: gph_comparative_metrics
+  name: gph_online_comparative_metrics
 
 shared:
   model:
@@ -20,9 +20,9 @@ shared:
 model_a: {}
 model_b: {}
 
-# A = GD (full batch), B = SGD (mini-batch)
+# A = large batch (B=500), B = mini-batch
 training_a:
-  batch_size: null
+  batch_size: 500
 training_b:
   batch_size: 10
 
@@ -30,7 +30,7 @@ data:
   train_samples: 500
   test_samples: 500
   data_seed: 0
-  online: false
+  online: true
   noise_std: 0.0
   params:
     matrix: power_law
@@ -40,9 +40,7 @@ data:
 max_steps: 10000
 num_evaluations: 250
 
-# Per-model metrics: GD (model_a) is deterministic, so we only track
-# metrics for SGD (model_b). GD metrics come from a separate single-model sweep.
-metrics_a: []
+# Both models are stochastic in online mode, so track metrics for both.
 metrics:
   - layer_norms
   - gram_norms

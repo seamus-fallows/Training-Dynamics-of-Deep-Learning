@@ -1,5 +1,5 @@
 experiment:
-  name: gph_gd_model_metrics
+  name: gph_online_baseline_metrics
 
 model:
   in_dim: 5
@@ -11,7 +11,7 @@ model:
 
 training:
   lr: 0.0001
-  batch_size: null
+  batch_size: 500
   optimizer: SGD
   optimizer_params: null
   criterion: MSELoss
@@ -22,7 +22,7 @@ data:
   train_samples: 500
   test_samples: 500
   data_seed: 0
-  online: false
+  online: true
   noise_std: 0.0
   params:
     matrix: power_law
