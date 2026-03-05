@@ -159,8 +159,14 @@ class TestConfigConsistency:
         gd_training = self.gd["training"]
         comp_training = self.comp["shared"]["training"]
         # Compare all shared keys (batch_size differs by design)
-        shared_keys = ["lr", "optimizer", "optimizer_params", "criterion", "batch_seed",
-                       "track_train_loss"]
+        shared_keys = [
+            "lr",
+            "optimizer",
+            "optimizer_params",
+            "criterion",
+            "batch_seed",
+            "track_train_loss",
+        ]
         for key in shared_keys:
             assert gd_training[key] == comp_training[key], (
                 f"training.{key}: GD={gd_training[key]!r} != comparative={comp_training[key]!r}"
@@ -656,7 +662,9 @@ class TestMatrixTypes:
     def test_power_law_requires_square(self):
         with pytest.raises(ValueError, match="out_dim == in_dim"):
             Dataset(
-                make_data_config(params={"matrix": "power_law", "scale": 1.0, "alpha": 1.0}),
+                make_data_config(
+                    params={"matrix": "power_law", "scale": 1.0, "alpha": 1.0}
+                ),
                 in_dim=5,
                 out_dim=3,
             )
@@ -871,7 +879,11 @@ class TestMetrics:
 
         weights = [layer.weight for layer in model.layers]
         for i in range(len(weights) - 1):
-            expected = (weights[i] @ weights[i].T - weights[i + 1].T @ weights[i + 1]).norm().item()
+            expected = (
+                (weights[i] @ weights[i].T - weights[i + 1].T @ weights[i + 1])
+                .norm()
+                .item()
+            )
             assert abs(result[f"balance_diff_{i}"] - expected) < 1e-6
 
     def test_layer_distances(self):
@@ -896,7 +908,9 @@ class TestMetrics:
             model_a, model_b, ["frobenius_distance"]
         )
 
-        expected = (model_a.end_to_end_weight() - model_b.end_to_end_weight()).norm().item()
+        expected = (
+            (model_a.end_to_end_weight() - model_b.end_to_end_weight()).norm().item()
+        )
         assert abs(result["frobenius_distance"] - expected) < 1e-6
 
     def test_individual_metrics_match_trace_covariances(self):
@@ -907,29 +921,42 @@ class TestMetrics:
         criterion = nn.MSELoss()
 
         # Reference: combined metric
-        ref_model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        ref_model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
         ref = metrics.trace_covariances(ref_model, inputs, targets, criterion)
 
         # grad_norm_squared (standalone)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
         gns = metrics.grad_norm_squared(model, inputs, targets, criterion)
         assert abs(gns - ref["grad_norm_squared"]) < 1e-5
 
         # trace_gradient_covariance (standalone)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
         tgc = metrics.trace_gradient_covariance(model, inputs, targets, criterion)
         assert abs(tgc - ref["trace_gradient_covariance"]) < 1e-5
 
         # trace_hessian_covariance (standalone)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
         thc = metrics.trace_hessian_covariance(model, inputs, targets, criterion)
         assert abs(thc - ref["trace_hessian_covariance"]) < 1e-5
 
         # gradient_stats (paired)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
         gs = metrics.gradient_stats(model, inputs, targets, criterion)
         assert abs(gs["grad_norm_squared"] - ref["grad_norm_squared"]) < 1e-5
-        assert abs(gs["trace_gradient_covariance"] - ref["trace_gradient_covariance"]) < 1e-5
+        assert (
+            abs(gs["trace_gradient_covariance"] - ref["trace_gradient_covariance"])
+            < 1e-5
+        )
 
     def test_individual_metrics_chunked_matches_unchunked(self):
         """Chunked paths of individual gradient metrics must match their unchunked paths."""
@@ -940,26 +967,59 @@ class TestMetrics:
         chunks = 4
 
         # trace_gradient_covariance
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
-        tgc_unchunked = metrics.trace_gradient_covariance(model, inputs, targets, criterion, chunks=1)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
-        tgc_chunked = metrics.trace_gradient_covariance(model, inputs, targets, criterion, chunks=chunks)
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
+        tgc_unchunked = metrics.trace_gradient_covariance(
+            model, inputs, targets, criterion, chunks=1
+        )
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
+        tgc_chunked = metrics.trace_gradient_covariance(
+            model, inputs, targets, criterion, chunks=chunks
+        )
         assert abs(tgc_unchunked - tgc_chunked) < 1e-5
 
         # trace_hessian_covariance
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
-        thc_unchunked = metrics.trace_hessian_covariance(model, inputs, targets, criterion, chunks=1)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
-        thc_chunked = metrics.trace_hessian_covariance(model, inputs, targets, criterion, chunks=chunks)
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
+        thc_unchunked = metrics.trace_hessian_covariance(
+            model, inputs, targets, criterion, chunks=1
+        )
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
+        thc_chunked = metrics.trace_hessian_covariance(
+            model, inputs, targets, criterion, chunks=chunks
+        )
         assert abs(thc_unchunked - thc_chunked) < 1e-5
 
         # gradient_stats
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
-        gs_unchunked = metrics.gradient_stats(model, inputs, targets, criterion, chunks=1)
-        model = create_model(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim)
-        gs_chunked = metrics.gradient_stats(model, inputs, targets, criterion, chunks=chunks)
-        assert abs(gs_unchunked["grad_norm_squared"] - gs_chunked["grad_norm_squared"]) < 1e-5
-        assert abs(gs_unchunked["trace_gradient_covariance"] - gs_chunked["trace_gradient_covariance"]) < 1e-5
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
+        gs_unchunked = metrics.gradient_stats(
+            model, inputs, targets, criterion, chunks=1
+        )
+        model = create_model(
+            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
+        )
+        gs_chunked = metrics.gradient_stats(
+            model, inputs, targets, criterion, chunks=chunks
+        )
+        assert (
+            abs(gs_unchunked["grad_norm_squared"] - gs_chunked["grad_norm_squared"])
+            < 1e-5
+        )
+        assert (
+            abs(
+                gs_unchunked["trace_gradient_covariance"]
+                - gs_chunked["trace_gradient_covariance"]
+            )
+            < 1e-5
+        )
 
     def test_relative_rank(self):
         model = create_model(model_seed=0, num_hidden=2)
@@ -1017,7 +1077,9 @@ class TestMetrics:
         assert t.allclose(model.partial_product(1, 1), weights[1], atol=1e-6)
 
         # Two layers: P(0,1) = W_1 @ W_0
-        assert t.allclose(model.partial_product(0, 1), weights[1] @ weights[0], atol=1e-6)
+        assert t.allclose(
+            model.partial_product(0, 1), weights[1] @ weights[0], atol=1e-6
+        )
 
         # Full product matches end_to_end_weight
         assert t.allclose(
@@ -1066,7 +1128,7 @@ class TestMetrics:
         sv_ref = metrics.compute_metrics(
             model, ["singular_values"], inputs, targets, criterion
         )
-        pp_svs = results[f"pp_0_{L-1}_sv"]
+        pp_svs = results[f"pp_0_{L - 1}_sv"]
         for i, v in enumerate(pp_svs):
             assert abs(v - sv_ref[f"sv_{i}"]) < 1e-6
 
@@ -2799,11 +2861,17 @@ class TestMergeSweeps:
         history = make_fake_history()
 
         dir_a = _make_sweep_dir(
-            tmp_path, "a", config, ["seed"],
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
             [{"seed": 0, **history}, {"seed": 1, **history}, {"seed": 2, **history}],
         )
         dir_b = _make_sweep_dir(
-            tmp_path, "b", config, ["seed"],
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
             [{"seed": 1, **history}, {"seed": 2, **history}, {"seed": 3, **history}],
         )
 
@@ -2819,14 +2887,22 @@ class TestMergeSweeps:
         history = make_fake_history()
 
         dir_a = _make_sweep_dir(
-            tmp_path, "a", config, ["seed"],
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
             [{"seed": 0, **history}, {"seed": 1, **history}],
         )
         dir_b = _make_sweep_dir(
-            tmp_path, "b", config, ["seed"],
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
             [
-                {"seed": 0, **history}, {"seed": 1, **history},
-                {"seed": 2, **history}, {"seed": 3, **history},
+                {"seed": 0, **history},
+                {"seed": 1, **history},
+                {"seed": 2, **history},
+                {"seed": 3, **history},
             ],
         )
 
@@ -2842,11 +2918,17 @@ class TestMergeSweeps:
         history = make_fake_history()
 
         dir_a = _make_sweep_dir(
-            tmp_path, "a", config, ["seed"],
+            tmp_path,
+            "a",
+            config,
+            ["seed"],
             [{"seed": 0, **history}, {"seed": 1, **history}],
         )
         dir_b = _make_sweep_dir(
-            tmp_path, "b", config, ["seed"],
+            tmp_path,
+            "b",
+            config,
+            ["seed"],
             [{"seed": 1, **history}, {"seed": 2, **history}],
         )
 
