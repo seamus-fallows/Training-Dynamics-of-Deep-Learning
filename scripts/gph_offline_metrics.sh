@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-WORKERS=32
+WORKERS=192
 OUTPUT=outputs/gph_offline_metrics
 
 echo "=== Full Batch Training ==="
@@ -15,7 +15,7 @@ python -m dln.sweep -cn=gph \
     training.batch_size=null \
     --zip=model.gamma,max_steps \
     --workers=$WORKERS \
-    --device=cuda \
+    --device=cpu \
     --output=$OUTPUT/full_batch
 
 echo "=== Mini Batch Training ==="
@@ -30,7 +30,7 @@ python -m dln.sweep -cn=gph \
     model.hidden_dim=100,50,10 \
     --zip=model.gamma,max_steps \
     --workers=$WORKERS \
-    --device=cuda \
+    --device=cpu \
     --output=$OUTPUT/mini_batch
 
 echo "=== Done ==="

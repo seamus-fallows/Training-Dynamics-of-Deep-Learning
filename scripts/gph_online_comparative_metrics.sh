@@ -2,37 +2,33 @@
 set -e
 
 WORKERS=192
-OUTPUT=outputs/gph_comparative_metrics
+OUTPUT=outputs/gph_online_comparative_metrics
 
 # =============================================================================
-# GD-only model metrics (deterministic — one run per config)
+# Large-batch baseline model metrics (stochastic — varies across batch seeds)
 # =============================================================================
-# layer_norms, gram_norms, balance_diffs, end_to_end_weight_norm are identical
-# across batch_seeds on the GD side, so we collect them once via a single-model
-# sweep with full-batch training (batch_size=null).
+# In online mode the baseline is B=500 (large batch approximating population
+# gradient). Unlike offline GD, this is stochastic, so we sweep over batch_seeds.
 
-echo "=== GD model metrics ==="
-python -m dln.sweep -cn=gph_gd_model_metrics \
+echo "=== Large-batch baseline model metrics ==="
+python -m dln.sweep -cn=gph_online_baseline_metrics \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
     model.hidden_dim=100,50,10 \
+    training.batch_seed=0..100 \
     --zip=model.gamma,max_steps \
     --workers=$WORKERS \
     --device=cpu \
-    --output=$OUTPUT/gd_metrics
+    --output=$OUTPUT/baseline_metrics
 
 # =============================================================================
-# Comparative sweep: GD (model_a) vs SGD (model_b)
+# Comparative sweep: large batch (model_a) vs mini-batch (model_b)
 # =============================================================================
-# Sweeps over many batch_seeds. Comparative metrics (param_distance,
-# layer_distances, frobenius_distance) and SGD model metrics (layer_norms,
-# gram_norms, balance_diffs, end_to_end_weight_norm) are collected via
-# metrics_a=[] so only model_b is tracked.
 
-echo "=== Comparative: GD vs SGD ==="
-python -m dln.sweep --comparative -cn=gph_metrics \
+echo "=== Comparative: large batch vs mini-batch ==="
+python -m dln.sweep --comparative -cn=gph_online_metrics \
     model.model_seed=0,1,2,3 \
     data.noise_std=0.0,0.2 \
     model.gamma=1.5,1.0,0.75 \
