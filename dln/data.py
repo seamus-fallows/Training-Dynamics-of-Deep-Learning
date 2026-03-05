@@ -64,6 +64,14 @@ def create_identity_matrix(in_dim: int, out_dim: int, params: dict) -> Tensor:
     return t.eye(in_dim)
 
 
+def _random_orthogonal(n: int, generator: t.Generator) -> Tensor:
+    """Haar-distributed random orthogonal matrix via QR decomposition."""
+    Z = t.randn(n, n, generator=generator)
+    Q, R = t.linalg.qr(Z)
+    Q *= t.diagonal(R).sign()
+    return Q
+
+
 class Dataset:
     """
     Linear teacher dataset with online/offline modes.
@@ -72,9 +80,10 @@ class Dataset:
     Online: Samples fresh data each batch (infinite data regime).
 
     RNG streams (all independent, seeded from data_seed):
-        data_seed     -> test input sampling
-        data_seed + 1 -> train input sampling (offline only)
-        data_seed + 2 -> train noise (offline only)
+        data_seed     -> teacher rotation basis
+        data_seed + 1 -> test input sampling
+        data_seed + 2 -> train input sampling (offline only)
+        data_seed + 3 -> train noise (offline only)
     """
 
     def __init__(self, cfg: DictConfig, in_dim: int, out_dim: int):
@@ -83,18 +92,23 @@ class Dataset:
         self.online = cfg.online
         self.noise_std = cfg.noise_std
         matrix_type = cfg.params["matrix"]
-        self.teacher_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
+        diag_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
 
-        test_gen = t.Generator().manual_seed(cfg.data_seed)
+        # Rotate to a random basis: A' = O^T A O (preserves eigenvalues)
+        rotation_gen = t.Generator().manual_seed(cfg.data_seed)
+        O = _random_orthogonal(in_dim, rotation_gen)
+        self.teacher_matrix = O.T @ diag_matrix @ O
+
+        test_gen = t.Generator().manual_seed(cfg.data_seed + 1)
         self.test_data = self._sample(cfg.test_samples, test_gen)
 
         if self.online:
             self.train_data = None
         else:
-            train_gen = t.Generator().manual_seed(cfg.data_seed + 1)
+            train_gen = t.Generator().manual_seed(cfg.data_seed + 2)
             self.train_data = self._sample(cfg.train_samples, train_gen)
             if self.noise_std > 0:
-                noise_gen = t.Generator().manual_seed(cfg.data_seed + 2)
+                noise_gen = t.Generator().manual_seed(cfg.data_seed + 3)
                 x, y = self.train_data
                 noise = t.randn(y.shape, generator=noise_gen)
                 self.train_data = (x, y + noise * self.noise_std)

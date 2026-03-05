@@ -651,13 +651,16 @@ class TestMatrixTypes:
     def test_power_law_matrix(self):
         params = {"matrix": "power_law", "scale": 10.0, "alpha": 1.0}
         ds = Dataset(make_data_config(params=params), in_dim=5, out_dim=5)
-        expected = 10.0 * t.diag(t.arange(1, 6).float().pow(-1.0))
-        assert t.allclose(ds.teacher_matrix, expected)
+        # Teacher is rotated; check eigenvalues match the intended spectrum
+        eigvals = t.linalg.eigvalsh(ds.teacher_matrix)
+        expected_eigvals = 10.0 * t.arange(1, 6).float().pow(-1.0).sort().values
+        assert t.allclose(eigvals, expected_eigvals)
 
     def test_power_law_alpha_zero_is_uniform(self):
         params = {"matrix": "power_law", "scale": 1.0, "alpha": 0.0}
         ds = Dataset(make_data_config(params=params), in_dim=5, out_dim=5)
-        assert t.allclose(ds.teacher_matrix, t.eye(5))
+        # O^T I O = I for any orthogonal O, so rotation preserves identity
+        assert t.allclose(ds.teacher_matrix, t.eye(5), atol=1e-6)
 
     def test_power_law_requires_square(self):
         with pytest.raises(ValueError, match="out_dim == in_dim"):
