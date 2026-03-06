@@ -26,6 +26,9 @@ Model metrics:
     hessian_spectrum_top     Top fraction of eigenvalues via partial eigh. Params: fraction. → list
     hessian_spectrum_bottom  Bottom fraction of eigenvalues via partial eigh. Params: fraction. → list
     hessian_extremal_eigenvalues  Top/bottom k eigenvalues via implicit HVPs (no materialization). Params: k.
+    hessian_spectral_stats       All spectral statistics from full eigendecomposition (exact).
+    hessian_spectral_stats_slq   Spectral statistics via Stochastic Lanczos Quadrature (approximate). Params: n_probes, lanczos_steps.
+    hessian_spectral_stats_hutchinson  Trace and Frobenius norm via Hutchinson estimator. Params: n_probes.
 
 Comparative metrics:
     param_distance           L2 distance between flattened parameter vectors.
@@ -60,6 +63,7 @@ Cost: O(NP) time and memory, vs O(P²) memory and O(P³) compute for the
 naive approach. The same decomposition gives Tr(Σ) = (1/N) Σᵢ ||nᵢ||².
 """
 
+import math
 import torch as t
 from torch import Tensor
 from torch.nn import Module, functional as F
@@ -764,12 +768,12 @@ def hessian_extremal_eigenvalues(
 
     def matvec(x):
         v = t.tensor(x, device=device, dtype=dtype)
-        return _hessian_vector_product_analytical(pre, v).cpu().numpy()
+        return _hessian_vector_product_analytical(pre, v).detach().cpu().numpy()
 
     op = LinearOperator((P, P), matvec=matvec, dtype="float64")
 
-    # Largest k eigenvalues
-    top_vals, _ = eigsh(op, k=k, which="LM")
+    # Largest algebraic eigenvalues
+    top_vals, _ = eigsh(op, k=k, which="LA")
     # Smallest algebraic eigenvalues (most negative)
     bottom_vals, _ = eigsh(op, k=k, which="SA")
 
@@ -777,6 +781,339 @@ def hessian_extremal_eigenvalues(
         "hessian_top_eigenvalues": sorted(top_vals.tolist()),
         "hessian_bottom_eigenvalues": sorted(bottom_vals.tolist()),
     }
+
+
+# Spectral statistics
+#
+# Summary statistics computed from the Hessian eigenvalue distribution.
+# Can be computed exactly from the full spectrum, or approximately via
+# Stochastic Lanczos Quadrature (SLQ) or Hutchinson's estimator.
+
+
+def _spectral_statistics(eigenvalues: Tensor) -> dict[str, float]:
+    """Compute all spectral statistics from a full eigenvalue vector.
+
+    Args:
+        eigenvalues: sorted eigenvalues (ascending), on any device.
+
+    Returns dict with:
+        trace: Σλᵢ
+        frobenius_norm: √(Σλᵢ²) = ‖H‖_F
+        lambda_max: largest eigenvalue
+        lambda_min: smallest eigenvalue (most negative)
+        stable_rank: Tr(H)/λ_max — ratio of trace to spectral radius (not the
+            matrix stable rank ‖A‖²_F/‖A‖² which would be Σλᵢ²/λ_max²)
+        participation_ratio: (Σλᵢ)²/Σλᵢ²
+        entropic_rank: exp(−Σ p̂ᵢ log p̂ᵢ) where p̂ᵢ = λᵢ⁺/Σλⱼ⁺
+        neg_fraction: fraction of eigenvalues < 0
+        gini: Gini coefficient of |λᵢ|
+    """
+    eigs = eigenvalues.double()
+    P = eigs.shape[0]
+
+    trace = eigs.sum().item()
+    sum_sq = eigs.pow(2).sum().item()
+    frob = sum_sq ** 0.5
+    lam_max = eigs[-1].item()
+    lam_min = eigs[0].item()
+
+    stable_rank = trace / lam_max if lam_max > 0 else float("inf")
+    participation_ratio = trace ** 2 / sum_sq if sum_sq > 0 else 0.0
+
+    # Entropic rank: use only positive eigenvalues
+    pos = eigs[eigs > 0]
+    if pos.numel() > 0:
+        p = pos / pos.sum()
+        entropy = -(p * p.log()).sum().item()
+        entropic_rank = math.exp(entropy)
+    else:
+        entropic_rank = 0.0
+
+    neg_fraction = (eigs < 0).sum().item() / P
+
+    # Gini coefficient of |λ|
+    abs_eigs = eigs.abs().sort().values
+    n = abs_eigs.shape[0]
+    cumsum = abs_eigs.cumsum(0)
+    total = cumsum[-1].item()
+    if total > 0:
+        gini = 1.0 - 2.0 * cumsum.sum().item() / (n * total) + 1.0 / n
+    else:
+        gini = 0.0
+
+    return {
+        "trace": trace,
+        "frobenius_norm": frob,
+        "lambda_max": lam_max,
+        "lambda_min": lam_min,
+        "stable_rank": stable_rank,
+        "participation_ratio": participation_ratio,
+        "entropic_rank": entropic_rank,
+        "neg_fraction": neg_fraction,
+        "gini": gini,
+    }
+
+
+# Stochastic Lanczos Quadrature (SLQ)
+#
+# Builds a Krylov subspace via Lanczos with random probe vectors, producing
+# a tridiagonal matrix T whose Ritz values approximate H's spectrum. From
+# T's eigenpairs we can estimate Tr(f(H)) for any spectral function f.
+# Cost: n_probes × lanczos_steps HVPs.
+
+
+def _lanczos_tridiag(
+    hvp_fn: Callable[[Tensor], Tensor],
+    P: int,
+    lanczos_steps: int,
+    device,
+    dtype,
+    seed: int,
+) -> tuple[Tensor, Tensor]:
+    """Run Lanczos to build a tridiagonal matrix from one probe vector.
+
+    Returns (alpha, beta) — diagonal and off-diagonal of the tridiagonal.
+    alpha has shape (m,), beta has shape (m-1,).
+    """
+    rng = t.Generator(device=device).manual_seed(seed)
+    q = t.randn(P, device=device, dtype=dtype, generator=rng)
+    q = q / q.norm()
+
+    m = min(lanczos_steps, P)
+    alpha = t.zeros(m, device=device, dtype=dtype)
+    beta = t.zeros(m, device=device, dtype=dtype)
+    q_prev = t.zeros_like(q)
+
+    for j in range(m):
+        r = hvp_fn(q)
+        alpha[j] = q.dot(r)
+        r = r - alpha[j] * q
+        if j > 0:
+            r = r - beta[j - 1] * q_prev
+            # Partial re-orthogonalization against q and q_prev.
+            # Full reorthogonalization (against all Lanczos vectors) would cost
+            # O(m·P) storage but isn't needed for moderate lanczos_steps.
+            r = r - q * q.dot(r) - q_prev * q_prev.dot(r)
+
+        beta_j = r.norm()
+        if beta_j < 1e-12:
+            # Invariant subspace found — truncate
+            alpha = alpha[: j + 1]
+            beta = beta[:j]
+            break
+
+        if j < m - 1:
+            beta[j] = beta_j
+            q_prev = q
+            q = r / beta_j
+
+    # beta might have trailing entries if we didn't break early
+    beta = beta[: len(alpha) - 1]
+    return alpha, beta
+
+
+def _tridiag_eigvals(alpha: Tensor, beta: Tensor) -> tuple[Tensor, Tensor]:
+    """Eigendecompose a tridiagonal matrix defined by (alpha, beta).
+
+    Returns (eigenvalues, weights) where weights[j] = eigvec[0, j]² — the
+    squared first component of each eigenvector, used as quadrature weights.
+    """
+    T = t.diag(alpha) + t.diag(beta, 1) + t.diag(beta, -1)
+    eigvals, eigvecs = t.linalg.eigh(T)
+    weights = eigvecs[0].pow(2)
+    return eigvals, weights
+
+
+def _slq_spectral_statistics(
+    pre: dict,
+    P: int,
+    device,
+    dtype,
+    n_probes: int = 30,
+    lanczos_steps: int = 64,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Estimate spectral statistics via Stochastic Lanczos Quadrature.
+
+    For each probe vector, Lanczos produces Ritz values θⱼ and weights wⱼ.
+    Then: Tr(f(H)) ≈ P · mean_probes(Σⱼ wⱼ f(θⱼ)).
+
+    This gives us trace, Frobenius norm, lambda_max, and enough of the
+    spectral shape to estimate entropic rank and participation ratio.
+    """
+    def hvp_fn(v):
+        return _hessian_vector_product_analytical(pre, v).detach()
+
+    # Collect Ritz values and weights from all probes
+    all_ritz = []
+    all_weights = []
+    lam_max_estimates = []
+    lam_min_estimates = []
+
+    for i in range(n_probes):
+        alpha, beta = _lanczos_tridiag(hvp_fn, P, lanczos_steps, device, dtype, seed + i)
+        ritz_vals, ritz_weights = _tridiag_eigvals(alpha, beta)
+        all_ritz.append(ritz_vals)
+        all_weights.append(ritz_weights)
+        lam_max_estimates.append(ritz_vals[-1].item())
+        lam_min_estimates.append(ritz_vals[0].item())
+
+    # SLQ spectral function estimation: Tr(f(H)) ≈ P · mean_probes(Σⱼ wⱼ f(θⱼ))
+    # We estimate multiple spectral functions from the same Lanczos data.
+    trace_est = []      # f(x) = x
+    sum_sq_est = []     # f(x) = x²
+    trace_pos_est = []  # f(x) = max(x, 0)       → T⁺
+    xlogx_est = []      # f(x) = max(x,0)·log(max(x,0))  → for entropy
+    neg_frac_est = []   # f(x) = 1 if x < 0      → neg fraction
+
+    for rv, rw in zip(all_ritz, all_weights):
+        trace_est.append((rw * rv).sum().item())
+        sum_sq_est.append((rw * rv.pow(2)).sum().item())
+
+        pos = rv.clamp(min=0)
+        trace_pos_est.append((rw * pos).sum().item())
+
+        # x·log(x) with 0·log(0) = 0
+        pos_nonzero = pos > 0
+        xlx = t.zeros_like(rv)
+        xlx[pos_nonzero] = pos[pos_nonzero] * pos[pos_nonzero].log()
+        xlogx_est.append((rw * xlx).sum().item())
+
+        neg_frac_est.append(rw[rv < 0].sum().item())
+
+    trace = P * sum(trace_est) / n_probes
+    sum_sq = P * sum(sum_sq_est) / n_probes
+    frob = sum_sq ** 0.5 if sum_sq > 0 else 0.0
+
+    lam_max = max(lam_max_estimates)
+    lam_min = min(lam_min_estimates)
+
+    stable_rank = trace / lam_max if lam_max > 0 else float("inf")
+    participation_ratio = trace ** 2 / sum_sq if sum_sq > 0 else 0.0
+
+    # Entropic rank via SLQ:
+    # S = -Σᵢ (λᵢ⁺/T⁺) log(λᵢ⁺/T⁺)
+    #   = log(T⁺) - (1/T⁺) Σᵢ λᵢ⁺ log(λᵢ⁺)
+    #   = log(T⁺) - Tr(g(H))/T⁺   where g(x) = max(x,0)·log(max(x,0))
+    trace_pos = P * sum(trace_pos_est) / n_probes
+    tr_xlogx = P * sum(xlogx_est) / n_probes
+    if trace_pos > 0:
+        entropy = math.log(trace_pos) - tr_xlogx / trace_pos
+        entropic_rank = math.exp(entropy)
+    else:
+        entropic_rank = 0.0
+
+    neg_frac = sum(neg_frac_est) / n_probes
+
+    return {
+        "trace": trace,
+        "frobenius_norm": frob,
+        "lambda_max": lam_max,
+        "lambda_min": lam_min,
+        "stable_rank": stable_rank,
+        "participation_ratio": participation_ratio,
+        "entropic_rank": entropic_rank,
+        "neg_fraction": neg_frac,
+    }
+
+
+def _hutchinson_spectral_statistics(
+    pre: dict,
+    P: int,
+    device,
+    dtype,
+    n_probes: int = 50,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Estimate trace, Frobenius norm, and λ_max via Hutchinson + power iteration.
+
+    Tr(H) ≈ (1/n) Σᵢ zᵢᵀ H zᵢ       (1 HVP each, Rademacher probes)
+    Tr(H²) ≈ (1/n) Σᵢ ‖Hzᵢ‖²         (reuses same HVPs)
+    λ_max via 20 steps of power iteration (additional 21 HVPs).
+    """
+    rng = t.Generator(device=device).manual_seed(seed)
+
+    trace_sum = 0.0
+    sum_sq_sum = 0.0
+
+    for _ in range(n_probes):
+        # Rademacher random vectors (±1) — lower variance than Gaussian for trace
+        z = t.sign(t.randn(P, device=device, dtype=dtype, generator=rng))
+        hz = _hessian_vector_product_analytical(pre, z).detach()
+
+        trace_sum += z.dot(hz).item()
+        sum_sq_sum += hz.dot(hz).item()
+
+    trace = trace_sum / n_probes
+    sum_sq = sum_sq_sum / n_probes
+    frob = sum_sq ** 0.5 if sum_sq > 0 else 0.0
+
+    # λ_max via power iteration (20 steps, reuses the HVP infrastructure)
+    v = t.randn(P, device=device, dtype=dtype, generator=rng)
+    v = v / v.norm()
+    for _ in range(20):
+        v = _hessian_vector_product_analytical(pre, v).detach()
+        v = v / v.norm()
+    hv = _hessian_vector_product_analytical(pre, v).detach()
+    lam_max = v.dot(hv).item()
+
+    stable_rank = trace / lam_max if lam_max > 0 else float("inf")
+    participation_ratio = trace ** 2 / sum_sq if sum_sq > 0 else 0.0
+
+    return {
+        "trace": trace,
+        "frobenius_norm": frob,
+        "lambda_max": lam_max,
+        "stable_rank": stable_rank,
+        "participation_ratio": participation_ratio,
+    }
+
+
+@metric("hessian_spectral_stats")
+def hessian_spectral_stats(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> dict[str, float]:
+    """All spectral statistics from full eigendecomposition (exact)."""
+    H = _materialize_hessian_analytical(model, inputs, targets)
+    eigenvalues = t.linalg.eigvalsh(H)
+    return {f"hessian_{k}": v for k, v in _spectral_statistics(eigenvalues).items()}
+
+
+@metric("hessian_spectral_stats_slq")
+def hessian_spectral_stats_slq(
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    n_probes: int = 30,
+    lanczos_steps: int = 64,
+    **kwargs,
+) -> dict[str, float]:
+    """Spectral statistics via Stochastic Lanczos Quadrature (approximate)."""
+    pre = _hessian_precompute(model, inputs, targets)
+    P = pre["offsets"][-1]
+    stats = _slq_spectral_statistics(
+        pre, P, inputs.device, inputs.dtype, n_probes, lanczos_steps
+    )
+    return {f"hessian_{k}": v for k, v in stats.items()}
+
+
+@metric("hessian_spectral_stats_hutchinson")
+def hessian_spectral_stats_hutchinson(
+    model: Module,
+    inputs: Tensor,
+    targets: Tensor,
+    criterion: Module,
+    n_probes: int = 50,
+    **kwargs,
+) -> dict[str, float]:
+    """Trace and Frobenius norm via Hutchinson estimator (approximate)."""
+    pre = _hessian_precompute(model, inputs, targets)
+    P = pre["offsets"][-1]
+    stats = _hutchinson_spectral_statistics(
+        pre, P, inputs.device, inputs.dtype, n_probes
+    )
+    return {f"hessian_{k}": v for k, v in stats.items()}
 
 
 # Comparative metrics
