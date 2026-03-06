@@ -22,6 +22,7 @@ Model metrics:
     trace_hessian_covariance   Tr(HΣ), Hessian-covariance alignment. Params: chunks.
     gradient_stats           grad_norm_squared + Tr(Σ), shared computation. Params: chunks.
     trace_covariances        grad_norm_squared + Tr(Σ) + Tr(HΣ), shared computation. Params: chunks.
+    hessian_spectrum         Eigenvalues of the full Hessian via analytical materialization. → list
 
 Comparative metrics:
     param_distance           L2 distance between flattened parameter vectors.
@@ -528,6 +529,107 @@ def trace_covariances(
         compute_trace_grad=True,
         compute_trace_hess=True,
     )
+
+
+# Analytical Hessian for deep linear networks
+
+
+def _materialize_hessian_analytical(
+    model: Module, inputs: Tensor, targets: Tensor
+) -> Tensor:
+    """Materialize the full Hessian analytically using Kronecker structure.
+
+    Exploits the multilinearity of deep linear networks: the output is linear
+    in each weight matrix individually, so diagonal Hessian blocks are pure
+    Gauss-Newton (no residual correction), and off-diagonal blocks get a
+    rank-structured correction from the residual.
+
+    See .claude/analytical_hessian.tex for the full derivation.
+    """
+    weights = [layer.weight for layer in model.layers]
+    L = len(weights)
+    dims = [w.shape[1] for w in weights] + [weights[-1].shape[0]]
+    N, d_L = inputs.shape[0], dims[-1]
+    alpha = 2.0 / (N * d_L)
+
+    # Step 1: Forward pass collecting all activations, and residual
+    activations = [inputs]
+    for k in range(L):
+        activations.append(activations[-1] @ weights[k].T)
+    residual = targets - activations[-1]
+
+    # Step 2: Post-weight products Q_k = P(k+1, L-1)
+    # Q[L-1] = I, Q[k] = W_{L-1} @ ... @ W_{k+1}
+    Q = [None] * L
+    Q[L - 1] = t.eye(d_L, device=inputs.device, dtype=inputs.dtype)
+    for k in range(L - 2, -1, -1):
+        Q[k] = Q[k + 1] @ weights[k + 1]
+
+    # Step 3: Mid-weight products M[a][b] = P(a+1, b-1)
+    # Only needed for a < b-1; M[a][a+1] = I_{d_{a+1}}
+    M = [[None] * L for _ in range(L)]
+    for a in range(L):
+        for b in range(a + 1, L):
+            if b == a + 1:
+                M[a][b] = t.eye(dims[a + 1], device=inputs.device, dtype=inputs.dtype)
+            else:
+                M[a][b] = model.partial_product(a + 1, b - 1)
+
+    # Step 4: Precompute small Gram matrices
+    # S[a][b] = Q_a^T @ Q_b  (d_{a+1} x d_{b+1})
+    # D[a][b] = H_a^T @ H_b  (d_a x d_b)
+    S = [[None] * L for _ in range(L)]
+    D = [[None] * L for _ in range(L)]
+    for a in range(L):
+        for b in range(a, L):
+            S[a][b] = Q[a].T @ Q[b]
+            D[a][b] = activations[a].T @ activations[b]
+
+    # Step 5: Residual cross-correlations C[b][a] = Q_b^T @ R^T @ H_a
+    C = [[None] * L for _ in range(L)]
+    RtH = [residual.T @ activations[a] for a in range(L)]  # d_L x d_a, reused across b
+    for a in range(L):
+        for b in range(a + 1, L):
+            C[b][a] = Q[b].T @ RtH[a]
+
+    # Step 6: Assemble full Hessian
+    param_sizes = [dims[k + 1] * dims[k] for k in range(L)]
+    P_total = sum(param_sizes)
+    H = t.zeros(P_total, P_total, device=inputs.device, dtype=inputs.dtype)
+
+    offsets = [0]
+    for s in param_sizes:
+        offsets.append(offsets[-1] + s)
+
+    for a in range(L):
+        for b in range(a, L):
+            ra, rb = offsets[a], offsets[b]
+            sa, sb = param_sizes[a], param_sizes[b]
+
+            # Gauss-Newton block: einsum('ik,jl->ijkl', S_ab, D_ab)
+            block = alpha * t.einsum("ik,jl->ijkl", S[a][b], D[a][b]).reshape(sa, sb)
+
+            if a < b:
+                # Residual correction: -alpha * einsum('pi,mj->ijmp', M_ab, C_ba)
+                block -= alpha * t.einsum("pi,mj->ijmp", M[a][b], C[b][a]).reshape(
+                    sa, sb
+                )
+                H[ra : ra + sa, rb : rb + sb] = block
+                H[rb : rb + sb, ra : ra + sa] = block.T
+            else:
+                H[ra : ra + sa, rb : rb + sb] = block
+
+    return H
+
+
+@metric("hessian_spectrum")
+def hessian_spectrum(
+    model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
+) -> dict[str, list[float]]:
+    """Eigenvalues of the full Hessian, computed via analytical materialization."""
+    H = _materialize_hessian_analytical(model, inputs, targets)
+    eigenvalues = t.linalg.eigvalsh(H)
+    return {"hessian_spectrum": eigenvalues.tolist()}
 
 
 # Comparative metrics
