@@ -34,6 +34,7 @@ metrics:
   - gram_norms
   - balance_diffs
   - end_to_end_weight_norm
+  - gradient_stats
 
 max_steps: 10000
 num_evaluations: 250
