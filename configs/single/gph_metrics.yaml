@@ -30,7 +30,7 @@ data:
     alpha: 1.0
 
 metrics:
-  - trace_covariances
+  - gradient_stats
 
 max_steps: 10000
 num_evaluations: 250
