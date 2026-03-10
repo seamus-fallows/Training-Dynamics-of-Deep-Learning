@@ -62,7 +62,7 @@ naive approach. The same decomposition gives Tr(Σ) = (1/N) Σᵢ ||nᵢ||².
 
 import torch as t
 from torch import Tensor
-from torch.nn import Module, functional as F
+from torch.nn import Module, MSELoss, functional as F
 from torch.func import functional_call, grad, jvp, vmap
 from torch.nn.utils import parameters_to_vector
 from typing import Callable
@@ -454,6 +454,72 @@ def trace_gradient_covariance(
     )["trace_gradient_covariance"]
 
 
+def _gradient_stats_analytical(model: Module, inputs: Tensor, targets: Tensor) -> dict[str, float]:
+    """Compute grad_norm_squared and trace_gradient_covariance analytically.
+
+    Exploits the rank-1 structure of per-sample gradients in deep linear networks
+    with MSE loss to avoid per-sample autodiff entirely. Uses the identity:
+
+        Tr(Σ) = E[||gᵢ||²] - ||ḡ||²
+
+    where E[||gᵢ||²] decomposes per layer as:
+
+        ||∂ℓᵢ/∂Wₖ||²_F = α² ||Qₖᵀrᵢ||² ||hₖ⁽ⁱ⁾||²
+
+    with α = 2/d_out (MSELoss gradient scaling), Qₖ the post-weight product,
+    rᵢ the residual, and hₖ the activation. All computation is batched matrix
+    multiplications — no vmap, no autodiff, pure BLAS.
+    """
+    from dln.model import DeepLinearNetwork
+    weights = [layer.weight for layer in model.layers]
+    L = len(weights)
+    N = inputs.shape[0]
+    d_out = weights[-1].shape[0]
+
+    # Forward pass: collect activations and residual
+    activations = [inputs]
+    for k in range(L):
+        activations.append(activations[-1] @ weights[k].T)
+    residual = targets - activations[-1]
+
+    # Post-weight products: Q[k] = W_{L-1} ... W_{k+1}, Q[L-1] = I
+    Q = [None] * L
+    Q[L - 1] = t.eye(d_out, device=inputs.device, dtype=inputs.dtype)
+    for k in range(L - 2, -1, -1):
+        Q[k] = Q[k + 1] @ weights[k + 1]
+
+    # MSELoss gradient scaling: d(MSELoss_i)/d(output) = (2/d_out)(ŷ - y)
+    alpha = 2.0 / d_out
+
+    # E[||gᵢ||²] = α²/N Σ_k Σᵢ ||Qₖᵀrᵢ||² ||hₖ⁽ⁱ⁾||²
+    sum_sq_norms = t.zeros((), device=inputs.device, dtype=inputs.dtype)
+    grad_norm_sq = t.zeros((), device=inputs.device, dtype=inputs.dtype)
+    for k in range(L):
+        RQ = residual @ Q[k]  # (N, d_{k+1})
+        H = activations[k]  # (N, d_k)
+
+        rq_sq = (RQ * RQ).sum(dim=1)  # (N,)
+        h_sq = (H * H).sum(dim=1)  # (N,)
+        sum_sq_norms += rq_sq @ h_sq  # dot product = Σᵢ ||Qₖᵀrᵢ||² ||hₖ⁽ⁱ⁾||²
+
+        # Mean gradient for layer k: ḡₖ = α/N · (R@Qₖ)ᵀ Hₖ
+        mean_grad_k = RQ.T @ H  # (d_{k+1}, d_k), missing α/N factor
+        grad_norm_sq += (mean_grad_k * mean_grad_k).sum()
+
+    e_gi_sq = (alpha ** 2 / N * sum_sq_norms).item()
+    grad_norm_sq = (alpha ** 2 / (N * N) * grad_norm_sq).item()
+
+    return {
+        "grad_norm_squared": grad_norm_sq,
+        "trace_gradient_covariance": e_gi_sq - grad_norm_sq,
+    }
+
+
+def _can_use_analytical_gradient_stats(model: Module, criterion: Module) -> bool:
+    from dln.model import DeepLinearNetwork
+    return isinstance(model, DeepLinearNetwork) and isinstance(criterion, MSELoss)
+
+
 @metric("gradient_stats")
 def gradient_stats(
     model: Module,
@@ -465,11 +531,12 @@ def gradient_stats(
     """
     Compute ||∇L||² and Tr(Σ) together, sharing the per-sample gradient computation.
 
-    Saves a full forward+backward pass vs computing grad_norm_squared and
-    trace_gradient_covariance independently (grad_norm_squared would do its own
-    backward pass to get the mean gradient, which we already get from the
-    per-sample grads needed for Tr(Σ)).
+    For DeepLinearNetwork with MSELoss, uses an analytical formula that avoids
+    per-sample autodiff entirely — significantly faster on CPU. Falls back to
+    vmap-based computation for other model/criterion combinations.
     """
+    if _can_use_analytical_gradient_stats(model, criterion):
+        return _gradient_stats_analytical(model, inputs, targets)
     return _gradient_traces(
         model,
         inputs,

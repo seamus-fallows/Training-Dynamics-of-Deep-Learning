@@ -1024,6 +1024,48 @@ class TestMetrics:
             < 1e-5
         )
 
+    def test_gradient_stats_analytical_matches_vmap(self):
+        """Analytical gradient_stats must match vmap-based _gradient_traces."""
+        for model_seed, num_hidden, hidden_dim, in_dim, out_dim in [
+            (0, 1, 8, 5, 5),   # square, shallow
+            (1, 3, 10, 5, 3),  # rectangular, deeper
+            (2, 0, 8, 5, 3),   # single layer (no hidden)
+        ]:
+            cfg = dict(model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim,
+                       in_dim=in_dim, out_dim=out_dim)
+            model = create_model(**cfg)
+            t.manual_seed(model_seed)
+            inputs = t.randn(20, in_dim)
+            targets = t.randn(20, out_dim)
+            criterion = nn.MSELoss()
+
+            analytical = metrics._gradient_stats_analytical(model, inputs, targets)
+            vmap_based = metrics._gradient_traces(
+                model, inputs, targets, criterion, chunks=1,
+                compute_grad_norm=True, compute_trace_grad=True,
+            )
+
+            assert abs(analytical["grad_norm_squared"] - vmap_based["grad_norm_squared"]) < 1e-5, (
+                f"grad_norm_squared mismatch for {cfg}: "
+                f"{analytical['grad_norm_squared']} vs {vmap_based['grad_norm_squared']}"
+            )
+            assert abs(analytical["trace_gradient_covariance"] - vmap_based["trace_gradient_covariance"]) < 1e-4, (
+                f"trace_gradient_covariance mismatch for {cfg}: "
+                f"{analytical['trace_gradient_covariance']} vs {vmap_based['trace_gradient_covariance']}"
+            )
+
+    def test_gradient_stats_analytical_dispatches_for_dln_mse(self):
+        """gradient_stats should use analytical path for DLN + MSELoss."""
+        from unittest.mock import patch
+        model = create_model(model_seed=0)
+        inputs = t.randn(10, 5)
+        targets = t.randn(10, 5)
+        criterion = nn.MSELoss()
+
+        with patch.object(metrics, '_gradient_stats_analytical', wraps=metrics._gradient_stats_analytical) as mock:
+            metrics.gradient_stats(model, inputs, targets, criterion)
+            mock.assert_called_once()
+
     def test_relative_rank(self):
         model = create_model(model_seed=0, num_hidden=2)
         inputs = t.randn(10, 5)
