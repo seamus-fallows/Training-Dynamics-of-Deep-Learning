@@ -7,7 +7,7 @@ OUTPUT=outputs/gph_online_metrics
 echo "=== Large Batch Training ==="
 python -m dln.sweep -cn=gph \
     data.online=true \
-    metrics=[trace_covariances] \
+    metrics=[gradient_stats] \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
     model.model_seed=0,1,2,3 \
@@ -23,7 +23,7 @@ python -m dln.sweep -cn=gph \
 echo "=== Mini Batch Training ==="
 python -m dln.sweep -cn=gph \
     data.online=true \
-    metrics=[trace_covariances] \
+    metrics=[gradient_stats] \
     model.gamma=1.5,1.0,0.75 \
     max_steps=26000,8000,5000 \
     training.batch_size=50,10,5,2,1 \

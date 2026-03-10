@@ -5,9 +5,9 @@ Analyzes results from GPH experiment sweeps (offline or online) that include
 drift (grad_norm_squared) and diffusion (trace_gradient_covariance) alongside
 test_loss.
 
-Generates two figure types per (gamma, noise, width, batch_size) combo:
-- Drift and Diffusion: loss, drift, diffusion, drift/diffusion ratio
-- Metric Spread: σ(log metric) and min-max bands for drift and diffusion
+Generates one figure per (width, noise, model_seed, batch_size) combo:
+- 4 rows: test loss, drift, diffusion, drift/diffusion ratio
+- 3 columns: one per initialisation (NTK, Mean-Field, Saddle-to-Saddle)
 
 Usage (run from the project root):
 
@@ -41,7 +41,7 @@ from scipy import stats as scipy_stats
 
 from _common import (
     BATCH_KEY_COLS, BL_KEY_COLS, CACHE_DIR, GAMMA_NAMES,
-    build_filter, fmt_seeds, mean_centered_spread, sort_parquet, suptitle_params,
+    build_filter, fmt_seeds, mean_centered_spread, sort_parquet,
 )
 
 
@@ -327,8 +327,6 @@ def _get_n_seeds(stats: dict[tuple, ConfigStats]):
     return first_metric.n
 
 
-# -- Drift and Diffusion figure ------------------------------------------------
-
 ROW_INFO = [
     {"metric": "test_loss", "ylabel": "Test loss", "yscale": "log"},
     {"metric": "grad_norm_squared", "ylabel": r"Drift ($\|\nabla L\|^2$)", "yscale": "log"},
@@ -340,13 +338,13 @@ ROW_INFO = [
 def plot_metrics(
     exp_config: dict,
     stats: dict[tuple, ConfigStats],
-    gamma: float,
+    gammas: list[float],
     noise: float,
     width: int,
     batch_size: int,
-    model_seeds: list,
+    model_seed: int,
 ) -> plt.Figure:
-    """Metrics: 4 rows (loss, drift, diffusion, drift/diffusion) x model_seeds columns."""
+    """Metrics: 4 rows (loss, drift, diffusion, drift/diffusion) x gamma columns."""
     baseline_bs = exp_config["baseline_batch_size"]
 
     if baseline_bs is not None:
@@ -356,21 +354,22 @@ def plot_metrics(
         bl_legend = exp_config["baseline_label"]
         sgd_legend = f"SGD (B={batch_size})"
 
-    n_cols = len(model_seeds)
+    n_cols = len(gammas)
     n_rows = len(ROW_INFO)
     fig, axes = plt.subplots(
         n_rows, n_cols, figsize=(5 * n_cols, 2.5 * n_rows), squeeze=False,
     )
 
-    for col, model_seed in enumerate(model_seeds):
+    for col, gamma in enumerate(gammas):
         key = (width, gamma, noise, model_seed, batch_size)
+        col_title = f"{GAMMA_NAMES.get(gamma, f'γ={gamma}')} (γ={gamma})"
 
         for row, info in enumerate(ROW_INFO):
             ax = axes[row, col]
 
             if key not in stats:
                 if row == 0:
-                    ax.set_title(f"Model Seed {model_seed}")
+                    ax.set_title(col_title)
                 if col == 0:
                     ax.set_ylabel(info["ylabel"])
                 if row == n_rows - 1:
@@ -385,18 +384,18 @@ def plot_metrics(
             if bl_ms.n > 1:
                 ax.fill_between(
                     s.steps, bl_ms.ci_lo, bl_ms.ci_hi,
-                    alpha=0.3, color="C0", label=f"{bl_legend} 95% CI",
+                    alpha=0.3, color="C0", label="95% CI (mean)",
                 )
 
             ax.plot(s.steps, sgd_ms.mean, label=sgd_legend, color="C1", linewidth=1.5)
             ax.fill_between(
                 s.steps, sgd_ms.ci_lo, sgd_ms.ci_hi,
-                alpha=0.3, color="C1", label=f"{sgd_legend} 95% CI",
+                alpha=0.3, color="C1", label="95% CI (mean)",
             )
 
             ax.set_yscale(info["yscale"])
             if row == 0:
-                ax.set_title(f"Model Seed {model_seed}")
+                ax.set_title(col_title)
             if col == 0:
                 ax.set_ylabel(info["ylabel"])
             if row == n_rows - 1:
@@ -404,166 +403,16 @@ def plot_metrics(
             ax.legend(loc="upper right", fontsize=6)
 
     n_batch_seeds = _get_n_seeds(stats)
-    if baseline_bs is not None:
-        prefix = (
-            f"Drift and diffusion | batch size {baseline_bs} vs "
-            f"{batch_size} over {fmt_seeds(n_batch_seeds)} batch seeds "
-            f"| Width {width}"
-        )
-    else:
-        prefix = (
-            f"Drift and diffusion | GD vs SGD over "
-            f"{fmt_seeds(n_batch_seeds)} batch partitions | batch size = {batch_size} "
-            f"| Width {width}"
-        )
-    params = suptitle_params(exp_config, gamma, noise)
-    fig.suptitle(
-        f"{prefix} | {params}",
-        fontsize=13,
-        fontweight="bold",
-    )
-    fig.tight_layout()
-    return fig
-
-
-# -- Drift/Diffusion Spread figure ---------------------------------------------
-
-SPREAD_METRICS = [
-    {
-        "metric": "grad_norm_squared",
-        "sigma_ylabel": r"$\sigma(\log$ drift$)$",
-        "bands_ylabel": r"Drift ($\|\nabla L\|^2$)",
-    },
-    {
-        "metric": "trace_gradient_covariance",
-        "sigma_ylabel": r"$\sigma(\log$ diffusion$)$",
-        "bands_ylabel": r"Diffusion (Tr($\Sigma$))",
-    },
-]
-
-
-def plot_metric_spread(
-    exp_config: dict,
-    stats: dict[tuple, ConfigStats],
-    gamma: float,
-    noise: float,
-    width: int,
-    batch_size: int,
-    model_seeds: list,
-) -> plt.Figure:
-    """Metric spread: 4 rows (sigma + bands for drift, sigma + bands for diffusion).
-
-    For each of drift and diffusion:
-      - sigma(log metric) row: SGD spread (and baseline if stochastic)
-      - bands row: baseline + SGD mean with min-max and 90% around-mean bands
-    """
     baseline_bs = exp_config["baseline_batch_size"]
 
     if baseline_bs is not None:
-        bl_legend = f"B={baseline_bs}"
-        sgd_legend = f"B={batch_size}"
+        comparison = f"Batch size {baseline_bs} vs {batch_size}"
     else:
-        bl_legend = exp_config["baseline_label"]
-        sgd_legend = f"SGD (B={batch_size})"
+        comparison = f"GD vs SGD, Batch size = {batch_size}"
 
-    n_cols = len(model_seeds)
-    n_rows = 2 * len(SPREAD_METRICS)
-    fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(5 * n_cols, 2.5 * n_rows), squeeze=False,
-    )
-
-    for col, model_seed in enumerate(model_seeds):
-        key = (width, gamma, noise, model_seed, batch_size)
-
-        for m_idx, m_info in enumerate(SPREAD_METRICS):
-            row_sigma = m_idx * 2
-            row_bands = m_idx * 2 + 1
-            ax_sigma = axes[row_sigma, col]
-            ax_bands = axes[row_bands, col]
-
-            if key not in stats:
-                if m_idx == 0:
-                    ax_sigma.set_title(f"Model Seed {model_seed}")
-                if col == 0:
-                    ax_sigma.set_ylabel(m_info["sigma_ylabel"])
-                    ax_bands.set_ylabel(m_info["bands_ylabel"])
-                if m_idx == len(SPREAD_METRICS) - 1:
-                    ax_sigma.set_xlabel("Training step")
-                    ax_bands.set_xlabel("Training step")
-                continue
-
-            s = stats[key]
-            bl_ms = s.baseline[m_info["metric"]]
-            sgd_ms = s.sgd[m_info["metric"]]
-
-            # === Sigma row ===
-            if sgd_ms.log_std is not None:
-                ax_sigma.plot(
-                    s.steps, sgd_ms.log_std,
-                    color="C1", linewidth=1.5, label=sgd_legend,
-                )
-            if bl_ms.log_std is not None:
-                ax_sigma.plot(
-                    s.steps, bl_ms.log_std,
-                    color="C0", linewidth=1.5, label=bl_legend,
-                )
-            if m_idx == 0:
-                ax_sigma.set_title(f"Model Seed {model_seed}")
-            if col == 0:
-                ax_sigma.set_ylabel(m_info["sigma_ylabel"])
-            ax_sigma.legend(loc="upper right", fontsize=7)
-
-            # === Bands row ===
-            ax_bands.plot(
-                s.steps, bl_ms.mean,
-                label=bl_legend, color="C0", linewidth=1.5,
-            )
-            if bl_ms.min_vals is not None:
-                ax_bands.fill_between(
-                    s.steps, bl_ms.min_vals, bl_ms.max_vals,
-                    alpha=0.25, color="C0", label=f"{bl_legend} min\u2013max",
-                )
-                ax_bands.fill_between(
-                    s.steps, bl_ms.spread_lo, bl_ms.spread_hi,
-                    alpha=0.3, color="C0", label=f"{bl_legend} 90% around mean",
-                )
-
-            ax_bands.plot(
-                s.steps, sgd_ms.mean,
-                label=sgd_legend, color="C1", linewidth=1.5,
-            )
-            if sgd_ms.min_vals is not None:
-                ax_bands.fill_between(
-                    s.steps, sgd_ms.min_vals, sgd_ms.max_vals,
-                    alpha=0.25, color="C1", label=f"{sgd_legend} min\u2013max",
-                )
-                ax_bands.fill_between(
-                    s.steps, sgd_ms.spread_lo, sgd_ms.spread_hi,
-                    alpha=0.3, color="C1", label=f"{sgd_legend} 90% around mean",
-                )
-            ax_bands.set_yscale("log")
-            if col == 0:
-                ax_bands.set_ylabel(m_info["bands_ylabel"])
-            if m_idx == len(SPREAD_METRICS) - 1:
-                ax_bands.set_xlabel("Training step")
-            ax_bands.legend(loc="upper right", fontsize=6)
-
-    n_batch_seeds = _get_n_seeds(stats)
-    if baseline_bs is not None:
-        prefix = (
-            f"Drift and diffusion across "
-            f"{fmt_seeds(n_batch_seeds)} batch seeds | batch size {baseline_bs} and "
-            f"{batch_size} | Width {width}"
-        )
-    else:
-        prefix = (
-            f"Drift and diffusion across "
-            f"{fmt_seeds(n_batch_seeds)} batch partitions | batch size = {batch_size} "
-            f"| Width {width}"
-        )
-    params = suptitle_params(exp_config, gamma, noise)
     fig.suptitle(
-        f"{prefix} | {params}",
+        f"Drift & Diffusion — {comparison} | Width {width} "
+        f"| {fmt_seeds(n_batch_seeds)} batch seeds",
         fontsize=13,
         fontweight="bold",
     )
@@ -587,12 +436,11 @@ def _init_plot_worker(stats: dict, exp_config: dict) -> None:
 
 def _run_plot_task(task: tuple) -> None:
     """Worker function: generate one figure and save to disk."""
-    plot_type, gamma, noise, width, batch_size, model_seeds, filename = task
+    gammas, noise, width, batch_size, model_seed, filename = task
     stats = _worker_ctx["stats"]
     exp = _worker_ctx["exp"]
 
-    plot_fn = plot_metrics if plot_type == "metrics" else plot_metric_spread
-    fig = plot_fn(exp, stats, gamma, noise, width, batch_size, model_seeds)
+    fig = plot_metrics(exp, stats, gammas, noise, width, batch_size, model_seed)
     fig.savefig(exp["figures_path"] / f"{filename}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -608,16 +456,15 @@ def generate_all_plots(exp_config: dict, stats: dict[tuple, ConfigStats]) -> Non
     model_seeds = sorted({k[3] for k in stats})
     batch_sizes = sorted({k[4] for k in stats})
 
-    # Build task list
+    # Build task list — one figure per (width, noise, model_seed, batch_size),
+    # columns are gammas (initialisation types)
     tasks = []
-    for gamma in gammas:
+    for width in widths:
         for noise in noise_levels:
-            for width in widths:
+            for model_seed in model_seeds:
                 for batch_size in batch_sizes:
-                    name = f"g{gamma}_noise{noise}_w{width}_b{batch_size}"
-                    common = (gamma, noise, width, batch_size, model_seeds)
-                    tasks.append(("metrics", *common, name))
-                    tasks.append(("spread", *common, f"spread_{name}"))
+                    name = f"w{width}_noise{noise}_mseed{model_seed}_b{batch_size}"
+                    tasks.append((gammas, noise, width, batch_size, model_seed, name))
 
     n_workers = min(os.cpu_count() or 1, len(tasks))
     print(f"Generating {len(tasks)} figures across {n_workers} workers...")
