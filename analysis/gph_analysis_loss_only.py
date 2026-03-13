@@ -2,14 +2,13 @@
 GPH Loss Analysis — Combined Online/Offline Figures
 
 Generates 4×3 figures comparing online and offline training regimes:
-  Row 1: Online shaded loss (baseline + SGD mean with CI + significance shading)
+  Row 1: Online loss (baseline + SGD mean + significance shading)
   Row 2: Online loss ratio with CI
-  Row 3: Offline shaded loss
+  Row 3: Offline loss
   Row 4: Offline loss ratio
   Columns: γ = 0.75 (NTK), γ = 1.0 (Mean-Field), γ = 1.5 (Saddle-to-Saddle)
 
-One figure per (width, noise_std, model_seed, batch_size) combination, with separate
-subdirectories for log-space vs linear-space CI envelopes.
+One figure per (width, noise_std, model_seed, batch_size) combination.
 
 Usage (run from the project root):
 
@@ -18,7 +17,7 @@ Usage (run from the project root):
     python analysis/gph_analysis_loss_only.py --sort-parquet
 
 Data: outputs/gph_offline/ and outputs/gph_online/
-Output: figures/gph_loss/{log_ci,linear_ci}/
+Output: figures/gph_loss/
 """
 
 import argparse
@@ -30,6 +29,7 @@ from multiprocessing import Pool
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -37,8 +37,13 @@ import polars as pl
 from scipy import stats as scipy_stats
 
 from _common import (
-    BATCH_KEY_COLS, BL_KEY_COLS, CACHE_DIR, GAMMA_NAMES,
-    build_filter, fmt_seeds, mean_centered_spread, sort_parquet,
+    BATCH_KEY_COLS,
+    BL_KEY_COLS,
+    CACHE_DIR,
+    GAMMA_NAMES,
+    build_filter,
+    mean_centered_spread,
+    sort_parquet,
 )
 
 
@@ -110,14 +115,10 @@ class ConfigStats:
     sgd_max: np.ndarray
     sgd_spread_lo: np.ndarray
     sgd_spread_hi: np.ndarray
-    sgd_log_std: np.ndarray
     n_runs: int
-    # 95% CI — log-space (delta method on log(X̄))
+    # 95% CI — linear-space (arithmetic)
     sgd_ci_lo: np.ndarray
     sgd_ci_hi: np.ndarray
-    # 95% CI — linear-space (arithmetic)
-    sgd_ci_lo_linear: np.ndarray
-    sgd_ci_hi_linear: np.ndarray
     # Loss ratio
     ratio: np.ndarray
     ratio_ci_lo: np.ndarray
@@ -136,13 +137,17 @@ def _extract_curves(df: pl.DataFrame) -> np.ndarray:
 
 
 def _welch_t_crit(
-    se_a: np.ndarray, n_a: int, se_b: np.ndarray, n_b: int,
+    se_a: np.ndarray,
+    n_a: int,
+    se_b: np.ndarray,
+    n_b: int,
+    quantile: float = 0.975,
 ) -> np.ndarray:
-    """Welch-Satterthwaite t critical value (two-tailed 95%), numerically stable.
+    """Welch-Satterthwaite t critical value, numerically stable.
 
     se_a, se_b are variance/n (squared standard error of the mean).
-    When both SEs underflow to zero, returns 1.96 (normal approximation,
-    appropriate since both means are precisely known).
+    quantile: 0.975 for two-tailed 95% CI, 0.95 for one-sided p<0.05 test.
+    When both SEs underflow to zero, uses normal approximation (large df).
     """
     se_sum = se_a + se_b
     ws_numer = se_sum**2
@@ -151,7 +156,7 @@ def _welch_t_crit(
     nonzero = ws_denom > 0
     df = np.where(nonzero, ws_numer / np.where(nonzero, ws_denom, 1.0), 1e6)
     df = np.maximum(df, 1.0)
-    return scipy_stats.t.ppf(0.975, df=df)
+    return scipy_stats.t.ppf(quantile, df=df)
 
 
 def _compute_baseline_stats(subset: pl.DataFrame) -> BaselineStats | None:
@@ -186,7 +191,8 @@ def _compute_baseline_stats(subset: pl.DataFrame) -> BaselineStats | None:
 
 
 def _compute_sgd_config_stats(
-    subset: pl.DataFrame, bl: BaselineStats,
+    subset: pl.DataFrame,
+    bl: BaselineStats,
 ) -> ConfigStats | None:
     """Compute SGD statistics and precompute all plotting quantities."""
     if len(subset) == 0:
@@ -197,41 +203,28 @@ def _compute_sgd_config_stats(
 
     mean = curves.mean(axis=0)
     var = curves.var(axis=0, ddof=1) if n > 1 else np.zeros(curves.shape[1])
-    spread_lo, spread_hi = (
-        mean_centered_spread(curves, mean) if n > 1 else (mean, mean)
-    )
-
-    # Log-space statistics
-    log_std = (
-        np.log(np.maximum(curves, 1e-300)).std(axis=0, ddof=1)
-        if n > 1
-        else np.zeros(curves.shape[1])
-    )
+    spread_lo, spread_hi = mean_centered_spread(curves, mean) if n > 1 else (mean, mean)
 
     # --- Precompute plotting quantities ---
 
-    t_val = scipy_stats.t.ppf(0.975, df=max(n - 1, 1))
+    df_sgd = max(n - 1, 1)
     sem = np.sqrt(var / n)
 
-    # Linear-space CI for the arithmetic mean
-    sgd_ci_lo_linear = mean - t_val * sem
-    sgd_ci_hi_linear = mean + t_val * sem
-
-    # Log-space CI for the arithmetic mean (delta method on log(X̄)):
-    # Var(log X̄) ≈ SEM²/μ², so CI = mean ×/÷ exp(t × SEM/mean)
-    relative_sem = sem / np.maximum(mean, 1e-30)
-    ci_factor = np.exp(t_val * relative_sem)
-    sgd_ci_lo = mean / ci_factor
-    sgd_ci_hi = mean * ci_factor
+    # 95% CI for the arithmetic mean (two-tailed)
+    t_ci = scipy_stats.t.ppf(0.975, df=df_sgd)
+    sgd_ci_lo = mean - t_ci * sem
+    sgd_ci_hi = mean + t_ci * sem
 
     # Loss ratio E(L_SGD) / L_baseline and its CI
     ratio = mean / bl.loss
 
     if bl.var is None:
         # Deterministic baseline: CI transforms linearly
-        ratio_ci_lo = sgd_ci_lo_linear / bl.loss
-        ratio_ci_hi = sgd_ci_hi_linear / bl.loss
-        sig_mask = bl.loss < sgd_ci_lo_linear
+        ratio_ci_lo = sgd_ci_lo / bl.loss
+        ratio_ci_hi = sgd_ci_hi / bl.loss
+        # One-sided test: E[SGD] > baseline at p<0.05
+        t_sig = scipy_stats.t.ppf(0.95, df=df_sgd)
+        sig_mask = bl.loss < (mean - t_sig * sem)
     else:
         # Delta method: Var(Y/X) ≈ (Y/X)² × (Var(Y)/(n_Y·Y²) + Var(X)/(n_X·X²))
         safe_sgd = np.maximum(mean, 1e-30)
@@ -241,15 +234,16 @@ def _compute_sgd_config_stats(
 
         se_bl = bl.var / bl.n
         se_sgd = var / n
-        t_crit = _welch_t_crit(se_bl, bl.n, se_sgd, n)
+        t_crit = _welch_t_crit(se_bl, bl.n, se_sgd, n)  # two-tailed for CI
 
         ratio_ci_lo = ratio - t_crit * se_ratio
         ratio_ci_hi = ratio + t_crit * se_ratio
 
-        # Welch's two-sample test: E[SGD] - E[baseline] > 0 at 95% confidence
+        # One-sided Welch's t-test: E[SGD] - E[baseline] > 0 at p<0.05
+        t_sig = _welch_t_crit(se_bl, bl.n, se_sgd, n, quantile=0.95)
         diff = mean - bl.loss
         se_diff = np.sqrt(se_bl + se_sgd)
-        sig_mask = diff > t_crit * se_diff
+        sig_mask = diff > t_sig * se_diff
 
     return ConfigStats(
         steps=bl.steps,
@@ -264,12 +258,9 @@ def _compute_sgd_config_stats(
         sgd_max=curves.max(axis=0),
         sgd_spread_lo=spread_lo,
         sgd_spread_hi=spread_hi,
-        sgd_log_std=log_std,
         n_runs=n,
         sgd_ci_lo=sgd_ci_lo,
         sgd_ci_hi=sgd_ci_hi,
-        sgd_ci_lo_linear=sgd_ci_lo_linear,
-        sgd_ci_hi_linear=sgd_ci_hi_linear,
         ratio=ratio,
         ratio_ci_lo=ratio_ci_lo,
         ratio_ci_hi=ratio_ci_hi,
@@ -319,7 +310,9 @@ def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
 
     n_batches = len(key_batches)
     total_configs = len(baselines)
-    print(f"Computing SGD statistics ({n_batches} batches, {total_configs} baseline groups)...")
+    print(
+        f"Computing SGD statistics ({n_batches} batches, {total_configs} baseline groups)..."
+    )
 
     stats: dict[tuple, ConfigStats] = {}
     completed = 0
@@ -330,7 +323,8 @@ def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
             .collect()
         )
         sub_groups = chunk.partition_by(
-            ["model.model_seed", "training.batch_size"], as_dict=True,
+            ["model.model_seed", "training.batch_size"],
+            as_dict=True,
         )
         del chunk
 
@@ -384,7 +378,8 @@ def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
 
 
 def get_stats(
-    exp_config: dict, force_recompute: bool = False,
+    exp_config: dict,
+    force_recompute: bool = False,
 ) -> dict[tuple, ConfigStats]:
     cache_path = exp_config["cache_path"]
     if not force_recompute:
@@ -403,12 +398,6 @@ def get_stats(
 # =============================================================================
 
 
-def _get_n_seeds(stats: dict[tuple, ConfigStats]):
-    """Look up the number of batch seeds from any config."""
-    sample_key = next(iter(stats), None)
-    return stats[sample_key].n_runs if sample_key else "?"
-
-
 def plot_combined(
     online_stats: dict[tuple, ConfigStats],
     offline_stats: dict[tuple, ConfigStats],
@@ -416,121 +405,76 @@ def plot_combined(
     noise: float,
     model_seed: int,
     batch_size: int,
-    ci_type: str = "log",
 ) -> plt.Figure:
     """Combined online/offline figure: 4 rows × 3 gamma columns.
 
     Rows: online loss, online ratio, offline loss, offline ratio.
     Columns: NTK (γ=0.75), Mean-Field (γ=1.0), Saddle-to-Saddle (γ=1.5).
     """
-    fig, axes = plt.subplots(4, 3, figsize=(15, 10), squeeze=False)
+    fig = plt.figure(figsize=(15, 10))
+    subfigs = fig.subfigures(2, 1, hspace=0.03)
 
     # (label, stats_dict, baseline_batch_size)
     regimes = [
-        ("Online", online_stats, 500),
-        ("Offline", offline_stats, None),
+        ("Online (i.i.d. samples per step)", online_stats, 500),
+        ("Offline (N = 500 fixed samples)", offline_stats, None),
     ]
 
-    for regime_idx, (regime_label, stats_dict, baseline_bs) in enumerate(regimes):
-        row_loss = regime_idx * 2
-        row_ratio = regime_idx * 2 + 1
+    for subfig, (regime_label, stats_dict, baseline_bs) in zip(subfigs, regimes):
+        axes = subfig.subplots(2, 3, squeeze=False)
+        subfig.suptitle(regime_label, fontsize=12, fontweight="bold")
 
         # Build labels
         if baseline_bs is not None:
             bl_legend = f"$E(L_{{B={baseline_bs}}})$"
             sgd_legend = f"$E(L_{{B={batch_size}}})$"
-            ratio_ylabel = (
-                f"$E(L_{{B={batch_size}}}) \\,/\\, E(L_{{B={baseline_bs}}})$"
-            )
-            sig_label = (
-                f"$E(L_{{B={baseline_bs}}}) < E(L_{{B={batch_size}}})$ (p<0.05)"
-            )
+            ratio_ylabel = f"$E(L_{{B={batch_size}}}) \\,/\\, E(L_{{B={baseline_bs}}})$"
+            sig_label = f"$E(L_{{B={baseline_bs}}}) < E(L_{{B={batch_size}}})$ (p<0.05)"
         else:
             bl_legend = "$L_{\\mathrm{GD}}$"
-            sgd_legend = "$E(L_{\\mathrm{SGD}})$"
-            ratio_ylabel = "$E(L_{\\mathrm{SGD}}) \\,/\\, L_{\\mathrm{GD}}$"
-            sig_label = "$L_{\\mathrm{GD}} < E(L_{\\mathrm{SGD}})$ (p<0.05)"
+            sgd_legend = f"$E(L_{{B={batch_size}}})$"
+            ratio_ylabel = f"$E(L_{{B={batch_size}}}) \\,/\\, L_{{\\mathrm{{GD}}}}$"
+            sig_label = f"$L_{{\\mathrm{{GD}}}} < E(L_{{B={batch_size}}})$ (p<0.05)"
 
         for col, gamma in enumerate(GAMMAS):
             key = (width, gamma, noise, model_seed, batch_size)
-            ax_loss = axes[row_loss, col]
-            ax_ratio = axes[row_ratio, col]
+            ax_loss = axes[0, col]
+            ax_ratio = axes[1, col]
 
-            # Column headers on top row only
-            if regime_idx == 0:
-                ax_loss.set_title(
-                    f"{GAMMA_NAMES[gamma]} (γ={gamma})", fontsize=11,
-                )
+            ax_loss.set_title(f"{GAMMA_NAMES[gamma]} (γ={gamma})", fontsize=11)
 
             if key not in stats_dict:
                 if col == 0:
-                    ax_loss.set_ylabel(f"{regime_label}\nTest loss")
-                    ax_ratio.set_ylabel(f"{regime_label}\n{ratio_ylabel}")
+                    ax_loss.set_ylabel("Test loss")
+                    ax_ratio.set_ylabel(ratio_ylabel)
                 continue
 
             s = stats_dict[key]
 
-            # Select CI type
-            if ci_type == "log":
-                ci_lo, ci_hi = s.sgd_ci_lo, s.sgd_ci_hi
-            else:
-                ci_lo, ci_hi = s.sgd_ci_lo_linear, s.sgd_ci_hi_linear
-
             # === Loss row ===
-            ax_loss.plot(
-                s.steps, s.baseline_loss,
-                label=bl_legend, color="C0", linewidth=1.5,
-            )
-            ax_loss.plot(
-                s.steps, s.sgd_mean,
-                label=sgd_legend, color="C1", linewidth=1.5,
-            )
+            ax_loss.plot(s.steps, s.baseline_loss, label=bl_legend, color="C0", linewidth=1.5)
+            ax_loss.plot(s.steps, s.sgd_mean, label=sgd_legend, color="C1", linewidth=1.5)
             ax_loss.fill_between(
-                s.steps, ci_lo, ci_hi,
-                alpha=0.3, color="C1", label=f"{sgd_legend} 95% CI",
-            )
-            ax_loss.fill_between(
-                s.steps, 0, 1,
-                where=s.sig_mask, alpha=0.4, color="darkgreen",
+                s.steps, 0, 1, where=s.sig_mask, alpha=0.25, color="darkgreen",
                 transform=ax_loss.get_xaxis_transform(), label=sig_label,
             )
             ax_loss.set_yscale("log")
             if col == 0:
-                ax_loss.set_ylabel(f"{regime_label}\nTest loss")
-            ax_loss.legend(loc="upper right", fontsize=5)
+                ax_loss.set_ylabel("Test loss")
+            ax_loss.legend(loc="upper right", fontsize=7)
 
             # === Ratio row ===
-            ax_ratio.axhline(
-                1.0, color="black", linestyle="--", alpha=0.6, linewidth=1.2,
-            )
-            ax_ratio.plot(
-                s.steps, s.ratio, color="C1", linewidth=1.5,
-            )
+            ax_ratio.axhline(1.0, color="black", linestyle="--", alpha=0.6, linewidth=1.2)
+            ax_ratio.plot(s.steps, s.ratio, color="C1", linewidth=1.5)
             ax_ratio.fill_between(
                 s.steps, s.ratio_ci_lo, s.ratio_ci_hi,
                 alpha=0.3, color="C1", label="95% CI",
             )
             if col == 0:
-                ax_ratio.set_ylabel(f"{regime_label}\n{ratio_ylabel}")
-            ax_ratio.legend(loc="upper right", fontsize=6)
+                ax_ratio.set_ylabel(ratio_ylabel)
+            ax_ratio.set_xlabel("Training step")
+            ax_ratio.legend(loc="upper right", fontsize=7)
 
-    # X-axis labels on bottom row only
-    for col in range(3):
-        axes[3, col].set_xlabel("Training step")
-
-    n_online = _get_n_seeds(online_stats)
-    n_offline = _get_n_seeds(offline_stats)
-    noise_str = f"Label noise σ = {noise}" if noise > 0 else "No label noise"
-    ci_label = "log-space" if ci_type == "log" else "linear"
-    fig.suptitle(
-        f"Width {width} | {noise_str} | Model seed {model_seed}"
-        f" | Batch size {batch_size}"
-        f" | {fmt_seeds(n_online)} online / {fmt_seeds(n_offline)} offline batch seeds"
-        f" | CI: {ci_label}",
-        fontsize=11,
-        fontweight="bold",
-    )
-    fig.tight_layout()
     return fig
 
 
@@ -543,7 +487,8 @@ _worker_ctx: dict = {}
 
 
 def _init_plot_worker(
-    online_stats: dict, offline_stats: dict,
+    online_stats: dict,
+    offline_stats: dict,
 ) -> None:
     """Initializer for plot worker processes. Called once per worker."""
     _worker_ctx["online"] = online_stats
@@ -552,11 +497,14 @@ def _init_plot_worker(
 
 def _run_plot_task(task: tuple) -> None:
     """Worker function: generate one figure and save to disk."""
-    width, noise, model_seed, batch_size, ci_type, out_dir, filename = task
+    width, noise, model_seed, batch_size, out_dir, filename = task
     fig = plot_combined(
         _worker_ctx["online"],
         _worker_ctx["offline"],
-        width, noise, model_seed, batch_size, ci_type,
+        width,
+        noise,
+        model_seed,
+        batch_size,
     )
     fig.savefig(Path(out_dir) / f"{filename}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -575,25 +523,25 @@ def generate_all_plots(
     model_seeds = sorted({k[3] for k in all_keys})
     batch_sizes = sorted({k[4] for k in all_keys})
 
-    # Build task list — one figure per (width, noise, seed, batch_size, ci_type)
+    # Build task list — one figure per (width, noise, seed, batch_size)
     tasks = []
-    for ci_type in ["log", "linear"]:
-        ci_dir = FIGURES_PATH / f"{ci_type}_ci"
-        ci_dir.mkdir(parents=True, exist_ok=True)
-        for width in widths:
-            for noise in noise_levels:
-                for model_seed in model_seeds:
-                    for batch_size in batch_sizes:
-                        filename = (
-                            f"w{width}_noise{noise}"
-                            f"_mseed{model_seed}_b{batch_size}"
+    for width in widths:
+        for noise in noise_levels:
+            for model_seed in model_seeds:
+                for batch_size in batch_sizes:
+                    filename = f"loss_ratio_w{width}_noise{noise}_mseed{model_seed}_b{batch_size}"
+                    tasks.append(
+                        (
+                            width,
+                            noise,
+                            model_seed,
+                            batch_size,
+                            str(FIGURES_PATH),
+                            filename,
                         )
-                        tasks.append((
-                            width, noise, model_seed, batch_size,
-                            ci_type, str(ci_dir), filename,
-                        ))
+                    )
 
-    n_workers = min(os.cpu_count() or 1, len(tasks))
+    n_workers = min(6, os.cpu_count() or 1, len(tasks))
     print(f"Generating {len(tasks)} figures across {n_workers} workers...")
 
     with Pool(
