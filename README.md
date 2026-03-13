@@ -204,9 +204,7 @@ Metrics are computed on the test set at each evaluation step.
 | `end_to_end_weight_norm` | scalar | Norm of the effective weight (product of all layers) |
 | `grad_norm_squared` | scalar | \|\|∇L\|\|², single backward pass (no per-sample grads) |
 | `trace_gradient_covariance` | scalar | Tr(Σ), gradient noise covariance trace |
-| `trace_hessian_covariance` | scalar | Tr(HΣ), Hessian-noise covariance trace (uses HVPs) |
 | `gradient_stats` | `grad_norm_squared`, `trace_gradient_covariance` | Both in one pass, sharing per-sample grads |
-| `trace_covariances` | `grad_norm_squared`, `trace_gradient_covariance`, `trace_hessian_covariance` | All three gradient traces in one pass |
 
 The per-sample gradient metrics (`trace_*`, `gradient_stats`) accept an optional `chunks` parameter to reduce peak VRAM.
 

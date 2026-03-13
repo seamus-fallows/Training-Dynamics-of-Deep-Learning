@@ -32,7 +32,7 @@ max_steps: 10000
 num_evaluations: 250
 
 metrics:
-  # - trace_covariances:
+  # - gradient_stats:
   #     chunks: 2
 
 callbacks: []

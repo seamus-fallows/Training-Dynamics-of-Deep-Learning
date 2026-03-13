@@ -5,6 +5,7 @@ import pytest
 import yaml
 import torch as t
 from torch import nn
+from torch.func import jacfwd, jacrev, functional_call
 from omegaconf import OmegaConf
 
 from dln.model import DeepLinearNetwork
@@ -309,14 +310,14 @@ class TestOverrides:
             expand_sweep_params(overrides, zip_groups=["a,b"])
 
     def test_parse_value_list_literal_strings(self):
-        result = parse_value("[trace_covariances,weight_norm]")
+        result = parse_value("[gradient_stats,weight_norm]")
         assert isinstance(result, ListValue)
-        assert result == ["trace_covariances", "weight_norm"]
+        assert result == ["gradient_stats", "weight_norm"]
 
     def test_parse_value_list_literal_single_element(self):
-        result = parse_value("[trace_covariances]")
+        result = parse_value("[gradient_stats]")
         assert isinstance(result, ListValue)
-        assert result == ["trace_covariances"]
+        assert result == ["gradient_stats"]
 
     def test_parse_value_list_literal_mixed_types(self):
         result = parse_value("[1,null,true,foo]")
@@ -365,12 +366,12 @@ class TestOverrides:
 
     def test_split_overrides_list_value_is_fixed(self):
         overrides = {
-            "metrics": ListValue(["trace_covariances", "weight_norm"]),
+            "metrics": ListValue(["gradient_stats", "weight_norm"]),
             "model.gamma": [0.75, 1.0],
             "max_steps": 1000,
         }
         fixed, sweep = split_overrides(overrides)
-        assert fixed["metrics"] == ["trace_covariances", "weight_norm"]
+        assert fixed["metrics"] == ["gradient_stats", "weight_norm"]
         assert not isinstance(fixed["metrics"], ListValue)
         assert "max_steps" in fixed
         assert sweep == {"model.gamma": [0.75, 1.0]}
@@ -379,14 +380,14 @@ class TestOverrides:
         """Full pipeline: parse_overrides -> split_overrides with list literal."""
         overrides = parse_overrides(
             [
-                "metrics=[trace_covariances,weight_norm]",
+                "metrics=[gradient_stats,weight_norm]",
                 "model.gamma=0.75,1.0",
                 "max_steps=1000",
             ]
         )
         fixed, sweep = split_overrides(overrides)
         assert fixed == {
-            "metrics": ["trace_covariances", "weight_norm"],
+            "metrics": ["gradient_stats", "weight_norm"],
             "max_steps": 1000,
         }
         assert not isinstance(fixed["metrics"], ListValue)
@@ -704,12 +705,12 @@ class TestMetrics:
         expected = sum((p.grad**2).sum().item() for p in model.parameters())
 
         model = create_model(model_seed=0)
-        result = metrics.trace_covariances(model, inputs, targets, criterion)
+        result = metrics.gradient_stats(model, inputs, targets, criterion)
 
         assert abs(result["grad_norm_squared"] - expected) < 1e-5
 
-    def test_trace_covariances_vs_manual(self):
-        """Verify both trace metrics against naive element-wise computation."""
+    def test_trace_gradient_covariance_vs_manual(self):
+        """Verify Tr(Σ) against naive element-wise computation."""
         model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
@@ -730,61 +731,30 @@ class TestMetrics:
 
         expected_trace_grad = (noise**2).sum(dim=1).mean().item()
 
-        trace_hess_sum = 0.0
-        for i in range(n_samples):
-            n_i = noise[i]
-
-            model.zero_grad()
-            loss = criterion(model(inputs), targets)
-
-            grads_first = t.autograd.grad(loss, model.parameters(), create_graph=True)
-            flat_grad = t.cat([g.flatten() for g in grads_first])
-
-            dot = (flat_grad * n_i).sum()
-            hvp_tuple = t.autograd.grad(dot, model.parameters())
-            hvp = t.cat([h.flatten() for h in hvp_tuple])
-
-            trace_hess_sum += (n_i * hvp).sum().item()
-
-        expected_trace_hess = trace_hess_sum / n_samples
-
         model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
-        result = metrics.trace_covariances(model, inputs, targets, criterion)
+        result = metrics.gradient_stats(model, inputs, targets, criterion)
 
         assert abs(result["trace_gradient_covariance"] - expected_trace_grad) < 1e-4
-        assert abs(result["trace_hessian_covariance"] - expected_trace_hess) < 1e-4
 
-    def test_trace_covariances_chunked_matches_unchunked(self):
+    def test_gradient_stats_chunked_matches_unchunked(self):
         model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(20, 5)
         targets = t.randn(20, 5)
         criterion = nn.MSELoss()
 
-        result_unchunked = metrics.trace_covariances(
+        result_unchunked = metrics.gradient_stats(
             model, inputs, targets, criterion, chunks=1
         )
 
         model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
-        result_chunked = metrics.trace_covariances(
+        result_chunked = metrics.gradient_stats(
             model, inputs, targets, criterion, chunks=4
         )
 
-        assert (
-            abs(
-                result_unchunked["trace_gradient_covariance"]
-                - result_chunked["trace_gradient_covariance"]
-            )
-            < 1e-5
-        )
-        assert (
-            abs(
-                result_unchunked["trace_hessian_covariance"]
-                - result_chunked["trace_hessian_covariance"]
-            )
-            < 1e-5
-        )
+        for key in ("grad_norm_squared", "trace_gradient_covariance"):
+            assert abs(result_unchunked[key] - result_chunked[key]) < 1e-5
 
-    def test_compute_metrics_expands_trace_covariances(self):
+    def test_compute_metrics_expands_gradient_stats(self):
         model = create_model(model_seed=0, num_hidden=2, hidden_dim=8)
         inputs = t.randn(20, 5)
         targets = t.randn(20, 5)
@@ -792,7 +762,7 @@ class TestMetrics:
 
         results = metrics.compute_metrics(
             model,
-            ["trace_covariances"],
+            ["gradient_stats"],
             inputs,
             targets,
             criterion,
@@ -800,7 +770,6 @@ class TestMetrics:
 
         assert "grad_norm_squared" in results
         assert "trace_gradient_covariance" in results
-        assert "trace_hessian_covariance" in results
         assert results["trace_gradient_covariance"] > 0
 
     def test_param_distance(self):
@@ -916,8 +885,8 @@ class TestMetrics:
         )
         assert abs(result["frobenius_distance"] - expected) < 1e-6
 
-    def test_individual_metrics_match_trace_covariances(self):
-        """Individual gradient metrics must agree with the combined trace_covariances."""
+    def test_individual_metrics_match_gradient_stats(self):
+        """Individual gradient metrics must agree with the combined gradient_stats."""
         model_seed, num_hidden, hidden_dim = 0, 2, 8
         inputs = t.randn(10, 5)
         targets = t.randn(10, 5)
@@ -927,7 +896,7 @@ class TestMetrics:
         ref_model = create_model(
             model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
         )
-        ref = metrics.trace_covariances(ref_model, inputs, targets, criterion)
+        ref = metrics.gradient_stats(ref_model, inputs, targets, criterion)
 
         # grad_norm_squared (standalone)
         model = create_model(
@@ -942,24 +911,6 @@ class TestMetrics:
         )
         tgc = metrics.trace_gradient_covariance(model, inputs, targets, criterion)
         assert abs(tgc - ref["trace_gradient_covariance"]) < 1e-5
-
-        # trace_hessian_covariance (standalone)
-        model = create_model(
-            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
-        )
-        thc = metrics.trace_hessian_covariance(model, inputs, targets, criterion)
-        assert abs(thc - ref["trace_hessian_covariance"]) < 1e-5
-
-        # gradient_stats (paired)
-        model = create_model(
-            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
-        )
-        gs = metrics.gradient_stats(model, inputs, targets, criterion)
-        assert abs(gs["grad_norm_squared"] - ref["grad_norm_squared"]) < 1e-5
-        assert (
-            abs(gs["trace_gradient_covariance"] - ref["trace_gradient_covariance"])
-            < 1e-5
-        )
 
     def test_individual_metrics_chunked_matches_unchunked(self):
         """Chunked paths of individual gradient metrics must match their unchunked paths."""
@@ -983,21 +934,6 @@ class TestMetrics:
             model, inputs, targets, criterion, chunks=chunks
         )
         assert abs(tgc_unchunked - tgc_chunked) < 1e-5
-
-        # trace_hessian_covariance
-        model = create_model(
-            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
-        )
-        thc_unchunked = metrics.trace_hessian_covariance(
-            model, inputs, targets, criterion, chunks=1
-        )
-        model = create_model(
-            model_seed=model_seed, num_hidden=num_hidden, hidden_dim=hidden_dim
-        )
-        thc_chunked = metrics.trace_hessian_covariance(
-            model, inputs, targets, criterion, chunks=chunks
-        )
-        assert abs(thc_unchunked - thc_chunked) < 1e-5
 
         # gradient_stats
         model = create_model(
@@ -1207,6 +1143,90 @@ class TestMetrics:
             assert v == pytest.approx(bundle[k], abs=1e-6)
         for k, v in ranks_only.items():
             assert abs(v - bundle[k]) < 1e-6
+
+    @pytest.mark.parametrize(
+        "sizes",
+        [
+            (3, 4, 3),           # 2 layers
+            (5, 8, 5),           # 2 layers, wider
+            (5, 10, 10, 5),      # 3 layers
+            (5, 10, 10, 10, 5),  # 4 layers
+        ],
+    )
+    def test_hessian_matches_autodiff(self, sizes):
+        """Analytical Hessian eigenvalues match autodiff (jacfwd/jacrev) reference."""
+        in_dim, out_dim = sizes[0], sizes[-1]
+        hidden_dim = sizes[1]
+        num_hidden = len(sizes) - 2
+
+        model = create_model(
+            in_dim=in_dim, out_dim=out_dim,
+            hidden_dim=hidden_dim, num_hidden=num_hidden,
+        )
+        t.manual_seed(42)
+        inputs = t.randn(30, in_dim)
+        targets = t.randn(30, out_dim)
+
+        # Analytical
+        with t.no_grad():
+            H_analytical = metrics._materialize_hessian_analytical(model, inputs, targets)
+        eigs_analytical = t.linalg.eigvalsh(H_analytical)
+
+        # Autodiff reference
+        params = dict(model.named_parameters())
+        buffers = dict(model.named_buffers())
+
+        def loss_fn(flat_params):
+            param_dict = {}
+            offset = 0
+            for name, p in params.items():
+                numel = p.numel()
+                param_dict[name] = flat_params[offset : offset + numel].view(p.shape)
+                offset += numel
+            output = functional_call(model, (param_dict, buffers), (inputs,))
+            return nn.functional.mse_loss(output, targets)
+
+        flat = t.cat([p.detach().flatten() for p in params.values()]).requires_grad_(True)
+        H_autodiff = jacfwd(jacrev(loss_fn))(flat).detach()
+        eigs_autodiff = t.linalg.eigvalsh(H_autodiff)
+
+        # Hessian matrix should match
+        H_scale = H_autodiff.abs().max().item()
+        assert (H_analytical - H_autodiff).abs().max().item() / H_scale < 1e-4
+
+        # Eigenvalues should match
+        assert (eigs_analytical - eigs_autodiff).abs().max().item() < 1e-3
+
+        # Symmetry
+        assert (H_analytical - H_analytical.T).abs().max().item() < 1e-6
+
+    def test_hessian_spectrum_metric(self):
+        """hessian_spectrum metric returns correct format and values."""
+        model = create_model(model_seed=0, num_hidden=1, hidden_dim=8)
+        t.manual_seed(42)
+        inputs = t.randn(20, 5)
+        targets = t.randn(20, 5)
+        criterion = nn.MSELoss()
+
+        result = metrics.compute_metrics(
+            model, ["hessian_spectrum"], inputs, targets, criterion
+        )
+
+        assert "hessian_spectrum" in result
+        spectrum = result["hessian_spectrum"]
+        assert isinstance(spectrum, list)
+        assert all(isinstance(v, float) for v in spectrum)
+
+        P = sum(p.numel() for p in model.parameters())
+        assert len(spectrum) == P
+
+        # Verify values match direct eigvalsh
+        model2 = create_model(model_seed=0, num_hidden=1, hidden_dim=8)
+        with t.no_grad():
+            H = metrics._materialize_hessian_analytical(model2, inputs, targets)
+        expected = t.linalg.eigvalsh(H).tolist()
+        for a, b in zip(spectrum, expected):
+            assert abs(a - b) < 1e-6
 
 
 # ============================================================================

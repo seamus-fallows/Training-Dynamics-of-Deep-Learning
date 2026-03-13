@@ -19,13 +19,8 @@ Model metrics:
     partial_product_metrics           SVs + rank for all P(i,j), shared SVD per product.
     grad_norm_squared        ||∇L||², squared norm of the mean gradient.
     trace_gradient_covariance  Tr(Σ), trace of gradient noise covariance. Params: chunks.
-    trace_hessian_covariance   Tr(HΣ), Hessian-covariance alignment. Params: chunks.
     gradient_stats           grad_norm_squared + Tr(Σ), shared computation. Params: chunks.
-    trace_covariances        grad_norm_squared + Tr(Σ) + Tr(HΣ), shared computation. Params: chunks.
     hessian_spectrum         Eigenvalues of the full Hessian via analytical materialization. → list
-    hessian_spectrum_top     Top fraction of eigenvalues via partial eigh. Params: fraction. → list
-    hessian_spectrum_bottom  Bottom fraction of eigenvalues via partial eigh. Params: fraction. → list
-    hessian_extremal_eigenvalues  Top/bottom k eigenvalues via implicit HVPs (no materialization). Params: k.
 
 Comparative metrics:
     param_distance           L2 distance between flattened parameter vectors.
@@ -34,36 +29,14 @@ Comparative metrics:
     frobenius_distance       ||W_e2e_A - W_e2e_B||_F of end-to-end weights.
 
 Metrics returning dicts show their output key pattern after →.
-Bundle metrics (partial_product_metrics, gradient_stats, trace_covariances) share
-expensive computation across their constituent values — prefer them over individual calls.
-
-Efficient computation of Tr(HΣ)
-================================
-The Hessian-gradient covariance trace Tr(HΣ) measures the alignment between
-the curvature of the loss landscape and the gradient noise. Naively computing
-this requires forming H (PxP) and Σ (PxP), which is infeasible for large P.
-
-Instead, we exploit the outer-product structure of the covariance. Given
-per-sample gradients gᵢ, mean gradient ḡ, and noise vectors nᵢ = gᵢ- ḡ:
-
-    Σ = (1/N) Σᵢ nᵢnᵢᵀ
-
-    Tr(HΣ) = Tr(H · (1/N) Σᵢ nᵢnᵢᵀ)
-            = (1/N) Σᵢ Tr(Hnᵢnᵢᵀ)
-            = (1/N) Σᵢ nᵢᵀHnᵢ           [cyclic property of trace]
-
-Each nᵢᵀHnᵢ requires only a Hessian-vector product Hnᵢ (computed via
-forward-over-reverse autodiff in O(P) time and memory) followed by a dot
-product with nᵢ. Neither H nor Σ is ever materialized.
-
-Cost: O(NP) time and memory, vs O(P²) memory and O(P³) compute for the
-naive approach. The same decomposition gives Tr(Σ) = (1/N) Σᵢ ||nᵢ||².
+Bundle metrics (partial_product_metrics, gradient_stats) share expensive
+computation across their constituent values — prefer them over individual calls.
 """
 
 import torch as t
 from torch import Tensor
 from torch.nn import Module, MSELoss, functional as F
-from torch.func import functional_call, grad, jvp, vmap
+from torch.func import functional_call, grad, vmap
 from torch.nn.utils import parameters_to_vector
 from typing import Callable
 
@@ -99,16 +72,6 @@ def _extract_params(model: Module) -> tuple[dict[str, Tensor], dict[str, Tensor]
     return params, buffers
 
 
-def _unflatten_like(flat: Tensor, reference: dict[str, Tensor]) -> dict[str, Tensor]:
-    result = {}
-    offset = 0
-    for name, param in reference.items():
-        numel = param.numel()
-        result[name] = flat[offset : offset + numel].view(param.shape)
-        offset += numel
-    return result
-
-
 def _compute_per_sample_grads(
     model: Module,
     params: dict[str, Tensor],
@@ -128,31 +91,6 @@ def _compute_per_sample_grads(
     return t.cat(
         [g.flatten(start_dim=1) for g in per_sample_grads_dict.values()], dim=1
     )
-
-
-def _compute_batch_hvps(
-    model: Module,
-    params: dict[str, Tensor],
-    buffers: dict[str, Tensor],
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    vectors: Tensor,
-) -> Tensor:
-    def compute_loss(p: dict[str, Tensor]) -> Tensor:
-        output = functional_call(model, (p, buffers), (inputs,))
-        return criterion(output, targets)
-
-    def directional_deriv(p, v):
-        _, tangent = jvp(compute_loss, (p,), (v,))
-        return tangent
-
-    def single_hvp(vector: Tensor) -> Tensor:
-        v_dict = _unflatten_like(vector, params)
-        hvp_dict = grad(directional_deriv)(params, v_dict)
-        return parameters_to_vector(hvp_dict.values())
-
-    return vmap(single_hvp)(vectors)
 
 
 # Model metrics
@@ -317,6 +255,8 @@ def grad_norm_squared(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
 ) -> float:
     """||∇L||², squared norm of the mean gradient. Single backward pass (no per-sample grads)."""
+    if _can_use_analytical_gradient_stats(model, criterion):
+        return _gradient_stats_analytical(model, inputs, targets)["grad_norm_squared"]
     params, buffers = _extract_params(model)
 
     def compute_loss(p: dict[str, Tensor]) -> Tensor:
@@ -340,14 +280,12 @@ def _gradient_traces(
     *,
     compute_grad_norm: bool = False,
     compute_trace_grad: bool = False,
-    compute_trace_hess: bool = False,
 ) -> dict[str, float]:
     """Shared engine for per-sample-gradient-based trace metrics.
 
     Computes any combination of:
         grad_norm_squared: ||∇L||² from mean of per-sample gradients
         trace_gradient_covariance: Tr(Σ) = E[||nᵢ||²]
-        trace_hessian_covariance: Tr(HΣ) = E[nᵢᵀHnᵢ]
 
     When chunks > 1, uses a two-pass algorithm to reduce peak VRAM.
     """
@@ -367,13 +305,6 @@ def _gradient_traces(
         if compute_trace_grad:
             result["trace_gradient_covariance"] = (
                 t.linalg.vecdot(noise, noise).mean().item()
-            )
-        if compute_trace_hess:
-            hvps = _compute_batch_hvps(
-                model, params, buffers, inputs, targets, criterion, noise
-            ).detach()
-            result["trace_hessian_covariance"] = (
-                t.linalg.vecdot(noise, hvps).mean().item()
             )
         return result
 
@@ -398,9 +329,8 @@ def _gradient_traces(
     mean_grad = grad_sum / n_samples
     del grad_sum
 
-    # Pass 2: accumulate traces (on-device to avoid per-chunk CUDA syncs)
+    # Pass 2: accumulate Tr(Σ) (on-device to avoid per-chunk CUDA syncs)
     trace_grad_sum = t.zeros((), device=inputs.device) if compute_trace_grad else None
-    trace_hess_sum = t.zeros((), device=inputs.device) if compute_trace_hess else None
 
     for i in range(0, n_samples, chunk_size):
         chunk_grads = _compute_per_sample_grads(
@@ -416,13 +346,6 @@ def _gradient_traces(
 
         if compute_trace_grad:
             trace_grad_sum += t.linalg.vecdot(noise, noise).sum()
-        if compute_trace_hess:
-            hvps = _compute_batch_hvps(
-                model, params, buffers, inputs, targets, criterion, noise
-            ).detach()
-            trace_hess_sum += t.linalg.vecdot(noise, hvps).sum()
-            del hvps
-
         del noise
 
     result = {}
@@ -430,8 +353,6 @@ def _gradient_traces(
         result["grad_norm_squared"] = mean_grad.dot(mean_grad).item()
     if compute_trace_grad:
         result["trace_gradient_covariance"] = (trace_grad_sum / n_samples).item()
-    if compute_trace_hess:
-        result["trace_hessian_covariance"] = (trace_hess_sum / n_samples).item()
     return result
 
 
@@ -444,6 +365,8 @@ def trace_gradient_covariance(
     chunks: int = 1,
 ) -> float:
     """Tr(Σ) = E[||n_i||²] where n_i = g_i - ḡ are the gradient noise vectors."""
+    if _can_use_analytical_gradient_stats(model, criterion):
+        return _gradient_stats_analytical(model, inputs, targets)["trace_gradient_covariance"]
     return _gradient_traces(
         model,
         inputs,
@@ -470,7 +393,6 @@ def _gradient_stats_analytical(model: Module, inputs: Tensor, targets: Tensor) -
     rᵢ the residual, and hₖ the activation. All computation is batched matrix
     multiplications — no vmap, no autodiff, pure BLAS.
     """
-    from dln.model import DeepLinearNetwork
     weights = [layer.weight for layer in model.layers]
     L = len(weights)
     N = inputs.shape[0]
@@ -548,59 +470,6 @@ def gradient_stats(
     )
 
 
-@metric("trace_hessian_covariance")
-def trace_hessian_covariance(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    chunks: int = 1,
-) -> float:
-    """Tr(HΣ) = E[nᵢᵀHnᵢ] via Hessian-vector products."""
-    return _gradient_traces(
-        model,
-        inputs,
-        targets,
-        criterion,
-        chunks,
-        compute_trace_hess=True,
-    )["trace_hessian_covariance"]
-
-
-@metric("trace_covariances")
-def trace_covariances(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    chunks: int = 1,
-) -> dict[str, float]:
-    """
-    Compute gradient norm and traces of gradient noise covariance matrices.
-
-    For per-sample gradients g_i and mean gradient g_bar, noise vectors are n_i = g_i - g_bar.
-
-    Returns:
-        grad_norm_squared: ||∇L||², squared norm of mean gradient.
-        trace_gradient_covariance: Tr(Σ) = E[||n_i||²]
-        trace_hessian_covariance: Tr(HΣ) = E[n_i @ H @ n_i]
-
-    Args:
-        chunks: Split computation into chunks to reduce VRAM usage.
-            Higher values use less memory but may be slower.
-    """
-    return _gradient_traces(
-        model,
-        inputs,
-        targets,
-        criterion,
-        chunks,
-        compute_grad_norm=True,
-        compute_trace_grad=True,
-        compute_trace_hess=True,
-    )
-
-
 # Analytical Hessian for deep linear networks
 #
 # Exploits multilinearity: the DLN output is linear in each weight matrix,
@@ -609,11 +478,7 @@ def trace_covariances(
 
 
 def _hessian_precompute(model: Module, inputs: Tensor, targets: Tensor):
-    """Precompute all quantities needed for analytical Hessian operations.
-
-    Returns a dict of precomputed matrices that can be used for both full
-    materialization and implicit Hessian-vector products.
-    """
+    """Precompute all quantities needed for analytical Hessian materialization."""
     weights = [layer.weight for layer in model.layers]
     L = len(weights)
     dims = [w.shape[1] for w in weights] + [weights[-1].shape[0]]
@@ -662,7 +527,7 @@ def _hessian_precompute(model: Module, inputs: Tensor, targets: Tensor):
         offsets.append(offsets[-1] + s)
 
     return dict(
-        L=L, dims=dims, alpha=alpha, param_sizes=param_sizes, offsets=offsets,
+        L=L, alpha=alpha, param_sizes=param_sizes, offsets=offsets,
         S=S, D=D, M=M, C=C,
     )
 
@@ -684,7 +549,7 @@ def _materialize_hessian_analytical(
             ra, rb = offsets[a], offsets[b]
             sa, sb = param_sizes[a], param_sizes[b]
 
-            block = alpha * t.einsum("ik,jl->ijkl", S[a][b], D[a][b]).reshape(sa, sb)
+            block = alpha * t.kron(S[a][b], D[a][b])
 
             if a < b:
                 block -= alpha * t.einsum("pi,mj->ijmp", M[a][b], C[b][a]).reshape(
@@ -698,59 +563,6 @@ def _materialize_hessian_analytical(
     return H
 
 
-def _hessian_vector_product_analytical(
-    pre: dict, v: Tensor
-) -> Tensor:
-    """Compute Hv analytically using precomputed Kronecker structure.
-
-    Each block-vector product costs O(d^3) instead of O(d^4) for dense
-    matrix-vector multiplication, giving O(L^2 d^3) per HVP vs O(P^2).
-    For (5,100,100,100,5): ~1.6e7 vs ~4.4e8 FLOPs per HVP (~28x faster).
-    """
-    L, alpha = pre["L"], pre["alpha"]
-    dims = pre["dims"]
-    S, D, M, C = pre["S"], pre["D"], pre["M"], pre["C"]
-    param_sizes, offsets = pre["param_sizes"], pre["offsets"]
-
-    # Split v into per-layer blocks, each reshaped to weight matrix shape
-    V = []
-    for k in range(L):
-        start = offsets[k]
-        V.append(v[start : start + param_sizes[k]].reshape(dims[k + 1], dims[k]))
-
-    result = t.zeros_like(v)
-
-    for a in range(L):
-        block_a = t.zeros(dims[a + 1], dims[a], device=v.device, dtype=v.dtype)
-
-        for b in range(L):
-            if a == b:
-                # Diagonal: GN only. (Hv)_a += alpha * S_aa @ V_a @ D_aa^T
-                block_a += alpha * (S[a][a] @ V[a] @ D[a][a].T)
-            elif a < b:
-                # Upper triangle: GN + residual correction
-                # GN: alpha * S_ab @ V_b @ D_ab^T
-                block_a += alpha * (S[a][b] @ V[b] @ D[a][b].T)
-                # Residual: -alpha * M_ab^T @ V_b^T @ C_ba
-                block_a -= alpha * (M[a][b].T @ V[b].T @ C[b][a])
-            else:
-                # Lower triangle: transpose of (b, a) block
-                # GN transpose: alpha * S_ba^T @ V_b @ D_ba
-                # S_ba = S[b][a] = S[a][b]^T (stored only for b <= a... no)
-                # We stored S[b][a] for b < a... no, we stored S[a][b] for a <= b.
-                # For b < a: S_ba = Q_b^T Q_a, D_ba = H_b^T H_a
-                # S_ba^T = Q_a^T Q_b = S[b][a]... but b < a so this is S[b][a].
-                # We only store S[min][max], so S_ba = S[b][a] and S_ba^T = S[b][a]^T
-                block_a += alpha * (S[b][a].T @ V[b] @ D[b][a])
-                # Residual transpose: -alpha * C_ab @ (M_ba @ V_b)^T
-                # where M_ba = M[b][a], C_ab = C[a][b]
-                block_a -= alpha * (C[a][b] @ (M[b][a] @ V[b]).T)
-
-        result[offsets[a] : offsets[a] + param_sizes[a]] = block_a.flatten()
-
-    return result
-
-
 @metric("hessian_spectrum")
 def hessian_spectrum(
     model: Module, inputs: Tensor, targets: Tensor, criterion: Module, **kwargs
@@ -759,91 +571,6 @@ def hessian_spectrum(
     H = _materialize_hessian_analytical(model, inputs, targets)
     eigenvalues = t.linalg.eigvalsh(H)
     return {"hessian_spectrum": eigenvalues.tolist()}
-
-
-@metric("hessian_spectrum_top")
-def hessian_spectrum_top(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    fraction: float = 0.2,
-    **kwargs,
-) -> dict[str, list[float]]:
-    """Top fraction of Hessian eigenvalues via partial eigendecomposition.
-
-    Uses scipy's eigh with subset_by_index (LAPACK dsyevr), which computes
-    only the requested eigenvalues in ~O(k*P^2) vs O(P^3) for all.
-    """
-    from scipy.linalg import eigh
-
-    H = _materialize_hessian_analytical(model, inputs, targets)
-    P = H.shape[0]
-    k = max(1, int(P * fraction))
-    eigenvalues = eigh(
-        H.cpu().numpy(), eigvals_only=True, subset_by_index=[P - k, P - 1]
-    )
-    return {"hessian_spectrum_top": eigenvalues.tolist()}
-
-
-@metric("hessian_spectrum_bottom")
-def hessian_spectrum_bottom(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    fraction: float = 0.2,
-    **kwargs,
-) -> dict[str, list[float]]:
-    """Bottom fraction of Hessian eigenvalues via partial eigendecomposition."""
-    from scipy.linalg import eigh
-
-    H = _materialize_hessian_analytical(model, inputs, targets)
-    P = H.shape[0]
-    k = max(1, int(P * fraction))
-    eigenvalues = eigh(
-        H.cpu().numpy(), eigvals_only=True, subset_by_index=[0, k - 1]
-    )
-    return {"hessian_spectrum_bottom": eigenvalues.tolist()}
-
-
-@metric("hessian_extremal_eigenvalues")
-def hessian_extremal_eigenvalues(
-    model: Module,
-    inputs: Tensor,
-    targets: Tensor,
-    criterion: Module,
-    k: int = 10,
-    **kwargs,
-) -> dict[str, list[float]]:
-    """Top and bottom k eigenvalues via implicit Hessian-vector products.
-
-    Uses ARPACK (scipy.sparse.linalg.eigsh) with the analytical HVP — never
-    materializes the P x P Hessian. Best for small k (top-10, top-50).
-    Each HVP costs O(L^2 d^3) vs O(P^2) for dense matrix-vector multiply.
-    """
-    from scipy.sparse.linalg import LinearOperator, eigsh
-
-    pre = _hessian_precompute(model, inputs, targets)
-    P = pre["offsets"][-1]
-    device = inputs.device
-    dtype = inputs.dtype
-
-    def matvec(x):
-        v = t.tensor(x, device=device, dtype=dtype)
-        return _hessian_vector_product_analytical(pre, v).cpu().numpy()
-
-    op = LinearOperator((P, P), matvec=matvec, dtype="float64")
-
-    # Largest k eigenvalues
-    top_vals, _ = eigsh(op, k=k, which="LM")
-    # Smallest algebraic eigenvalues (most negative)
-    bottom_vals, _ = eigsh(op, k=k, which="SA")
-
-    return {
-        "hessian_top_eigenvalues": sorted(top_vals.tolist()),
-        "hessian_bottom_eigenvalues": sorted(bottom_vals.tolist()),
-    }
 
 
 # Comparative metrics
@@ -879,7 +606,7 @@ def frobenius_distance(model_a: Module, model_b: Module) -> float:
 # Compute functions
 
 
-# torch.func transforms (grad, vmap, jvp) work independently of no_grad —
+# torch.func transforms (grad, vmap) work independently of no_grad —
 # they create their own autograd level, so gradient-based metrics are unaffected.
 @t.no_grad()
 def compute_metrics(

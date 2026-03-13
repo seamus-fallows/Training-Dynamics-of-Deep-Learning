@@ -30,7 +30,7 @@ data:
     alpha: 1.0
 
 metrics:
-  # - trace_covariances:
+  # - gradient_stats:
   #     chunks: 1
 
 max_steps: 10000

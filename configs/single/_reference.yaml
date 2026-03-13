@@ -82,11 +82,6 @@ num_evaluations: 250    # int: number of times to evaluate/log metrics
 #   gradient_stats            - returns grad_norm_squared + trace_gradient_covariance
 #                               (shared computation, saves a backward pass vs separate)
 #                               params: chunks (int, default 1)
-#   trace_hessian_covariance  - Tr(HΣ), Hessian-gradient covariance trace
-#                               params: chunks (int, default 1)
-#   trace_covariances         - returns all three: grad_norm_squared,
-#                               trace_gradient_covariance, trace_hessian_covariance
-#                               params: chunks (int, default 1)
 #   relative_rank             - rank with user-specified tolerance
 #                               params: tol (float, default 0.01), abs_tol (float, default 0.0)
 #                               threshold = max(tol * sigma_max, abs_tol)
@@ -104,7 +99,7 @@ metrics: []
 # Examples:
 #   metrics:
 #     - weight_norm
-#     - trace_covariances:
+#     - gradient_stats:
 #         chunks: 10
 #     - relative_rank:
 #         tol: 0.05

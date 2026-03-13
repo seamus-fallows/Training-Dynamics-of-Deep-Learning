@@ -72,19 +72,6 @@ def _random_orthogonal(n: int, generator: t.Generator) -> Tensor:
     return Q
 
 
-def create_teacher_matrix(in_dim: int, out_dim: int, cfg: DictConfig) -> Tensor:
-    """Build a teacher matrix: diagonal spectrum rotated to a random eigenbasis.
-
-    Creates the diagonal matrix from cfg.params, then applies a random orthogonal
-    similarity transform seeded by cfg.data_seed to break axis alignment.
-    """
-    matrix_type = cfg.params["matrix"]
-    diag_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
-    rotation_gen = t.Generator().manual_seed(cfg.data_seed)
-    basis = _random_orthogonal(in_dim, rotation_gen)
-    return basis.T @ diag_matrix @ basis
-
-
 class Dataset:
     """
     Linear teacher dataset with online/offline modes.
@@ -93,7 +80,7 @@ class Dataset:
     Online: Samples fresh data each batch (infinite data regime).
 
     RNG streams (all independent, seeded from data_seed):
-        data_seed     -> teacher rotation basis (via create_teacher_matrix)
+        data_seed     -> teacher rotation basis
         data_seed + 1 -> test input sampling
         data_seed + 2 -> train input sampling (offline only)
         data_seed + 3 -> train noise (offline only)
@@ -104,7 +91,13 @@ class Dataset:
         self.out_dim = out_dim
         self.online = cfg.online
         self.noise_std = cfg.noise_std
-        self.teacher_matrix = create_teacher_matrix(in_dim, out_dim, cfg)
+        matrix_type = cfg.params["matrix"]
+        diag_matrix = MATRIX_FACTORIES[matrix_type](in_dim, out_dim, cfg.params)
+
+        # Rotate to a random basis: A' = O^T A O (preserves eigenvalues)
+        rotation_gen = t.Generator().manual_seed(cfg.data_seed)
+        O = _random_orthogonal(in_dim, rotation_gen)
+        self.teacher_matrix = O.T @ diag_matrix @ O
 
         test_gen = t.Generator().manual_seed(cfg.data_seed + 1)
         self.test_data = self._sample(cfg.test_samples, test_gen)
