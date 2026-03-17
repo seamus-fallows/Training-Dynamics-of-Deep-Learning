@@ -78,9 +78,7 @@ def _plot_series(
 
 
 def plot(
-    data: RunResult
-    | list[RunResult]
-    | dict[str, RunResult | list[RunResult]],
+    data: RunResult | list[RunResult] | dict[str, RunResult | list[RunResult]],
     metric: str = "test_loss",
     ylabel: str | None = None,
     ci: float = 0.95,
@@ -200,6 +198,55 @@ def plot_run(result: RunResult, metrics: list[str] | None = None) -> plt.Figure:
     fig.tight_layout()
 
     return fig
+
+
+# =============================================================================
+# Hessian spectrum
+# =============================================================================
+
+
+def plot_hessian_spectrum(
+    result: RunResult,
+    step: int | None = None,
+    log_scale: bool = False,
+    title: str | None = None,
+    ax: Axes | None = None,
+) -> Axes:
+    """Plot sorted eigenvalues λ_k vs index k from a stored hessian_spectrum.
+
+    Args:
+        result: RunResult containing 'hessian_spectrum' in its history.
+        step: Training step to plot. If None, uses the final evaluation step.
+        log_scale: Use log scale for the y-axis.
+        title: Optional figure title.
+        ax: Axes to plot on. Created if None.
+    """
+    steps = result["step"]
+    spectra = result["hessian_spectrum"]
+
+    if step is None:
+        idx = -1
+    else:
+        idx = steps.index(step)
+
+    eigenvalues = np.asarray(spectra[idx])
+    k = np.arange(1, len(eigenvalues) + 1)
+
+    if ax is None:
+        _, ax = plt.subplots()
+
+    ax.plot(k, eigenvalues, marker=".", markersize=4, linestyle="-", linewidth=0.8)
+    ax.set_xlabel("Index $k$")
+    ax.set_ylabel("$\\lambda_k$")
+    ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
+
+    if log_scale:
+        ax.set_yscale("symlog", linthresh=1e-10)
+
+    actual_step = steps[idx] if step is None else step
+    ax.set_title(title or f"Hessian spectrum at step {actual_step}")
+
+    return ax
 
 
 # =============================================================================
