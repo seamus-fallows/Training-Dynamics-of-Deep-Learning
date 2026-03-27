@@ -63,7 +63,7 @@ EXPERIMENTS = {
     "offline": {
         "base_path": Path("outputs/gph/gph_offline_metrics"),
         "cache_path": CACHE_DIR / "gph_offline_metrics.pkl",
-        "figures_path": Path("figures/gph_offline_metrics"),
+        "figures_path": Path("figures/gph_metrics/offline"),
         "baseline_subdir": "full_batch",
         "sgd_subdir": "mini_batch",
         "baseline_label": "GD",
@@ -73,7 +73,7 @@ EXPERIMENTS = {
     "online": {
         "base_path": Path("outputs/gph/gph_online_metrics"),
         "cache_path": CACHE_DIR / "gph_online_metrics.pkl",
-        "figures_path": Path("figures/gph_online_metrics"),
+        "figures_path": Path("figures/gph_metrics/online"),
         "baseline_subdir": "large_batch",
         "sgd_subdir": "mini_batch",
         "baseline_label": "Large batch",
@@ -371,10 +371,8 @@ def plot_metrics(
 
     for col, gamma in enumerate(GAMMAS):
         key = (width, gamma, noise, model_seed, batch_size)
-        col_title = f"{GAMMA_NAMES[gamma]} (γ={gamma})"
-
         # Column headers on top row only
-        axes[0, col].set_title(col_title, fontsize=11)
+        axes[0, col].set_title(GAMMA_NAMES[gamma], fontsize=10)
 
         for row, info in enumerate(ROW_INFO):
             ax = axes[row, col]
@@ -382,7 +380,7 @@ def plot_metrics(
 
             if key not in stats:
                 if col == 0:
-                    ax.set_ylabel(info["ylabel"])
+                    ax.set_ylabel(info["ylabel"], fontsize=10)
                 if row == n_rows - 1:
                     ax.set_xlabel("Training step")
                 continue
@@ -408,10 +406,11 @@ def plot_metrics(
                 ax.yaxis.set_major_locator(LogLocator(base=10, numticks=12))
                 ax.yaxis.set_minor_formatter(NullFormatter())
             if col == 0:
-                ax.set_ylabel(info["ylabel"])
+                ax.set_ylabel(info["ylabel"], fontsize=10)
             if row == n_rows - 1:
                 ax.set_xlabel("Training step")
-            ax.legend(loc="upper right", fontsize=7)
+            if col == 2:
+                ax.legend(loc="upper right", fontsize=7)
 
     fig.tight_layout()
     return fig
@@ -444,7 +443,7 @@ def plot_metrics_runs(
 
     for col, gamma in enumerate(GAMMAS):
         key = (width, gamma, noise, model_seed, batch_size)
-        axes[0, col].set_title(f"{GAMMA_NAMES[gamma]} (γ={gamma})", fontsize=11)
+        axes[0, col].set_title(GAMMA_NAMES[gamma], fontsize=10)
 
         for row, info in enumerate(ROW_INFO):
             ax = axes[row, col]
@@ -452,7 +451,7 @@ def plot_metrics_runs(
 
             if key not in stats:
                 if col == 0:
-                    ax.set_ylabel(info["ylabel"])
+                    ax.set_ylabel(info["ylabel"], fontsize=10)
                 if row == n_rows - 1:
                     ax.set_xlabel("Training step")
                 continue
@@ -485,10 +484,11 @@ def plot_metrics_runs(
                 ax.yaxis.set_major_locator(LogLocator(base=10, numticks=12))
                 ax.yaxis.set_minor_formatter(NullFormatter())
             if col == 0:
-                ax.set_ylabel(info["ylabel"])
+                ax.set_ylabel(info["ylabel"], fontsize=10)
             if row == n_rows - 1:
                 ax.set_xlabel("Training step")
-            ax.legend(loc="upper right", fontsize=7)
+            if col == 2:
+                ax.legend(loc="upper right", fontsize=7)
 
     fig.tight_layout()
     return fig
@@ -510,7 +510,7 @@ def _init_plot_worker(stats: dict, exp_config: dict) -> None:
 
 def _run_plot_task(task: tuple) -> None:
     """Worker function: generate one figure and save to disk."""
-    noise, width, batch_size, model_seed, out_dir, filename, plot_type = task
+    noise, width, batch_size, model_seed, out_dir, subdir, filename, plot_type = task
     if plot_type == "ci":
         fig = plot_metrics(
             _worker_ctx["exp"], _worker_ctx["stats"],
@@ -523,7 +523,9 @@ def _run_plot_task(task: tuple) -> None:
         )
         if fig is None:
             return
-    fig.savefig(Path(out_dir) / f"{filename}.png", dpi=150, bbox_inches="tight")
+    dest = Path(out_dir) / subdir
+    dest.mkdir(parents=True, exist_ok=True)
+    fig.savefig(dest / f"{filename}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -543,7 +545,8 @@ def _run_pool(tasks: list[tuple], stats: dict, exp_config: dict, max_workers: in
 
 def generate_all_plots(exp_config: dict, stats: dict[tuple, ConfigStats]) -> None:
     figures_path = exp_config["figures_path"]
-    runs_path = Path(str(figures_path) + "_runs")
+    # figures/gph_metrics/offline -> figures/gph_metrics_runs/offline
+    runs_path = figures_path.parent.with_name(figures_path.parent.name + "_runs") / figures_path.name
     figures_path.mkdir(parents=True, exist_ok=True)
     runs_path.mkdir(parents=True, exist_ok=True)
 
@@ -557,16 +560,17 @@ def generate_all_plots(exp_config: dict, stats: dict[tuple, ConfigStats]) -> Non
     runs_tasks = []
     for width in widths:
         for noise in noise_levels:
+            subdir = f"noise_{noise}"
             for model_seed in model_seeds:
                 for batch_size in batch_sizes:
-                    name = f"drift_diffusion_w{width}_noise{noise}_mseed{model_seed}_b{batch_size}"
+                    name = f"drift_diffusion_w{width}_mseed{model_seed}_b{batch_size}"
                     ci_tasks.append((
                         noise, width, batch_size, model_seed,
-                        str(figures_path), name, "ci",
+                        str(figures_path), subdir, name, "ci",
                     ))
                     runs_tasks.append((
                         noise, width, batch_size, model_seed,
-                        str(runs_path), name, "runs",
+                        str(runs_path), subdir, name, "runs",
                     ))
 
     print(f"Generating {len(ci_tasks)} CI figures...")
