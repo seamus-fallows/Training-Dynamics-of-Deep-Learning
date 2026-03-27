@@ -416,8 +416,8 @@ def plot_combined(
 
     # (label, stats_dict, baseline_batch_size)
     regimes = [
-        ("Online (i.i.d. samples per step)", online_stats, 500),
-        ("Offline (N = 500 fixed samples)", offline_stats, None),
+        ("Online", online_stats, 500),
+        ("Offline", offline_stats, None),
     ]
 
     for subfig, (regime_label, stats_dict, baseline_bs) in zip(subfigs, regimes):
@@ -441,12 +441,12 @@ def plot_combined(
             ax_loss = axes[0, col]
             ax_ratio = axes[1, col]
 
-            ax_loss.set_title(f"{GAMMA_NAMES[gamma]} (γ={gamma})", fontsize=11)
+            ax_loss.set_title(GAMMA_NAMES[gamma], fontsize=10)
 
             if key not in stats_dict:
                 if col == 0:
-                    ax_loss.set_ylabel("Test loss")
-                    ax_ratio.set_ylabel(ratio_ylabel)
+                    ax_loss.set_ylabel("Test loss", fontsize=10)
+                    ax_ratio.set_ylabel(ratio_ylabel, fontsize=10)
                 continue
 
             s = stats_dict[key]
@@ -460,8 +460,9 @@ def plot_combined(
             )
             ax_loss.set_yscale("log")
             if col == 0:
-                ax_loss.set_ylabel("Test loss")
-            ax_loss.legend(loc="upper right", fontsize=7)
+                ax_loss.set_ylabel("Test loss", fontsize=10)
+            if col == len(GAMMAS) - 1:
+                ax_loss.legend(loc="upper right", fontsize=7)
 
             # === Ratio row ===
             ax_ratio.axhline(1.0, color="black", linestyle="--", alpha=0.6, linewidth=1.2)
@@ -471,9 +472,10 @@ def plot_combined(
                 alpha=0.3, color="C1", label="95% CI",
             )
             if col == 0:
-                ax_ratio.set_ylabel(ratio_ylabel)
+                ax_ratio.set_ylabel(ratio_ylabel, fontsize=10)
             ax_ratio.set_xlabel("Training step")
-            ax_ratio.legend(loc="upper right", fontsize=7)
+            if col == len(GAMMAS) - 1:
+                ax_ratio.legend(loc="upper right", fontsize=7)
 
     return fig
 
@@ -497,7 +499,7 @@ def _init_plot_worker(
 
 def _run_plot_task(task: tuple) -> None:
     """Worker function: generate one figure and save to disk."""
-    width, noise, model_seed, batch_size, out_dir, filename = task
+    width, noise, model_seed, batch_size, out_dir, subdir, filename = task
     fig = plot_combined(
         _worker_ctx["online"],
         _worker_ctx["offline"],
@@ -506,7 +508,9 @@ def _run_plot_task(task: tuple) -> None:
         model_seed,
         batch_size,
     )
-    fig.savefig(Path(out_dir) / f"{filename}.png", dpi=150, bbox_inches="tight")
+    dest = Path(out_dir) / subdir
+    dest.mkdir(parents=True, exist_ok=True)
+    fig.savefig(dest / f"{filename}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -527,9 +531,10 @@ def generate_all_plots(
     tasks = []
     for width in widths:
         for noise in noise_levels:
+            subdir = f"noise_{noise}"
             for model_seed in model_seeds:
                 for batch_size in batch_sizes:
-                    filename = f"loss_ratio_w{width}_noise{noise}_mseed{model_seed}_b{batch_size}"
+                    filename = f"loss_ratio_w{width}_mseed{model_seed}_b{batch_size}"
                     tasks.append(
                         (
                             width,
@@ -537,6 +542,7 @@ def generate_all_plots(
                             model_seed,
                             batch_size,
                             str(FIGURES_PATH),
+                            subdir,
                             filename,
                         )
                     )
