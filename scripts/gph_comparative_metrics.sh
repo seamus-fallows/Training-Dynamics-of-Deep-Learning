@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-WORKERS=192
+WORKERS=128
 OUTPUT=outputs/gph_comparative_metrics
 
 # =============================================================================
