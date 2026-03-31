@@ -409,8 +409,8 @@ def plot_metrics(
                 ax.set_ylabel(info["ylabel"], fontsize=10)
             if row == n_rows - 1:
                 ax.set_xlabel("Training step")
-            if col == 2:
-                ax.legend(loc="upper right", fontsize=7)
+            if col == len(GAMMAS) - 1:
+                ax.legend(loc="best", fontsize=7)
 
     fig.tight_layout()
     return fig
@@ -487,8 +487,8 @@ def plot_metrics_runs(
                 ax.set_ylabel(info["ylabel"], fontsize=10)
             if row == n_rows - 1:
                 ax.set_xlabel("Training step")
-            if col == 2:
-                ax.legend(loc="upper right", fontsize=7)
+            if col == len(GAMMAS) - 1:
+                ax.legend(loc="best", fontsize=7)
 
     fig.tight_layout()
     return fig

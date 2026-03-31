@@ -4,12 +4,10 @@ GPH Comparative Metrics Analysis
 Processes both offline (GD vs SGD) and online (B=500 vs mini-batch) regimes.
 Figures have gamma values as columns, with separate figures per model seed.
 
-Three figure types per configuration:
+Two figure types per configuration:
 
   - Distances: loss, relative param/frobenius/layer distances, cosine similarity
-  - Model Metrics: loss, layer norms, gram norms, balance diffs/ratio,
-    effective weight norm (ref solid vs SGD dashed + 95% CI)
-  - Individual Runs: per-batch-seed overlays of distances
+  - Layer Distances: per-layer relative weight distances
 
 Usage (run from the project root):
 
@@ -594,45 +592,6 @@ def get_stats(
 # =============================================================================
 
 
-def _plot_ref_vs_sgd_layers(
-    ax: plt.Axes,
-    steps: np.ndarray,
-    ref_dict: dict[int, MetricStats],
-    sgd_dict: dict[int, MetricStats],
-    ylabel: str,
-    ref_label: str,
-    log_scale: bool = False,
-    show_legend: bool = False,
-) -> None:
-    """Plot per-layer ref (solid) vs SGD (dashed + CI) comparison."""
-    for i in sorted(ref_dict.keys()):
-        color = f"C{i}"
-        ref = ref_dict[i]
-        ax.plot(
-            steps, ref.mean, color=color, linewidth=1.5,
-            label=f"L{i} {ref_label}",
-        )
-        if ref.n > 1:
-            ax.fill_between(
-                steps, ref.ci_lo, ref.ci_hi, alpha=0.1, color=color,
-            )
-        if i in sgd_dict:
-            sgd = sgd_dict[i]
-            ax.plot(
-                steps, sgd.mean, color=color, linewidth=1.5,
-                linestyle="--", label=f"L{i} SGD",
-            )
-            ax.fill_between(
-                steps, sgd.ci_lo, sgd.ci_hi, alpha=0.15, color=color,
-            )
-    if log_scale:
-        ax.set_yscale("log")
-    if ylabel:
-        ax.set_ylabel(ylabel, fontsize=10)
-    if show_legend:
-        ax.legend(fontsize=7, loc="best", ncols=2)
-
-
 # =============================================================================
 # Distances Figure (columns = gamma)
 # =============================================================================
@@ -911,117 +870,6 @@ def plot_layer_distances(
 
 
 # =============================================================================
-# Model Metrics Figure (columns = gamma)
-# =============================================================================
-
-
-def plot_model_metrics(
-    stats: dict[tuple, CompConfigStats],
-    model_seed: int,
-    noise: float,
-    width: int,
-    batch_size: int,
-    gammas: list[float],
-    ref_label: str,
-    regime_name: str,
-    n_batch_seeds: int | str,
-) -> plt.Figure:
-    """6 rows: loss, layer norms, gram norms, balance diffs, balance ratio, eff weight norm."""
-    n_cols = len(gammas)
-    n_rows = 6
-    fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(5 * n_cols, 2.5 * n_rows), squeeze=False,
-    )
-
-    for col, gamma in enumerate(gammas):
-        key = (width, gamma, noise, model_seed, batch_size)
-        axes[0, col].set_title(GAMMA_NAMES.get(gamma, str(gamma)), fontsize=10)
-        if key not in stats:
-            continue
-
-        s = stats[key]
-
-        # Row 0: Loss
-        ax = axes[0, col]
-        ax.plot(s.steps, s.loss_ref.mean, label=ref_label, color="C0", linewidth=1.5)
-        if s.loss_ref.n > 1:
-            ax.fill_between(
-                s.steps, s.loss_ref.ci_lo, s.loss_ref.ci_hi,
-                alpha=0.3, color="C0",
-            )
-        ax.plot(
-            s.steps, s.loss_sgd.mean,
-            label=f"SGD (B={batch_size})", color="C1", linewidth=1.5,
-        )
-        ax.fill_between(
-            s.steps, s.loss_sgd.ci_lo, s.loss_sgd.ci_hi,
-            alpha=0.3, color="C1",
-        )
-        ax.set_yscale("log")
-        if col == 0:
-            ax.set_ylabel("Test loss", fontsize=10)
-        last_col = col == n_cols - 1
-        if last_col:
-            ax.legend(loc="upper right", fontsize=7)
-
-        # Row 1: Layer norms
-        _plot_ref_vs_sgd_layers(
-            axes[1, col], s.steps, s.ref_layer_norms, s.sgd_layer_norms,
-            ylabel=r"$\|W_i\|_F$" if col == 0 else "",
-            ref_label=ref_label, show_legend=last_col,
-        )
-
-        # Row 2: Gram norms
-        _plot_ref_vs_sgd_layers(
-            axes[2, col], s.steps, s.ref_gram_norms, s.sgd_gram_norms,
-            ylabel=r"$\|W_i W_i^T\|_F$" if col == 0 else "",
-            ref_label=ref_label, show_legend=last_col,
-        )
-
-        # Row 3: Balance diffs
-        _plot_ref_vs_sgd_layers(
-            axes[3, col], s.steps, s.ref_balance_diffs, s.sgd_balance_diffs,
-            ylabel=r"$\|G_l\|_F$" if col == 0 else "",
-            ref_label=ref_label, show_legend=last_col,
-        )
-
-        # Row 4: Balance ratio
-        _plot_ref_vs_sgd_layers(
-            axes[4, col], s.steps, s.ref_balance_ratios, s.sgd_balance_ratios,
-            ylabel=r"$r_l$" if col == 0 else "",
-            ref_label=ref_label, show_legend=last_col,
-        )
-
-        # Row 5: Effective weight norm
-        ax = axes[5, col]
-        if s.ref_end_to_end is not None:
-            ax.plot(
-                s.steps, s.ref_end_to_end.mean,
-                color="C0", linewidth=1.5, label=ref_label,
-            )
-            if s.ref_end_to_end.n > 1:
-                ax.fill_between(
-                    s.steps, s.ref_end_to_end.ci_lo, s.ref_end_to_end.ci_hi,
-                    alpha=0.2, color="C0",
-                )
-        if s.sgd_end_to_end is not None:
-            ms = s.sgd_end_to_end
-            ax.plot(
-                s.steps, ms.mean,
-                color="C1", linewidth=1.5, linestyle="--", label="SGD",
-            )
-            ax.fill_between(s.steps, ms.ci_lo, ms.ci_hi, alpha=0.2, color="C1")
-        if col == 0:
-            ax.set_ylabel(r"$\|W_{\mathrm{eff}}\|_F$", fontsize=10)
-        ax.set_xlabel("Training step")
-        if last_col:
-            ax.legend(fontsize=7, loc="best")
-
-    fig.tight_layout()
-    return fig
-
-
-# =============================================================================
 # Parallel Plot Generation
 # =============================================================================
 
@@ -1047,11 +895,6 @@ def _run_task(task: tuple) -> None:
         _, subdir, seed, noise, width, bsizes, gammas, regime, n_bs, fname = task
         fig = plot_layer_distances(
             stats, seed, noise, width, bsizes, gammas, regime, n_bs,
-        )
-    elif plot_type == "model_metrics":
-        _, subdir, seed, noise, width, bsize, gammas, ref_lbl, regime, n_bs, fname = task
-        fig = plot_model_metrics(
-            stats, seed, noise, width, bsize, gammas, ref_lbl, regime, n_bs,
         )
     else:
         return
@@ -1082,18 +925,11 @@ def generate_all(
     model_seeds = sorted({k[3] for k in stats})
     batch_sizes = sorted({k[4] for k in stats})
 
-    # Clean old plots for this regime's subdirectories
-    regime_dir = output_dir / regime
-    if regime_dir.exists():
-        for old in regime_dir.rglob("*.png"):
-            old.unlink()
-
     n_batch_seeds = "?"
     for cs in stats.values():
         n_batch_seeds = cs.loss_sgd.n
         break
 
-    has_sgd_metrics = any(len(cs.sgd_layer_norms) > 0 for cs in stats.values())
     has_layer_dists = any(len(cs.layer_distances) > 0 for cs in stats.values())
 
     tasks = []
@@ -1117,18 +953,6 @@ def generate_all(
                         batch_sizes, gammas, regime_name,
                         n_batch_seeds, f"layer_distances_{tag}",
                     ))
-
-                # Model metrics (one per batch size)
-                if has_sgd_metrics:
-                    for batch_size in batch_sizes:
-                        tasks.append((
-                            "model_metrics", subdir, model_seed, noise, width,
-                            batch_size, gammas, ref_label, regime_name,
-                            n_batch_seeds, f"model_metrics_{tag}_b{batch_size}",
-                        ))
-
-    if not has_sgd_metrics:
-        print("  Note: SGD model metrics not available — skipping model_metrics figures.")
 
     n_workers = min(N_WORKERS, len(tasks))
     print(f"Generating {len(tasks)} {regime_name} figures across {n_workers} workers...")

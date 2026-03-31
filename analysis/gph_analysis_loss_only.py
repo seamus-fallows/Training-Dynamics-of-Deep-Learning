@@ -547,7 +547,7 @@ def generate_all_plots(
                         )
                     )
 
-    n_workers = min(6, os.cpu_count() or 1, len(tasks))
+    n_workers = min(3, os.cpu_count() or 1, len(tasks))
     print(f"Generating {len(tasks)} figures across {n_workers} workers...")
 
     with Pool(

@@ -96,8 +96,10 @@ def sort_parquet(
             sort_cols.append("training.batch_size")
 
         print(f"  Sorting {path} by {sort_cols}...")
+        tmp_path = path.with_suffix(".parquet.tmp")
         df = lf.sort(sort_cols).collect(engine="streaming")
-        df.write_parquet(path, row_group_size=50_000)
+        df.write_parquet(tmp_path, row_group_size=50_000)
+        tmp_path.replace(path)
         print(f"  Rewritten ({len(df):,} rows, {path.stat().st_size / 1e6:.0f} MB)")
 
 
