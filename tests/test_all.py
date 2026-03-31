@@ -64,6 +64,7 @@ def make_data_config(**overrides):
         data_seed=0,
         online=False,
         noise_std=0.0,
+        d_active=None,
         params={"matrix": "diagonal", "scale": 1.0},
     )
     defaults.update(overrides)
@@ -638,6 +639,49 @@ class TestDataNoise:
         clean = Dataset(make_data_config(noise_std=0.0), in_dim=5, out_dim=5)
         noisy = Dataset(make_data_config(noise_std=1.0), in_dim=5, out_dim=5)
         assert not t.allclose(clean.train_data[1], noisy.train_data[1])
+
+
+class TestDActive:
+    def test_d_active_projects_inputs(self):
+        ds = Dataset(make_data_config(d_active=3), in_dim=5, out_dim=5)
+        inputs, _ = ds.train_data
+        # Inputs should be invariant under the projection (already in its column space)
+        reprojected = inputs @ ds.projection
+        assert t.allclose(inputs, reprojected, atol=1e-6)
+
+    def test_d_active_rng_preservation(self):
+        """Full-rank inputs projected should equal degenerate inputs (same RNG stream)."""
+        full = Dataset(make_data_config(d_active=None), in_dim=5, out_dim=5)
+        degen = Dataset(make_data_config(d_active=3), in_dim=5, out_dim=5)
+        projected = full.train_data[0] @ degen.projection
+        assert t.allclose(projected, degen.train_data[0], atol=1e-6)
+
+    def test_d_active_zero_modes_in_teacher_eigenbasis(self):
+        ds = Dataset(make_data_config(d_active=3), in_dim=5, out_dim=5)
+        inputs, _ = ds.train_data
+        # Recover rotation O: teacher = O^T diag O; eigh returns eigenvalues ascending
+        _, O_T = t.linalg.eigh(ds.teacher_matrix)
+        # Transform inputs to teacher eigenbasis
+        inputs_eigenbasis = inputs @ O_T
+        # d_active=3 activates modes 0,1,2 (smallest eigenvalues); modes 3,4 should be zero
+        assert t.allclose(inputs_eigenbasis[:, 3:], t.zeros_like(inputs_eigenbasis[:, 3:]), atol=1e-6)
+
+    def test_d_active_validation(self):
+        with pytest.raises(ValueError, match="d_active"):
+            Dataset(make_data_config(d_active=0), in_dim=5, out_dim=5)
+        with pytest.raises(ValueError, match="d_active"):
+            Dataset(make_data_config(d_active=-1), in_dim=5, out_dim=5)
+
+    def test_d_active_equals_in_dim_is_no_op(self):
+        ds = Dataset(make_data_config(d_active=5), in_dim=5, out_dim=5)
+        assert ds.projection is None
+
+    def test_d_active_online(self):
+        ds = Dataset(make_data_config(d_active=3, online=True), in_dim=5, out_dim=5)
+        loader = TrainLoader(ds, batch_size=10, batch_seed=0, device=t.device("cpu"))
+        inputs, _ = next(loader)
+        reprojected = inputs @ ds.projection
+        assert t.allclose(inputs, reprojected, atol=1e-6)
 
 
 class TestMatrixTypes:

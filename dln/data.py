@@ -99,6 +99,19 @@ class Dataset:
         O = _random_orthogonal(in_dim, rotation_gen)
         self.teacher_matrix = O.T @ diag_matrix @ O
 
+        # Input covariance: Σ_x = O^T diag(I_{d_active}, 0) O in teacher eigenbasis
+        d_active = cfg.get("d_active", None)
+        if d_active is not None and d_active < in_dim:
+            if not (1 <= d_active <= in_dim):
+                raise ValueError(
+                    f"d_active must be in [1, {in_dim}], got {d_active}"
+                )
+            mask = t.zeros(in_dim)
+            mask[:d_active] = 1.0
+            self.projection = O.T @ t.diag(mask) @ O
+        else:
+            self.projection = None
+
         test_gen = t.Generator().manual_seed(cfg.data_seed + 1)
         self.test_data = self._sample(cfg.test_samples, test_gen)
 
@@ -115,6 +128,8 @@ class Dataset:
 
     def _sample(self, n: int, generator: t.Generator) -> tuple[Tensor, Tensor]:
         inputs = t.randn(n, self.in_dim, generator=generator)
+        if self.projection is not None:
+            inputs = inputs @ self.projection
         targets = inputs @ self.teacher_matrix.T
         return inputs, targets
 
@@ -147,6 +162,7 @@ class TrainLoader:
         if dataset.online:
             self.train_data = None
             self._teacher_matrix = dataset.teacher_matrix.to(device)
+            self._projection = dataset.projection.to(device) if dataset.projection is not None else None
         else:
             self.train_data = (
                 dataset.train_data[0].to(device),
@@ -198,6 +214,8 @@ class TrainLoader:
             )
 
             inputs_all = inputs_all.to(self.device)
+            if self._projection is not None:
+                inputs_all = inputs_all @ self._projection
             targets_all = inputs_all @ self._teacher_matrix.T
 
             if self.dataset.noise_std > 0:
