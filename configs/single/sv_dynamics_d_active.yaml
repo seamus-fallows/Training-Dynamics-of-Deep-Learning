@@ -35,5 +35,7 @@ num_evaluations: 250
 
 metrics:
   - partial_product_singular_values
+  - balance_diffs
+  - gram_norms
 
 callbacks: []
