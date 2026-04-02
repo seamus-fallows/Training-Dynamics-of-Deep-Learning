@@ -13,8 +13,6 @@ Usage:
     python analysis/lr_sweep_sv.py
 """
 
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -22,9 +20,7 @@ import numpy as np
 import polars as pl
 
 from _common import GAMMA_NAMES
-
-DATA_PATH = Path("outputs/lr_sweep_online/results.parquet")
-FIGURES_PATH = Path("figures/lr_sweep_online")
+from _lr_sweep_common import DATA_PATH, FIGURES_PATH
 
 # Teacher singular values: scale * k^{-alpha} for k=1..5, scale=50, alpha=1
 TEACHER_SVS = [50 / k for k in range(1, 6)]
@@ -35,7 +31,11 @@ PLOT_SEEDS = [0, 1]
 
 
 def main():
-    df = pl.read_parquet(DATA_PATH)
+    sv_cols = [f"sv_{i}" for i in range(N_SVS)]
+    df = pl.scan_parquet(DATA_PATH).select([
+        "model.gamma", "model.model_seed", "training.batch_size",
+        "training.lr", "step",
+    ] + sv_cols).collect()
 
     gammas = sorted(df["model.gamma"].unique().to_list())
     batch_sizes = sorted(df["training.batch_size"].unique().to_list(), reverse=True)

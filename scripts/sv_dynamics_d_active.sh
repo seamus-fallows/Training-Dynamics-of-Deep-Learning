@@ -36,6 +36,23 @@ python -m dln.sweep -cn=sv_dynamics_d_active \
     --device=$DEVICE \
     --output=$OUTPUT/offline/mini_batch
 
+echo "=== Online: Large Batch (batch_size=500) ==="
+python -m dln.sweep -cn=sv_dynamics_d_active \
+    data.online=true \
+    model.in_dim=6,8,10 \
+    model.out_dim=6,8,10 \
+    model.gamma=1.5,1.0,0.75 \
+    max_steps=26000,10000,8000 \
+    model.hidden_dim=100,50,10 \
+    model.model_seed=0,1,2 \
+    training.batch_size=500 \
+    training.batch_seed=0..200 \
+    --zip=model.in_dim,model.out_dim \
+    --zip=model.gamma,max_steps \
+    --workers=$WORKERS \
+    --device=$DEVICE \
+    --output=$OUTPUT/online/large_batch
+
 echo "=== Online: Mini Batch (batch_size=1) ==="
 python -m dln.sweep -cn=sv_dynamics_d_active \
     data.online=true \

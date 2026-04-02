@@ -10,8 +10,6 @@ Usage:
     python analysis/lr_sweep_loss_compare.py
 """
 
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,33 +17,17 @@ import numpy as np
 import polars as pl
 
 from _common import GAMMA_NAMES
-
-DATA_PATH = Path("outputs/lr_sweep_online/results.parquet")
-FIGURES_PATH = Path("figures/lr_sweep_online")
-
-LARGE_BS = 500
-SMALL_BS_LIST = [50, 5, 1]
-
-# Per-batch-size LR grids (6 log-spaced from 1e-4 to max stable)
-LR_GRIDS = {
-    50:  np.logspace(np.log10(0.0001), np.log10(0.0041), 6),
-    5:   np.logspace(np.log10(0.0001), np.log10(0.003), 6),
-    1:   np.logspace(np.log10(0.0001), np.log10(0.001), 6),
-}
-
-
-def _closest_lr(target, available):
-    return min(available, key=lambda x: abs(x - target))
-
-
-def _bs_label(bs, online):
-    if not online and bs == LARGE_BS:
-        return "GD"
-    return f"Batch size {bs}"
+from _lr_sweep_common import (
+    DATA_PATH, FIGURES_PATH, LARGE_BS, SMALL_BS_LIST, LR_GRIDS,
+    closest_lr, bs_label,
+)
 
 
 def main():
-    df = pl.read_parquet(DATA_PATH)
+    df = pl.scan_parquet(DATA_PATH).select([
+        "model.gamma", "training.batch_size", "training.lr",
+        "data.online", "step", "test_loss",
+    ]).collect()
     gammas = sorted(df["model.gamma"].unique().to_list())
     available_lrs = sorted(df["training.lr"].unique().to_list())
     online_modes = sorted(df["data.online"].unique().to_list(), reverse=True)
@@ -57,7 +39,7 @@ def main():
 
         for small_bs in SMALL_BS_LIST:
             target_lrs = LR_GRIDS[small_bs]
-            lrs = [_closest_lr(t, available_lrs) for t in target_lrs]
+            lrs = [closest_lr(t, available_lrs) for t in target_lrs]
             seen = set()
             lrs = [lr for lr in lrs if not (lr in seen or seen.add(lr))]
             n_lrs = len(lrs)
@@ -68,8 +50,8 @@ def main():
                 squeeze=False,
             )
 
-            large_label = _bs_label(LARGE_BS, online)
-            small_label = _bs_label(small_bs, online)
+            large_label = bs_label(LARGE_BS, online)
+            small_label = bs_label(small_bs, online)
 
             for gi, gamma in enumerate(gammas):
                 for row, lr in enumerate(lrs):

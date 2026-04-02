@@ -15,8 +15,6 @@ Usage:
     python analysis/lr_sweep_sv_ratio.py
 """
 
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -25,19 +23,10 @@ import numpy as np
 import polars as pl
 
 from _common import GAMMA_NAMES
-
-DATA_PATH = Path("outputs/lr_sweep_online/results.parquet")
-FIGURES_PATH = Path("figures/lr_sweep_online")
-
-LARGE_BS = 500
-SMALL_BS_LIST = [50, 5, 1]
-
-# Per-batch-size LR grids (6 log-spaced from 1e-4 to max stable)
-LR_GRIDS = {
-    50:  np.logspace(np.log10(0.0001), np.log10(0.0041), 6),
-    5:   np.logspace(np.log10(0.0001), np.log10(0.003), 6),
-    1:   np.logspace(np.log10(0.0001), np.log10(0.001), 6),
-}
+from _lr_sweep_common import (
+    DATA_PATH, FIGURES_PATH, LARGE_BS, SMALL_BS_LIST, LR_GRIDS,
+    closest_lr, bs_label,
+)
 
 # All partial products for 4-layer network (indices 0-3)
 PARTIAL_PRODUCTS = []
@@ -59,18 +48,12 @@ def _pp_shape(i, j):
     return (LAYER_DIMS[j + 1], LAYER_DIMS[i])
 
 
-def _closest_lr(target, available):
-    return min(available, key=lambda x: abs(x - target))
-
-
-def _bs_label(bs, online):
-    if not online and bs == LARGE_BS:
-        return "GD"
-    return f"Batch size {bs}"
-
-
 def main():
-    df = pl.read_parquet(DATA_PATH)
+    pp_sv_cols = [f"pp_{i}_{j}_sv" for i, j in PARTIAL_PRODUCTS]
+    df = pl.scan_parquet(DATA_PATH).select([
+        "model.gamma", "training.batch_size", "training.lr",
+        "data.online", "step",
+    ] + pp_sv_cols).collect()
     gammas = sorted(df["model.gamma"].unique().to_list())
     available_lrs = sorted(df["training.lr"].unique().to_list())
     online_modes = sorted(df["data.online"].unique().to_list(), reverse=True)
@@ -84,13 +67,13 @@ def main():
 
         for small_bs in SMALL_BS_LIST:
             target_lrs = LR_GRIDS[small_bs]
-            lrs = [_closest_lr(t, available_lrs) for t in target_lrs]
+            lrs = [closest_lr(t, available_lrs) for t in target_lrs]
             seen = set()
             lrs = [lr for lr in lrs if not (lr in seen or seen.add(lr))]
             n_lrs = len(lrs)
 
-            large_label = _bs_label(LARGE_BS, online)
-            small_label = _bs_label(small_bs, online)
+            large_label = bs_label(LARGE_BS, online)
+            small_label = bs_label(small_bs, online)
             n_cols = len(gammas) * 2  # raw + ratio per gamma
 
             for pp_i, pp_j in PARTIAL_PRODUCTS:

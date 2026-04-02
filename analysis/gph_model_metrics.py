@@ -15,7 +15,6 @@ Output: figures/gph_model_metrics/
 """
 
 import os
-from multiprocessing import Pool
 from pathlib import Path
 
 import matplotlib
@@ -24,9 +23,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from _common import CACHE_DIR, GAMMA_NAMES
+from _parallel import run_pool
+from _stats import MetricStats
 from gph_comparative_metrics import (
     CompConfigStats,
-    MetricStats,
     _load_cache,
 )
 
@@ -185,20 +185,14 @@ def generate_all(
 
     n_workers = min(N_WORKERS, len(tasks))
     print(f"Generating {len(tasks)} {regime_name} figures across {n_workers} workers...")
-
-    with Pool(
-        n_workers,
+    run_pool(
+        _run_task, tasks,
+        n_workers=n_workers,
         initializer=_init_worker,
         initargs=(stats, str(output_dir)),
-    ) as pool:
-        for i, _ in enumerate(pool.imap_unordered(_run_task, tasks), 1):
-            if i % 5 == 0 or i == len(tasks):
-                print(
-                    f"\r  {regime_name}: {i}/{len(tasks)} ({100 * i / len(tasks):.0f}%)",
-                    end="", flush=True,
-                )
-
-    print(f"\n{regime_name} plots saved to {output_dir}/")
+        label=regime_name,
+    )
+    print(f"{regime_name} plots saved to {output_dir}/")
 
 
 # =============================================================================

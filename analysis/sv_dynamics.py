@@ -16,9 +16,7 @@ Usage:
 """
 
 import argparse
-import hashlib
 import os
-import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,7 +28,11 @@ from matplotlib.lines import Line2D
 import numpy as np
 import polars as pl
 
-from _common import CACHE_DIR, GAMMA_NAMES
+from _cache import load_fingerprinted_cache, save_fingerprinted_cache
+from _common import (
+    CACHE_DIR, GAMMA_NAMES,
+    compute_ci, data_fingerprint, extract_sv_3d, pp_label,
+)
 
 
 # ── Config ──────────────────────────────────────────────────────────────
@@ -82,28 +84,7 @@ def _config_filter(gamma, max_steps, hd, model_seed, noise_std, batch_size=None)
     return filt
 
 
-def extract_sv_array(df, col, n_rows):
-    """Extract SV data from a polars list-of-lists column -> (n_rows, n_steps, n_svs)."""
-    return np.stack([np.stack(df[col][i]) for i in range(n_rows)])
-
-
 # ── Statistics ──────────────────────────────────────────────────────────
-
-def compute_sv_stats(curves):
-    """Compute mean and 95% CI for SV curves.
-
-    curves: (n_seeds, n_steps, n_svs)
-    Returns: mean, ci_lo, ci_hi — each (n_steps, n_svs)
-    """
-    n = curves.shape[0]
-    mean = curves.mean(axis=0)
-    if n == 1:
-        return mean, mean, mean
-
-    sem = curves.std(axis=0, ddof=1) / np.sqrt(n)
-    # 95% CI: z ≈ 1.96 for large n
-    z = 1.96
-    return mean, mean - z * sem, mean + z * sem
 
 
 def _filter_rows(df, gamma, max_steps, hd, model_seed, noise_std, batch_size=None):
@@ -120,8 +101,8 @@ def _rows_to_stats(rows):
     steps = np.array(rows["step"][0])
     result = {"steps": steps, "n_seeds": n}
     for col in PP_COLS:
-        curves = extract_sv_array(rows, col, n)[:, :, :N_SV_PLOT]
-        mean, ci_lo, ci_hi = compute_sv_stats(curves)
+        curves = extract_sv_3d(rows, col, n)[:, :, :N_SV_PLOT]
+        mean, ci_lo, ci_hi = compute_ci(curves)
         result[col] = {"mean": mean, "ci_lo": ci_lo, "ci_hi": ci_hi}
     return result
 
@@ -151,7 +132,7 @@ def _compute_pct_diff_from_arrays(gd_arrays, sgd_arrays, steps_gd, steps_sgd):
 
         ref = np.where(np.abs(gd_ref) > 1e-10, gd_ref, np.nan)
         pct_curves = (sgd_curves[:, :, :n_svs] - gd_ref[None]) / np.abs(ref[None]) * 100
-        mean, ci_lo, ci_hi = compute_sv_stats(pct_curves)
+        mean, ci_lo, ci_hi = compute_ci(pct_curves)
         result[col] = {"mean": mean, "ci_lo": ci_lo, "ci_hi": ci_hi}
 
     return result
@@ -175,7 +156,7 @@ def _process_config(args):
         else:
             gd_stats = {"steps": gd_steps, "n_seeds": gd_n}
             for col, curves in gd_arrays.items():
-                mean, ci_lo, ci_hi = compute_sv_stats(curves)
+                mean, ci_lo, ci_hi = compute_ci(curves)
                 gd_stats[col] = {"mean": mean, "ci_lo": ci_lo, "ci_hi": ci_hi}
 
         # SGD stats
@@ -184,7 +165,7 @@ def _process_config(args):
         else:
             sgd_stats = {"steps": sgd_steps, "n_seeds": sgd_n}
             for col, curves in sgd_arrays.items():
-                mean, ci_lo, ci_hi = compute_sv_stats(curves)
+                mean, ci_lo, ci_hi = compute_ci(curves)
                 sgd_stats[col] = {"mean": mean, "ci_lo": ci_lo, "ci_hi": ci_hi}
 
         stats_result = (gd_stats, sgd_stats)
@@ -203,14 +184,7 @@ def _process_config(args):
 # ── Caching ─────────────────────────────────────────────────────────────
 
 def _data_fingerprint():
-    """Hash based on mtime+size of all parquet files — invalidates on data change."""
-    h = hashlib.md5()
-    for name in DATA_SUBDIRS:
-        p = DATA_ROOT / name / "results.parquet"
-        if p.exists():
-            stat = p.stat()
-            h.update(f"{p}:{stat.st_mtime}:{stat.st_size}".encode())
-    return h.hexdigest()[:12]
+    return data_fingerprint(DATA_ROOT, DATA_SUBDIRS)
 
 
 def compute_all_stats(recompute=False):
@@ -233,21 +207,17 @@ def compute_all_stats(recompute=False):
     all_stats, all_pct_diff = None, None
 
     if not recompute:
-        if stats_cache.exists():
-            with open(stats_cache, "rb") as f:
-                cached = pickle.load(f)
-            if cached.get("fingerprint") == fingerprint:
-                all_stats = cached["stats"]
-                stats_ok = True
-                print(f"Loaded cached stats ({len(all_stats)} configs)")
+        cached = load_fingerprinted_cache(stats_cache, fingerprint)
+        if cached is not None:
+            all_stats = cached["stats"]
+            stats_ok = True
+            print(f"Loaded cached stats ({len(all_stats)} configs)")
 
-        if pctdiff_cache.exists():
-            with open(pctdiff_cache, "rb") as f:
-                cached = pickle.load(f)
-            if cached.get("fingerprint") == fingerprint:
-                all_pct_diff = cached["stats"]
-                pctdiff_ok = True
-                print(f"Loaded cached pct-diff stats ({len(all_pct_diff)} configs)")
+        cached = load_fingerprinted_cache(pctdiff_cache, fingerprint)
+        if cached is not None:
+            all_pct_diff = cached["stats"]
+            pctdiff_ok = True
+            print(f"Loaded cached pct-diff stats ({len(all_pct_diff)} configs)")
 
     if stats_ok and pctdiff_ok:
         return all_stats, all_pct_diff
@@ -274,36 +244,60 @@ def compute_all_stats(recompute=False):
 
     n_workers = min(os.cpu_count() or 4, 12)
 
-    for regime_key, regime in REGIMES.items():
-        # Load each parquet file once — all subsequent filters are in-memory
-        print(f"Loading {regime_key} parquet files...")
-        gd_df = pl.read_parquet(_parquet_path(regime["gd_data"]))
-        sgd_df = pl.read_parquet(_parquet_path(regime["sgd_data"]))
+    filter_cols = [
+        "model.gamma", "max_steps", "model.hidden_dim",
+        "model.model_seed", "data.noise_std", "training.batch_size",
+        "step",
+    ]
+    want_cols = filter_cols + PP_COLS
+    # Coarse batch key: (noise_std, hidden_dim) — one parquet scan per batch
+    batch_key_cols = ["data.noise_std", "model.hidden_dim"]
 
-        # Extract numpy arrays in main thread (fast), submit computation to workers
-        work_items = []
+    for regime_key, regime in REGIMES.items():
+        print(f"Processing {regime_key}...")
+
+        gd_path = _parquet_path(regime["gd_data"])
+        sgd_path = _parquet_path(regime["sgd_data"])
+        gd_lf = pl.scan_parquet(gd_path)
+        sgd_lf = pl.scan_parquet(sgd_path)
+        gd_available = [c for c in want_cols if c in gd_lf.collect_schema().names()]
+        sgd_available = [c for c in want_cols if c in sgd_lf.collect_schema().names()]
+
+        # Process one (noise_std, hidden_dim, gamma) batch at a time to bound memory.
+        # Each batch loads ~1 GB per file, keeping peak well under 16 GB.
+        n_total = len(noise_stds) * len(hidden_dims) * len(GAMMA_CONFIGS)
+        done = 0
         for noise_std in noise_stds:
             for hd in hidden_dims:
-                for model_seed in model_seeds:
-                    for gamma, max_steps in GAMMA_CONFIGS:
+                for gamma, max_steps in GAMMA_CONFIGS:
+                    batch_filter = (
+                        (pl.col("data.noise_std") == noise_std)
+                        & (pl.col("model.hidden_dim") == hd)
+                        & (pl.col("model.gamma") == gamma)
+                        & (pl.col("max_steps") == max_steps)
+                    )
+                    gd_chunk = gd_lf.filter(batch_filter).select(gd_available).collect()
+                    sgd_chunk = sgd_lf.filter(batch_filter).select(sgd_available).collect()
+
+                    work_items = []
+                    for model_seed in model_seeds:
                         key = (regime_key, noise_std, hd, model_seed, gamma)
 
                         gd_rows = _filter_rows(
-                            gd_df, gamma, max_steps, hd, model_seed, noise_std,
+                            gd_chunk, gamma, max_steps, hd, model_seed, noise_std,
                             batch_size=regime["gd_batch_size"],
                         )
                         sgd_rows = _filter_rows(
-                            sgd_df, gamma, max_steps, hd, model_seed, noise_std,
+                            sgd_chunk, gamma, max_steps, hd, model_seed, noise_std,
                             batch_size=SGD_BATCH_SIZE,
                         )
 
-                        # Pre-extract numpy arrays so workers don't need polars
                         gd_n, sgd_n = len(gd_rows), len(sgd_rows)
                         gd_steps = np.array(gd_rows["step"][0]) if gd_n > 0 else None
                         sgd_steps = np.array(sgd_rows["step"][0]) if sgd_n > 0 else None
-                        gd_arrays = {col: extract_sv_array(gd_rows, col, gd_n)[:, :, :N_SV_PLOT]
+                        gd_arrays = {col: extract_sv_3d(gd_rows, col, gd_n)[:, :, :N_SV_PLOT]
                                      for col in PP_COLS} if gd_n > 0 else {}
-                        sgd_arrays = {col: extract_sv_array(sgd_rows, col, sgd_n)[:, :, :N_SV_PLOT]
+                        sgd_arrays = {col: extract_sv_3d(sgd_rows, col, sgd_n)[:, :, :N_SV_PLOT]
                                       for col in PP_COLS} if sgd_n > 0 else {}
 
                         work_items.append((
@@ -311,28 +305,34 @@ def compute_all_stats(recompute=False):
                             gd_n, sgd_n, need_stats, need_pctdiff,
                         ))
 
-        del gd_df, sgd_df
+                    del gd_chunk, sgd_chunk
 
-        print(f"  Processing {len(work_items)} configs with {n_workers} threads...")
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            for i, (key, stats_result, pctdiff_result) in enumerate(
-                pool.map(_process_config, work_items), 1,
-            ):
-                if need_stats:
-                    all_stats[key] = stats_result
-                if need_pctdiff:
-                    all_pct_diff[key] = pctdiff_result
-                if i % 12 == 0:
-                    print(f"  {i}/{len(work_items)} configs done...")
+                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                        for key, stats_result, pctdiff_result in pool.map(
+                            _process_config, work_items,
+                        ):
+                            if need_stats:
+                                all_stats[key] = stats_result
+                            if need_pctdiff:
+                                all_pct_diff[key] = pctdiff_result
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    done += 1
+                    print(
+                        f"\r  {regime_key}: {done}/{n_total} batches"
+                        f" ({100 * done / n_total:.0f}%)",
+                        end="", flush=True,
+                    )
+        print()
+
     if need_stats:
-        with open(stats_cache, "wb") as f:
-            pickle.dump({"fingerprint": fingerprint, "stats": all_stats}, f)
+        save_fingerprinted_cache(
+            {"stats": all_stats}, stats_cache, fingerprint,
+        )
         print(f"Computed and cached stats ({len(all_stats)} configs)")
     if need_pctdiff:
-        with open(pctdiff_cache, "wb") as f:
-            pickle.dump({"fingerprint": fingerprint, "stats": all_pct_diff}, f)
+        save_fingerprinted_cache(
+            {"stats": all_pct_diff}, pctdiff_cache, fingerprint,
+        )
         print(f"Computed and cached pct-diff stats ({len(all_pct_diff)} configs)")
 
     return all_stats, all_pct_diff
@@ -340,22 +340,11 @@ def compute_all_stats(recompute=False):
 
 # ── Plotting ────────────────────────────────────────────────────────────
 
-def pp_label(i, j):
-    if i == j:
-        return f"$W_{{{j}}}$"
-    layers = " ".join(f"W_{{{k}}}" for k in range(j, i - 1, -1))
-    return f"${layers}$"
-
-
 def pp_ylabel(i, j, n_total_svs=None):
     label = pp_label(i, j)
     if n_total_svs is not None and n_total_svs >= N_SV_PLOT:
         return f"Top {N_SV_PLOT} SVs of {label}"
     return f"SVs of {label}"
-
-
-def gamma_label(gamma):
-    return GAMMA_NAMES[gamma]
 
 
 def plot_sv_panel(ax, gd, sgd, pp_col):
@@ -393,7 +382,7 @@ def make_individual_figure(gamma_gd, gamma_sgd, gd_label, sgd_label):
                 n_total = gd[col]["mean"].shape[1]
                 ax.set_ylabel(pp_ylabel(i, j, n_total), fontsize=10)
             if r == 0:
-                ax.set_title(gamma_label(gamma), fontsize=10)
+                ax.set_title(GAMMA_NAMES[gamma], fontsize=10)
             if r == n_rows - 1:
                 ax.set_xlabel("Step")
 
@@ -428,7 +417,7 @@ def make_composite_figure(gamma_gd, gamma_sgd, products, gd_label, sgd_label,
                 n_total = gd[col]["mean"].shape[1]
                 ax.set_ylabel(pp_ylabel(i, j, n_total), fontsize=10)
             if r == 0:
-                ax.set_title(gamma_label(gamma), fontsize=10)
+                ax.set_title(GAMMA_NAMES[gamma], fontsize=10)
             if r == n_rows - 1:
                 ax.set_xlabel("Step")
 
@@ -487,7 +476,7 @@ def make_individual_pctdiff_figure(gamma_pctdiff):
                 n_total = pct[col]["mean"].shape[1]
                 ax.set_ylabel(pp_ylabel_pctdiff(i, j, n_total), fontsize=10)
             if r == 0:
-                ax.set_title(gamma_label(gamma), fontsize=10)
+                ax.set_title(GAMMA_NAMES[gamma], fontsize=10)
             if r == n_rows - 1:
                 ax.set_xlabel("Step")
 
@@ -519,7 +508,7 @@ def make_composite_pctdiff_figure(gamma_pctdiff, products, legend_kwargs=None):
                 n_total = pct[col]["mean"].shape[1]
                 ax.set_ylabel(pp_ylabel_pctdiff(i, j, n_total), fontsize=10)
             if r == 0:
-                ax.set_title(gamma_label(gamma), fontsize=10)
+                ax.set_title(GAMMA_NAMES[gamma], fontsize=10)
             if r == n_rows - 1:
                 ax.set_xlabel("Step")
 

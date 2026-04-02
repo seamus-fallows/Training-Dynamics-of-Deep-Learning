@@ -31,9 +31,7 @@ Options:
 
 import argparse
 import os
-import pickle
 from dataclasses import dataclass
-from multiprocessing import Pool
 from pathlib import Path
 
 import matplotlib
@@ -41,9 +39,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from scipy import stats as scipy_stats
 
-from _common import CACHE_DIR, GAMMA_NAMES, BL_KEY_COLS, fmt_seeds
+from _cache import save_cache as _save_raw, load_cache as _load_raw
+from _common import CACHE_DIR, GAMMA_NAMES, BL_KEY_COLS, extract_curves, fmt_seeds
+from _parallel import run_pool
+from _stats import MetricStats, make_stats_log_ci, make_stats_linear_ci
 
 
 # =============================================================================
@@ -65,18 +65,6 @@ GROUP_COLS = [
 # =============================================================================
 # Data Structures
 # =============================================================================
-
-
-@dataclass
-class MetricStats:
-    """Per-metric statistics with precomputed plotting quantities."""
-
-    mean: np.ndarray       # (n_steps,)
-    n: int
-    ci_lo: np.ndarray      # 95% CI lower
-    ci_hi: np.ndarray      # 95% CI upper
-    min_vals: np.ndarray | None   # None when n == 1
-    max_vals: np.ndarray | None
 
 
 @dataclass
@@ -122,61 +110,8 @@ class CompConfigStats:
 # =============================================================================
 
 
-def _extract_curves(df: pl.DataFrame, col: str) -> np.ndarray:
-    """Extract metric curves as a (n_runs, n_steps) numpy array."""
-    return np.vstack(df[col].to_list())
-
-
-def _make_stats(curves: np.ndarray) -> MetricStats:
-    """Build MetricStats from a (n_runs, n_steps) array."""
-    n = len(curves)
-    mean = curves.mean(axis=0)
-
-    if n == 1:
-        return MetricStats(
-            mean=mean, n=1, ci_lo=mean, ci_hi=mean,
-            min_vals=None, max_vals=None,
-        )
-
-    var = curves.var(axis=0, ddof=1)
-    t_val = scipy_stats.t.ppf(0.975, df=n - 1)
-    sem = np.sqrt(var / n)
-
-    # Log-space CI (delta method on log(X̄))
-    relative_sem = sem / np.maximum(np.abs(mean), 1e-30)
-    ci_factor = np.exp(np.minimum(t_val * relative_sem, 700))
-
-    return MetricStats(
-        mean=mean, n=n,
-        ci_lo=mean / ci_factor,
-        ci_hi=mean * ci_factor,
-        min_vals=curves.min(axis=0),
-        max_vals=curves.max(axis=0),
-    )
-
-
-def _make_stats_linear_ci(curves: np.ndarray) -> MetricStats:
-    """Build MetricStats with linear (not log-space) 95% CI."""
-    n = len(curves)
-    mean = curves.mean(axis=0)
-
-    if n == 1:
-        return MetricStats(
-            mean=mean, n=1, ci_lo=mean, ci_hi=mean,
-            min_vals=None, max_vals=None,
-        )
-
-    var = curves.var(axis=0, ddof=1)
-    t_val = scipy_stats.t.ppf(0.975, df=n - 1)
-    sem = np.sqrt(var / n)
-
-    return MetricStats(
-        mean=mean, n=n,
-        ci_lo=mean - t_val * sem,
-        ci_hi=mean + t_val * sem,
-        min_vals=curves.min(axis=0),
-        max_vals=curves.max(axis=0),
-    )
+_make_stats = make_stats_log_ci
+_make_stats_linear_ci = make_stats_linear_ci
 
 
 # =============================================================================
@@ -219,23 +154,23 @@ def _load_baseline_metrics(
         for i in range(n_layers):
             col = f"layer_norm_{i}"
             if col in gdf.columns:
-                layer_norms[i] = _make_stats(_extract_curves(gdf, col))
+                layer_norms[i] = _make_stats(extract_curves(gdf, col))
             col = f"gram_norm_{i}"
             if col in gdf.columns:
-                gram_norms[i] = _make_stats(_extract_curves(gdf, col))
+                gram_norms[i] = _make_stats(extract_curves(gdf, col))
 
         balance_diffs = {}
         balance_ratios = {}
         for i in range(n_pairs):
             col = f"balance_diff_{i}"
             if col in gdf.columns:
-                diff_curves = _extract_curves(gdf, col)
+                diff_curves = extract_curves(gdf, col)
                 balance_diffs[i] = _make_stats(diff_curves)
                 gcol_l = f"gram_norm_{i}"
                 gcol_r = f"gram_norm_{i + 1}"
                 if gcol_l in gdf.columns and gcol_r in gdf.columns:
-                    gl = _extract_curves(gdf, gcol_l)
-                    gr = _extract_curves(gdf, gcol_r)
+                    gl = extract_curves(gdf, gcol_l)
+                    gr = extract_curves(gdf, gcol_r)
                     balance_ratios[i] = _make_stats_linear_ci(
                         diff_curves / np.maximum(gl + gr, 1e-30)
                     )
@@ -248,7 +183,7 @@ def _load_baseline_metrics(
 
         eff = None
         if "end_to_end_weight_norm" in gdf.columns:
-            eff = _make_stats(_extract_curves(gdf, "end_to_end_weight_norm"))
+            eff = _make_stats(extract_curves(gdf, "end_to_end_weight_norm"))
 
         result[key] = {
             "layer_norms": layer_norms,
@@ -321,17 +256,17 @@ def compute_all_stats(
         width, gamma, noise, seed, batch_size = key
 
         # -- Loss --
-        loss_baseline = _make_stats(_extract_curves(gdf, "test_loss_a"))
-        loss_sgd = _make_stats(_extract_curves(gdf, "test_loss_b"))
+        loss_baseline = _make_stats(extract_curves(gdf, "test_loss_a"))
+        loss_sgd = _make_stats(extract_curves(gdf, "test_loss_b"))
 
         # -- Comparative distances --
-        param_dist_curves = _extract_curves(gdf, "param_distance")
+        param_dist_curves = extract_curves(gdf, "param_distance")
         param_distance = _make_stats(param_dist_curves)
-        frobenius_distance = _make_stats(_extract_curves(gdf, "frobenius_distance"))
+        frobenius_distance = _make_stats(extract_curves(gdf, "frobenius_distance"))
 
         layer_distances: dict[int, MetricStats] = {}
         for i in range(n_comp_layers):
-            layer_distances[i] = _make_stats(_extract_curves(gdf, f"layer_distance_{i}"))
+            layer_distances[i] = _make_stats(extract_curves(gdf, f"layer_distance_{i}"))
 
         # -- Baseline model metrics (from fallback) --
         bl_key = (width, gamma, noise, seed)
@@ -354,30 +289,30 @@ def compute_all_stats(
         if has_sgd_metrics:
             sgd_ln_curves: dict[int, np.ndarray] = {}
             for i in range(n_sgd_layers):
-                sgd_ln_curves[i] = _extract_curves(gdf, f"layer_norm_{i}_b")
+                sgd_ln_curves[i] = extract_curves(gdf, f"layer_norm_{i}_b")
                 sgd_layer_norms[i] = _make_stats(sgd_ln_curves[i])
 
             for i in range(n_sgd_layers):
-                sgd_gram_norms[i] = _make_stats(_extract_curves(gdf, f"gram_norm_{i}_b"))
+                sgd_gram_norms[i] = _make_stats(extract_curves(gdf, f"gram_norm_{i}_b"))
 
             for i in range(n_sgd_pairs):
-                diff_curves = _extract_curves(gdf, f"balance_diff_{i}_b")
+                diff_curves = extract_curves(gdf, f"balance_diff_{i}_b")
                 sgd_balance_diffs_out[i] = _make_stats(diff_curves)
-                gl = _extract_curves(gdf, f"gram_norm_{i}_b")
-                gr = _extract_curves(gdf, f"gram_norm_{i + 1}_b")
+                gl = extract_curves(gdf, f"gram_norm_{i}_b")
+                gr = extract_curves(gdf, f"gram_norm_{i + 1}_b")
                 sgd_balance_ratios_out[i] = _make_stats_linear_ci(
                     diff_curves / np.maximum(gl + gr, 1e-30)
                 )
 
             sgd_end_to_end_weight_norm = _make_stats(
-                _extract_curves(gdf, "end_to_end_weight_norm_b")
+                extract_curves(gdf, "end_to_end_weight_norm_b")
             )
 
             # Cosine sim (per-run, derived from layer norms + param distance)
             # Use exact per-run model_a norms from _a columns when available
             if n_a_layers > 0:
                 a_pnorm_sq = sum(
-                    _extract_curves(gdf, f"layer_norm_{i}_a") ** 2
+                    extract_curves(gdf, f"layer_norm_{i}_a") ** 2
                     for i in range(n_a_layers)
                 )
                 sgd_pnorm_sq = sum(v ** 2 for v in sgd_ln_curves.values())
@@ -447,7 +382,6 @@ def _de_dict_ms(d: dict) -> dict[int, MetricStats]:
 
 
 def _save_cache(stats: dict[tuple, CompConfigStats], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = {}
     for key, cs in stats.items():
         data[key] = {
@@ -470,17 +404,15 @@ def _save_cache(stats: dict[tuple, CompConfigStats], path: Path) -> None:
             "sgd_balance_ratios": _ser_dict_ms(cs.sgd_balance_ratios),
             "sgd_end_to_end_weight_norm": _ser_ms(cs.sgd_end_to_end_weight_norm),
         }
-    with open(path, "wb") as f:
-        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_raw(data, path)
     print(f"Cache saved to {path}")
 
 
 def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
-    if not path.exists():
+    data = _load_raw(path)
+    if data is None:
         return None
     try:
-        with open(path, "rb") as f:
-            data = pickle.load(f)
         return {
             key: CompConfigStats(
                 steps=d["steps"],
@@ -504,7 +436,7 @@ def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
             )
             for key, d in data.items()
         }
-    except (pickle.UnpicklingError, KeyError, TypeError) as e:
+    except (KeyError, TypeError) as e:
         print(f"Warning: Failed to load cache ({e}), will recompute")
         return None
 
@@ -1002,14 +934,14 @@ def _precompute_seed_overlay_data(
         bl_eff_norm = bl_eff_norm_ms.mean if bl_eff_norm_ms is not None else None
 
         steps = np.array(gdf["step"][0])
-        param_dist = _extract_curves(gdf, "param_distance")
-        frob_dist = _extract_curves(gdf, "frobenius_distance")
+        param_dist = extract_curves(gdf, "param_distance")
+        frob_dist = extract_curves(gdf, "frobenius_distance")
 
         # Compute per-run model_a param norm from _a columns (exact)
         a_param_norm = None
         if n_a_layers > 0:
             a_pnorm_sq = sum(
-                _extract_curves(gdf, f"layer_norm_{i}_a") ** 2
+                extract_curves(gdf, f"layer_norm_{i}_a") ** 2
                 for i in range(n_a_layers)
             )
             a_param_norm = np.sqrt(a_pnorm_sq)
@@ -1025,12 +957,12 @@ def _precompute_seed_overlay_data(
         cosine_sim = None
         if n_b_layers > 0 and a_param_norm is not None:
             sgd_pnorm_sq = sum(
-                _extract_curves(gdf, f"layer_norm_{i}_b") ** 2
+                extract_curves(gdf, f"layer_norm_{i}_b") ** 2
                 for i in range(n_b_layers)
             )
             if n_a_layers > 0:
                 a_pnorm_sq = sum(
-                    _extract_curves(gdf, f"layer_norm_{i}_a") ** 2
+                    extract_curves(gdf, f"layer_norm_{i}_a") ** 2
                     for i in range(n_a_layers)
                 )
             else:
@@ -1215,22 +1147,14 @@ def generate_seed_overlay_plots(
                     tasks.append((gamma, noise, width, batch_size,
                                   model_seeds, f"individual_runs_{tag}"))
 
-    n_workers = min(os.cpu_count() or 1, len(tasks))
-    print(f"Generating {len(tasks)} seed-overlay figures across {n_workers} workers...")
-
-    with Pool(
-        n_workers,
+    print(f"Generating {len(tasks)} seed-overlay figures...")
+    run_pool(
+        _run_seed_overlay_task, tasks,
         initializer=_init_seed_overlay_worker,
         initargs=(precomputed, str(output_dir)),
-    ) as pool:
-        for i, _ in enumerate(pool.imap_unordered(_run_seed_overlay_task, tasks), 1):
-            if i % 10 == 0 or i == len(tasks):
-                print(
-                    f"\r  Progress: {i}/{len(tasks)} ({100 * i / len(tasks):.0f}%)",
-                    end="", flush=True,
-                )
-
-    print(f"\nSeed-overlay plots saved to {output_dir}/")
+        label="Seed overlays",
+    )
+    print(f"Seed-overlay plots saved to {output_dir}/")
 
 
 # =============================================================================
@@ -1296,21 +1220,14 @@ def generate_all_plots(
     if not has_sgd_metrics:
         print("  Note: SGD model metrics not available — skipping model_metrics figures.")
 
-    n_workers = min(os.cpu_count() or 1, len(tasks))
-    print(f"Generating {len(tasks)} figures across {n_workers} workers...")
-
-    with Pool(
-        n_workers,
+    print(f"Generating {len(tasks)} figures...")
+    run_pool(
+        _run_plot_task, tasks,
         initializer=_init_plot_worker,
         initargs=(stats, str(output_dir)),
-    ) as pool:
-        for i, _ in enumerate(pool.imap_unordered(_run_plot_task, tasks), 1):
-            print(
-                f"\r  Progress: {i}/{len(tasks)} ({100 * i / len(tasks):.0f}%)",
-                end="", flush=True,
-            )
-
-    print(f"\nAll plots saved to {output_dir}/")
+        label="Progress",
+    )
+    print(f"All plots saved to {output_dir}/")
 
 
 # =============================================================================

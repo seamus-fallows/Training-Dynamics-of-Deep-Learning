@@ -1,24 +1,19 @@
-"""SV Dynamics Analysis — Top-k Power-Law Teacher
+"""SV Dynamics Analysis — d_active Experiment
 
-Processes two experiment groups:
-  Group A (dim5_topk): Fixed dim=5, varying k (number of active SVs)
-  Group B (dim_sweep_k5): Fixed k=5, varying input/output dim
+Processes outputs from the sv_dynamics_d_active sweep, which varies
+input/output dimensions (in_dim = out_dim ∈ {6, 8, 10}) with a fixed
+d_active=5 power-law teacher (5 active singular values).
 
-For each group, generates:
+Generates per-(in_dim, width, seed, batch_size) configuration:
   1. SV figures grouped by span: rows = partial products, cols = gamma
-     (individual, span-2, span-3, full) — one set per (group_val, width, noise, seed)
+     (individual, span-2, span-3, full)
   2. Model metrics figures: 2 rows (gram norms, balance diffs) × 3 gamma columns
 
 Usage:
-    python analysis/sv_dynamics_topk.py offline
-    python analysis/sv_dynamics_topk.py online
-    python analysis/sv_dynamics_topk.py offline --recompute
-    python analysis/sv_dynamics_topk.py offline --sort-parquet
-
-For best performance on large parquet files, sort them first:
-    python analysis/sv_dynamics_topk.py offline --sort-parquet
-    python analysis/sv_dynamics_topk.py online --sort-parquet
-This enables predicate pushdown so each batch only reads relevant row groups.
+    python analysis/sv_dynamics_d_active.py offline
+    python analysis/sv_dynamics_d_active.py online
+    python analysis/sv_dynamics_d_active.py offline --recompute
+    python analysis/sv_dynamics_d_active.py offline --sort-parquet
 """
 
 import argparse
@@ -56,7 +51,6 @@ GRAM_COLS = [f"gram_norm_{i}" for i in range(L)]
 BALANCE_COLS = [f"balance_diff_{i}" for i in range(L - 1)]
 GAMMAS = sorted(GAMMA_NAMES.keys())
 
-# Partial product groupings (matching sv_dynamics.py)
 INDIVIDUAL = [(i, i) for i in range(L)]
 COMPOSITE_FIGURES = [
     ("span2", [(0, 1), (1, 2), (2, 3)]),
@@ -66,28 +60,15 @@ COMPOSITE_FIGURES = [
 
 SV_COLORS = [f"C{i}" for i in range(N_PLOT_CAP)]
 
-BASE_PATH = Path("outputs/sv_dynamics_topk")
+BASE_PATH = Path("outputs/sv_dynamics_d_active")
 
-GROUPS = {
-    "dim5_topk": {
-        "subdir": "dim5_topk",
-        "group_col": "data.params.k",
-        "group_tag": "k",
-        "bl_key_cols": [
-            "data.params.k", "model.gamma", "max_steps",
-            "model.hidden_dim", "data.noise_std", "model.model_seed",
-        ],
-    },
-    "dim_sweep_k5": {
-        "subdir": "dim_sweep_k5",
-        "group_col": "model.in_dim",
-        "group_tag": "dim",
-        "bl_key_cols": [
-            "model.in_dim", "model.gamma", "max_steps",
-            "model.hidden_dim", "data.noise_std", "model.model_seed",
-        ],
-    },
-}
+# Key columns: in_dim identifies the configuration (out_dim is zipped with it)
+BL_KEY_COLS = [
+    "model.in_dim", "model.gamma", "max_steps",
+    "model.hidden_dim", "model.model_seed",
+]
+
+GROUP_TAG = "dim"
 
 REGIMES = {
     "offline": {
@@ -119,8 +100,8 @@ class SVStats:
     """Per-SV-column statistics: arrays of shape (n_steps, n_svs)."""
     mean: np.ndarray
     n: int
-    spread_lo: np.ndarray | None  # None for n=1
-    spread_hi: np.ndarray | None
+    spread_lo: np.ndarray | None = None
+    spread_hi: np.ndarray | None = None
 
 
 @dataclass
@@ -128,8 +109,8 @@ class LayerStats:
     """Per-layer scalar metric statistics: arrays of shape (n_steps,)."""
     mean: np.ndarray
     n: int
-    ci_lo: np.ndarray | None  # None for n=1
-    ci_hi: np.ndarray | None
+    ci_lo: np.ndarray | None = None
+    ci_hi: np.ndarray | None = None
 
 
 @dataclass
@@ -137,10 +118,8 @@ class ConfigStats:
     """All plotting data for one configuration."""
     steps: np.ndarray
     n_runs: int
-    # SVs per partial product
     baseline_svs: dict[str, SVStats] = field(default_factory=dict)
     sgd_svs: dict[str, SVStats] = field(default_factory=dict)
-    # Model metrics per layer
     baseline_gram_norms: dict[int, LayerStats] = field(default_factory=dict)
     sgd_gram_norms: dict[int, LayerStats] = field(default_factory=dict)
     baseline_balance_diffs: dict[int, LayerStats] = field(default_factory=dict)
@@ -158,12 +137,11 @@ def _extract_sv_3d(df: pl.DataFrame, col: str) -> np.ndarray:
 
 
 def _make_sv_stats(curves_3d: np.ndarray) -> SVStats:
-    """Compute mean and spread for a (n_runs, n_steps, n_svs) array."""
     n_runs, n_steps, n_svs = curves_3d.shape
     mean = curves_3d.mean(axis=0)
 
     if n_runs == 1:
-        return SVStats(mean=mean, n=1, spread_lo=None, spread_hi=None)
+        return SVStats(mean=mean, n=1)
 
     flat = curves_3d.reshape(n_runs, -1)
     flat_mean = mean.reshape(-1)
@@ -176,13 +154,12 @@ def _make_sv_stats(curves_3d: np.ndarray) -> SVStats:
 
 
 def _make_layer_stats(df: pl.DataFrame, col: str) -> LayerStats:
-    """Compute mean and 95% CI for a layer metric column."""
     curves = extract_curves(df, col)
     n = len(curves)
     mean = curves.mean(axis=0)
 
     if n == 1:
-        return LayerStats(mean=mean, n=1, ci_lo=None, ci_hi=None)
+        return LayerStats(mean=mean, n=1)
 
     t_val = scipy_stats.t.ppf(0.975, df=n - 1)
     sem = np.sqrt(curves.var(axis=0, ddof=1) / n)
@@ -191,7 +168,6 @@ def _make_layer_stats(df: pl.DataFrame, col: str) -> LayerStats:
 
 @dataclass
 class _BaselineStats:
-    """Intermediate baseline data for computing ConfigStats."""
     steps: np.ndarray
     svs: dict[str, SVStats]
     gram_norms: dict[int, LayerStats]
@@ -224,16 +200,11 @@ def _stream_partition(
     return {key: pl.concat(dfs) for key, dfs in groups.items()}
 
 
-def compute_group_stats(
-    group_cfg: dict, regime_cfg: dict,
-) -> dict[tuple, ConfigStats]:
-    bl_key_cols = group_cfg["bl_key_cols"]
+def compute_stats(regime_cfg: dict) -> dict[tuple, ConfigStats]:
+    baseline_dir = BASE_PATH / regime_cfg["baseline_subdir"]
+    sgd_dir = BASE_PATH / regime_cfg["sgd_subdir"]
 
-    base_dir = BASE_PATH / group_cfg["subdir"]
-    baseline_dir = base_dir / regime_cfg["baseline_subdir"]
-    sgd_dir = base_dir / regime_cfg["sgd_subdir"]
-
-    # Discover available metric columns from parquet schema
+    # Discover available metric columns
     bl_schema = pl.scan_parquet(baseline_dir / "results.parquet").collect_schema().names()
     available_gram = [c for c in GRAM_COLS if c in bl_schema]
     available_balance = [c for c in BALANCE_COLS if c in bl_schema]
@@ -246,15 +217,13 @@ def compute_group_stats(
     sgd_available_pp = [c for c in PP_SV_COLS if c in sgd_schema.names()]
     sgd_metric_cols = [c for c in metric_cols if c in sgd_schema.names()]
 
-    # Phase 1: Baselines — column-split streaming (same approach as Phase 2).
-    # Online baselines can be multi-GB, so we stream metric and SV columns
-    # separately to bound peak memory.
+    # Phase 1: Baselines — column-split streaming to bound peak memory.
     bl_path = baseline_dir / "results.parquet"
     print(f"  Loading baselines from {baseline_dir}...")
 
     # Pass 1a: steps + metric columns (lightweight)
     bl_metric_parts = _stream_partition(
-        bl_path, bl_key_cols + ["step"] + metric_cols, bl_key_cols,
+        bl_path, BL_KEY_COLS + ["step"] + metric_cols, BL_KEY_COLS,
     )
 
     baselines: dict[tuple, _BaselineStats] = {}
@@ -279,7 +248,7 @@ def compute_group_stats(
     # Pass 1b+: SV columns one at a time
     for pp_col in available_pp:
         bl_sv_parts = _stream_partition(
-            bl_path, bl_key_cols + [pp_col], bl_key_cols,
+            bl_path, BL_KEY_COLS + [pp_col], BL_KEY_COLS,
         )
         for key, group_df in bl_sv_parts.items():
             if key in baselines:
@@ -292,19 +261,16 @@ def compute_group_stats(
     print(f"  {len(baselines)} baselines computed")
 
     # Phase 2: SGD — column-split streaming to bound memory.
-    # Process metric columns in one pass, then SV columns one at a time.
-    # Each pass streams the parquet via iter_batches (never loading the full
-    # file), keeping peak memory proportional to one column's data.
     sgd_path = sgd_dir / "results.parquet"
     sgd_batch_sizes = regime_cfg["sgd_batch_sizes"]
-    partition_cols = bl_key_cols + (["training.batch_size"] if has_bs_col else [])
+    partition_cols = BL_KEY_COLS + (["training.batch_size"] if has_bs_col else [])
 
     def _resolve_key(key):
         if has_bs_col:
             return key[:-1], key[-1]
         return key, sgd_batch_sizes[0]
 
-    # Pass 1: Metric stats (lightweight — no nested SV arrays)
+    # Pass 2a: Metric stats (lightweight — no nested SV arrays)
     print(f"  Computing metric stats from {sgd_dir}...")
     metric_parts = _stream_partition(
         sgd_path, partition_cols + sgd_metric_cols, partition_cols,
@@ -340,7 +306,7 @@ def compute_group_stats(
     gc.collect()
     print(f"  {len(stats)} configs with metric stats")
 
-    # Pass 2+: SV stats (one PP column per pass to bound memory)
+    # Pass 2b+: SV stats (one PP column per pass to bound memory)
     n_pp = len(sgd_available_pp)
     for pp_idx, pp_col in enumerate(sgd_available_pp):
         print(
@@ -426,20 +392,18 @@ def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
         return None
 
 
-def get_group_stats(
-    group_name: str,
-    group_cfg: dict,
+def get_stats(
     regime_name: str,
     regime_cfg: dict,
     force_recompute: bool = False,
 ) -> dict[tuple, ConfigStats]:
-    cache_path = CACHE_DIR / f"sv_dynamics_topk_{group_name}_{regime_name}_v2.pkl"
+    cache_path = CACHE_DIR / f"sv_dynamics_d_active_{regime_name}.pkl"
     if not force_recompute:
         stats = load_cache(cache_path)
         if stats is not None:
             print(f"  Loaded {len(stats)} configurations from cache")
             return stats
-    stats = compute_group_stats(group_cfg, regime_cfg)
+    stats = compute_stats(regime_cfg)
     save_cache(stats, cache_path)
     return stats
 
@@ -468,7 +432,7 @@ def _plot_sv_panel(ax, steps, bl_sv, sgd_sv):
 
 
 def _build_gamma_max_steps(stats: dict[tuple, ConfigStats]) -> dict[float, int]:
-    """Build gamma -> max_steps lookup from stats keys (1:1 since they're zipped)."""
+    """Build gamma -> max_steps lookup from stats keys."""
     return {key[1]: key[2] for key in stats}
 
 
@@ -481,9 +445,8 @@ def make_sv_figure(
     stats: dict[tuple, ConfigStats],
     gamma_max_steps: dict[float, int],
     products: list[tuple[int, int]],
-    group_val: int,
+    in_dim: int,
     hidden_dim: int,
-    noise: float,
     model_seed: int,
     batch_size: int,
     ref_label: str,
@@ -500,7 +463,7 @@ def make_sv_figure(
         max_steps = gamma_max_steps.get(gamma)
         if max_steps is None:
             continue
-        key = (group_val, gamma, max_steps, hidden_dim, noise, model_seed, batch_size)
+        key = (in_dim, gamma, max_steps, hidden_dim, model_seed, batch_size)
         if key not in stats:
             continue
 
@@ -547,7 +510,6 @@ def _plot_ref_vs_sgd_layers(
     sgd_label: str,
     show_legend: bool = False,
 ) -> None:
-    """Plot per-layer ref (solid) vs SGD (dashed + CI) comparison."""
     for i in sorted(ref_dict.keys()):
         color = f"C{i}"
         ref = ref_dict[i]
@@ -571,27 +533,25 @@ def _plot_ref_vs_sgd_layers(
 def make_model_metrics_figure(
     stats: dict[tuple, ConfigStats],
     gamma_max_steps: dict[float, int],
-    group_val: int,
+    in_dim: int,
     hidden_dim: int,
-    noise: float,
     model_seed: int,
     batch_size: int,
     ref_label: str,
     sgd_label: str,
-    group_tag: str,
     regime_label: str,
 ) -> plt.Figure:
-    """2 rows (gram norms, balance diffs) x 3 gamma columns."""
+    """2 rows (gram norms, balance diffs) × 3 gamma columns."""
     fig, axes = plt.subplots(2, 3, figsize=(15, 6), squeeze=False)
     n_runs = 0
 
     for col, gamma in enumerate(GAMMAS):
-        axes[0, col].set_title(f"{GAMMA_NAMES[gamma]} (\u03b3={gamma})", fontsize=10)
+        axes[0, col].set_title(f"{GAMMA_NAMES[gamma]} (γ={gamma})", fontsize=10)
 
         max_steps = gamma_max_steps.get(gamma)
         if max_steps is None:
             continue
-        key = (group_val, gamma, max_steps, hidden_dim, noise, model_seed, batch_size)
+        key = (in_dim, gamma, max_steps, hidden_dim, model_seed, batch_size)
         if key not in stats:
             continue
 
@@ -599,7 +559,6 @@ def make_model_metrics_figure(
         n_runs = s.n_runs
         last_col = col == len(GAMMAS) - 1
 
-        # Row 0: Gram norms
         _plot_ref_vs_sgd_layers(
             axes[0, col], s.steps,
             s.baseline_gram_norms, s.sgd_gram_norms,
@@ -607,7 +566,6 @@ def make_model_metrics_figure(
             ref_label=ref_label, sgd_label=sgd_label, show_legend=last_col,
         )
 
-        # Row 1: Balance diffs
         _plot_ref_vs_sgd_layers(
             axes[1, col], s.steps,
             s.baseline_balance_diffs, s.sgd_balance_diffs,
@@ -618,7 +576,7 @@ def make_model_metrics_figure(
 
     fig.suptitle(
         f"Model metrics: {ref_label} (solid) vs {sgd_label} (dashed, n={n_runs})\n"
-        f"{regime_label} | {group_tag}={group_val} | noise={noise} "
+        f"{regime_label} | in_dim=out_dim={in_dim} | d_active=5 "
         f"| width={hidden_dim} | seed={model_seed}",
         fontsize=11, fontweight="bold",
     )
@@ -631,87 +589,75 @@ def make_model_metrics_figure(
 # =============================================================================
 
 
-def generate_group_plots(
-    group_name: str,
-    group_cfg: dict,
+def generate_plots(
     regime_name: str,
     regime_cfg: dict,
     stats: dict[tuple, ConfigStats],
 ) -> None:
-    figures_base = Path("figures/sv_dynamics_topk") / regime_name / group_name
+    figures_base = Path("figures/sv_dynamics_d_active") / regime_name
     gamma_max_steps = _build_gamma_max_steps(stats)
-    tag = group_cfg["group_tag"]
 
     baseline_bs = regime_cfg["baseline_batch_size"]
     ref_label = f"B={baseline_bs}" if baseline_bs is not None else "GD"
 
-    # Extract unique parameter values from stats keys
-    # Key: (group_val, gamma, max_steps, hidden_dim, noise, model_seed, batch_size)
+    # Key: (in_dim, gamma, max_steps, hidden_dim, model_seed, batch_size)
     all_keys = set(stats.keys())
-    group_vals = sorted({k[0] for k in all_keys})
+    in_dims = sorted({k[0] for k in all_keys})
     hidden_dims = sorted({k[3] for k in all_keys})
-    noise_levels = sorted({k[4] for k in all_keys})
-    model_seeds = sorted({k[5] for k in all_keys})
-    batch_sizes = sorted({k[6] for k in all_keys})
+    model_seeds = sorted({k[4] for k in all_keys})
+    batch_sizes = sorted({k[5] for k in all_keys})
 
-    # Count total figures for progress reporting
-    n_configs = (len(group_vals) * len(noise_levels) * len(hidden_dims)
-                 * len(model_seeds) * len(batch_sizes))
+    n_configs = len(in_dims) * len(hidden_dims) * len(model_seeds) * len(batch_sizes)
     figs_per_config = 1 + 1 + len(COMPOSITE_FIGURES)  # metrics + individual + composites
     total = n_configs * figs_per_config
     done = 0
 
     print(f"  Generating {total} figures...")
 
-    for group_val in group_vals:
-        for noise in noise_levels:
-            noise_dir = figures_base / f"noise_{noise}"
-            noise_dir.mkdir(parents=True, exist_ok=True)
-            for hidden_dim in hidden_dims:
-                for model_seed in model_seeds:
-                    for batch_size in batch_sizes:
-                        base_name = (
-                            f"{tag}{group_val}_w{hidden_dim}"
-                            f"_mseed{model_seed}_b{batch_size}"
-                        )
-                        sgd_label = f"B={batch_size}"
+    for in_dim in in_dims:
+        for hidden_dim in hidden_dims:
+            fig_dir = figures_base / f"dim{in_dim}"
+            fig_dir.mkdir(parents=True, exist_ok=True)
 
-                        # Model metrics figure
-                        fig = make_model_metrics_figure(
-                            stats, gamma_max_steps,
-                            group_val, hidden_dim, noise, model_seed, batch_size,
+            for model_seed in model_seeds:
+                for batch_size in batch_sizes:
+                    base_name = f"dim{in_dim}_w{hidden_dim}_mseed{model_seed}_b{batch_size}"
+                    sgd_label = f"B={batch_size}"
+
+                    # Model metrics figure
+                    fig = make_model_metrics_figure(
+                        stats, gamma_max_steps,
+                        in_dim, hidden_dim, model_seed, batch_size,
+                        ref_label, sgd_label,
+                        regime_label=regime_cfg["regime_label"],
+                    )
+                    fig.savefig(
+                        fig_dir / f"model_metrics_{base_name}.png",
+                        dpi=150, bbox_inches="tight",
+                    )
+                    plt.close(fig)
+                    done += 1
+
+                    # SV figures grouped by span
+                    for slug, products in [("individual", INDIVIDUAL)] + COMPOSITE_FIGURES:
+                        fig = make_sv_figure(
+                            stats, gamma_max_steps, products,
+                            in_dim, hidden_dim, model_seed, batch_size,
                             ref_label, sgd_label,
-                            group_tag=tag,
-                            regime_label=regime_cfg["regime_label"],
                         )
                         fig.savefig(
-                            noise_dir / f"model_metrics_{base_name}.png",
+                            fig_dir / f"{slug}_{base_name}.png",
                             dpi=150, bbox_inches="tight",
                         )
                         plt.close(fig)
                         done += 1
 
-                        # SV figures grouped by span
-                        for slug, products in [("individual", INDIVIDUAL)] + COMPOSITE_FIGURES:
-                            fig = make_sv_figure(
-                                stats, gamma_max_steps, products,
-                                group_val, hidden_dim, noise,
-                                model_seed, batch_size,
-                                ref_label, sgd_label,
-                            )
-                            fig.savefig(
-                                noise_dir / f"{slug}_{base_name}.png",
-                                dpi=150, bbox_inches="tight",
-                            )
-                            plt.close(fig)
-                            done += 1
-
-                        if done % 20 == 0 or done == total:
-                            print(
-                                f"\r  Progress: {done}/{total}"
-                                f" ({100 * done / total:.0f}%)",
-                                end="", flush=True,
-                            )
+                    if done % 20 == 0 or done == total:
+                        print(
+                            f"\r  Progress: {done}/{total}"
+                            f" ({100 * done / total:.0f}%)",
+                            end="", flush=True,
+                        )
 
     print(f"\n  Plots saved to {figures_base}/")
 
@@ -723,7 +669,7 @@ def generate_group_plots(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SV dynamics top-k analysis with batch seed averaging",
+        description="SV dynamics analysis for d_active experiment",
     )
     parser.add_argument(
         "experiment",
@@ -740,41 +686,26 @@ def main():
         action="store_true",
         help="Sort parquet files by key columns for efficient reads, then exit",
     )
-    parser.add_argument(
-        "--group",
-        choices=list(GROUPS.keys()),
-        default=None,
-        help="Process only this group (default: both)",
-    )
     args = parser.parse_args()
 
     regime_name = args.experiment
     regime_cfg = REGIMES[regime_name]
-    groups_to_run = (
-        {args.group: GROUPS[args.group]} if args.group else GROUPS
-    )
 
     print(f"Experiment: {regime_name}")
 
     if args.sort_parquet:
-        for group_name, group_cfg in groups_to_run.items():
-            print(f"\n=== Sorting {group_name} ===")
-            sort_config = {
-                "base_path": BASE_PATH / group_cfg["subdir"],
-                "baseline_subdir": regime_cfg["baseline_subdir"],
-                "sgd_subdir": regime_cfg["sgd_subdir"],
-            }
-            sort_parquet(sort_config, key_cols=group_cfg["bl_key_cols"])
-        print("\nDone! Re-run without --sort-parquet to analyze.")
+        print("Sorting parquet files...")
+        sort_config = {
+            "base_path": BASE_PATH,
+            "baseline_subdir": regime_cfg["baseline_subdir"],
+            "sgd_subdir": regime_cfg["sgd_subdir"],
+        }
+        sort_parquet(sort_config, key_cols=BL_KEY_COLS)
+        print("Done! Re-run without --sort-parquet to analyze.")
         return
 
-    for group_name, group_cfg in groups_to_run.items():
-        print(f"\n=== {group_name} ({regime_name}) ===")
-        stats = get_group_stats(
-            group_name, group_cfg, regime_name, regime_cfg,
-            force_recompute=args.recompute,
-        )
-        generate_group_plots(group_name, group_cfg, regime_name, regime_cfg, stats)
+    stats = get_stats(regime_name, regime_cfg, force_recompute=args.recompute)
+    generate_plots(regime_name, regime_cfg, stats)
 
     print("\nDone!")
 

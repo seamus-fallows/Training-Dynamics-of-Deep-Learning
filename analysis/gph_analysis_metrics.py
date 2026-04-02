@@ -29,10 +29,8 @@ Caches computed statistics in analysis/.cache/gph_offline_metrics.pkl or analysi
 
 import argparse
 import os
-import pickle
 from collections import defaultdict
 from dataclasses import dataclass
-from multiprocessing import Pool
 from pathlib import Path
 
 import matplotlib
@@ -41,12 +39,14 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, NullFormatter
 import numpy as np
 import polars as pl
-from scipy import stats as scipy_stats
 
+from _cache import save_cache as _save_raw, load_cache as _load_raw
 from _common import (
     BATCH_KEY_COLS, BL_KEY_COLS, CACHE_DIR, GAMMA_NAMES,
-    build_filter, mean_centered_spread, sort_parquet,
+    build_filter, extract_curves, sort_parquet,
 )
+from _parallel import run_pool
+from _stats import MetricStats, make_stats_with_spread
 
 
 # =============================================================================
@@ -89,20 +89,6 @@ EXPERIMENTS = {
 
 
 @dataclass
-class MetricStats:
-    """Per-metric statistics."""
-
-    mean: np.ndarray       # (n_steps,)
-    n: int
-    min_vals: np.ndarray | None   # None for deterministic baseline
-    max_vals: np.ndarray | None
-    spread_lo: np.ndarray | None  # mean-centered 90% band
-    spread_hi: np.ndarray | None
-    ci_lo: np.ndarray | None      # 95% CI lower (linear-space)
-    ci_hi: np.ndarray | None      # 95% CI upper
-
-
-@dataclass
 class ConfigStats:
     """Statistics for a single (width, gamma, noise, model_seed, batch_size) configuration.
 
@@ -123,39 +109,6 @@ class ConfigStats:
 # =============================================================================
 
 
-def _extract_metric_curves(df: pl.DataFrame, metric_name: str) -> np.ndarray:
-    """Extract metric curves as a (n_runs, n_steps) numpy array."""
-    return np.vstack(df[metric_name].to_list())
-
-
-def _make_metric_stats(curves: np.ndarray) -> MetricStats:
-    """Build a MetricStats from a (n_runs, n_steps) array."""
-    n = len(curves)
-    mean = curves.mean(axis=0)
-
-    if n == 1:
-        return MetricStats(
-            mean=mean, n=1,
-            min_vals=None, max_vals=None,
-            spread_lo=None, spread_hi=None,
-            ci_lo=None, ci_hi=None,
-        )
-
-    spread_lo, spread_hi = mean_centered_spread(curves, mean)
-    t_val = scipy_stats.t.ppf(0.975, df=n - 1)
-    sem = np.sqrt(curves.var(axis=0, ddof=1) / n)
-
-    return MetricStats(
-        mean=mean, n=n,
-        min_vals=curves.min(axis=0),
-        max_vals=curves.max(axis=0),
-        spread_lo=spread_lo,
-        spread_hi=spread_hi,
-        ci_lo=mean - t_val * sem,
-        ci_hi=mean + t_val * sem,
-    )
-
-
 def _compute_all_metric_stats(
     subset: pl.DataFrame,
 ) -> tuple[dict[str, MetricStats], dict[str, np.ndarray]]:
@@ -167,15 +120,15 @@ def _compute_all_metric_stats(
     all_curves = {}
     metric_stats = {}
     for col in METRIC_COLS:
-        curves = _extract_metric_curves(subset, col)
+        curves = extract_curves(subset, col)
         all_curves[col] = curves
-        metric_stats[col] = _make_metric_stats(curves)
+        metric_stats[col] = make_stats_with_spread(curves)
 
     drift = all_curves["grad_norm_squared"]
     diffusion = all_curves["trace_gradient_covariance"]
     ratio_curves = drift / np.maximum(diffusion, 1e-30)
     all_curves["drift_over_diffusion"] = ratio_curves
-    metric_stats["drift_over_diffusion"] = _make_metric_stats(ratio_curves)
+    metric_stats["drift_over_diffusion"] = make_stats_with_spread(ratio_curves)
 
     return metric_stats, all_curves
 
@@ -275,7 +228,6 @@ def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
 
 
 def save_cache(stats: dict[tuple, ConfigStats], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     cache_data = {
         key: {
             "steps": cs.steps,
@@ -286,17 +238,15 @@ def save_cache(stats: dict[tuple, ConfigStats], path: Path) -> None:
         }
         for key, cs in stats.items()
     }
-    with open(path, "wb") as f:
-        pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_raw(cache_data, path)
     print(f"Cache saved to {path}")
 
 
 def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
-    if not path.exists():
+    cache_data = _load_raw(path)
+    if cache_data is None:
         return None
     try:
-        with open(path, "rb") as f:
-            cache_data = pickle.load(f)
         return {
             key: ConfigStats(
                 steps=d["steps"],
@@ -307,7 +257,7 @@ def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
             )
             for key, d in cache_data.items()
         }
-    except (pickle.UnpicklingError, KeyError, TypeError) as e:
+    except (KeyError, TypeError) as e:
         print(f"Warning: Failed to load cache ({e}), will recompute")
         return None
 
@@ -533,14 +483,13 @@ def _run_pool(tasks: list[tuple], stats: dict, exp_config: dict, max_workers: in
     """Run plot tasks in a multiprocessing pool."""
     if max_workers <= 0:
         max_workers = os.cpu_count() or 1
-    n_workers = min(max_workers, len(tasks))
-    with Pool(n_workers, initializer=_init_plot_worker, initargs=(stats, exp_config)) as pool:
-        for i, _ in enumerate(pool.imap_unordered(_run_plot_task, tasks), 1):
-            print(
-                f"\r  Progress: {i}/{len(tasks)} ({100 * i / len(tasks):.0f}%)",
-                end="", flush=True,
-            )
-    print()
+    run_pool(
+        _run_plot_task, tasks,
+        max_workers=max_workers,
+        initializer=_init_plot_worker,
+        initargs=(stats, exp_config),
+        label="Progress",
+    )
 
 
 def generate_all_plots(exp_config: dict, stats: dict[tuple, ConfigStats]) -> None:

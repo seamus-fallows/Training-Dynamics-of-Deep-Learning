@@ -22,10 +22,8 @@ Output: figures/gph_loss/
 
 import argparse
 import os
-import pickle
 from collections import defaultdict
 from dataclasses import dataclass
-from multiprocessing import Pool
 from pathlib import Path
 
 import matplotlib
@@ -36,15 +34,18 @@ import numpy as np
 import polars as pl
 from scipy import stats as scipy_stats
 
+from _cache import load_cache as _load_raw, save_cache as _save_raw
 from _common import (
     BATCH_KEY_COLS,
     BL_KEY_COLS,
     CACHE_DIR,
     GAMMA_NAMES,
     build_filter,
+    extract_curves,
     mean_centered_spread,
     sort_parquet,
 )
+from _parallel import run_pool
 
 
 # =============================================================================
@@ -131,11 +132,6 @@ class ConfigStats:
 # =============================================================================
 
 
-def _extract_curves(df: pl.DataFrame) -> np.ndarray:
-    """Extract loss curves as a (n_runs, n_steps) numpy array."""
-    return np.vstack(df["test_loss"].to_list())
-
-
 def _welch_t_crit(
     se_a: np.ndarray,
     n_a: int,
@@ -169,7 +165,7 @@ def _compute_baseline_stats(subset: pl.DataFrame) -> BaselineStats | None:
         return None
 
     steps = np.array(subset["step"][0])
-    curves = _extract_curves(subset)
+    curves = extract_curves(subset, "test_loss")
     n = len(curves)
 
     if n == 1:
@@ -198,7 +194,7 @@ def _compute_sgd_config_stats(
     if len(subset) == 0:
         return None
 
-    curves = _extract_curves(subset)
+    curves = extract_curves(subset, "test_loss")
     n = len(curves)
 
     mean = curves.mean(axis=0)
@@ -358,21 +354,17 @@ def compute_all_stats(exp_config: dict) -> dict[tuple, ConfigStats]:
 
 
 def save_cache(stats: dict[tuple, ConfigStats], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    cache_data = {key: vars(cs) for key, cs in stats.items()}
-    with open(path, "wb") as f:
-        pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_raw({key: vars(cs) for key, cs in stats.items()}, path)
     print(f"Cache saved to {path}")
 
 
 def load_cache(path: Path) -> dict[tuple, ConfigStats] | None:
-    if not path.exists():
+    cache_data = _load_raw(path)
+    if cache_data is None:
         return None
     try:
-        with open(path, "rb") as f:
-            cache_data = pickle.load(f)
         return {key: ConfigStats(**d) for key, d in cache_data.items()}
-    except (pickle.UnpicklingError, KeyError, TypeError) as e:
+    except (KeyError, TypeError) as e:
         print(f"Warning: Failed to load cache ({e}), will recompute")
         return None
 
@@ -549,20 +541,14 @@ def generate_all_plots(
 
     n_workers = min(3, os.cpu_count() or 1, len(tasks))
     print(f"Generating {len(tasks)} figures across {n_workers} workers...")
-
-    with Pool(
-        n_workers,
+    run_pool(
+        _run_plot_task, tasks,
+        n_workers=n_workers,
         initializer=_init_plot_worker,
         initargs=(online_stats, offline_stats),
-    ) as pool:
-        for i, _ in enumerate(pool.imap_unordered(_run_plot_task, tasks), 1):
-            print(
-                f"\r  Progress: {i}/{len(tasks)} ({100 * i / len(tasks):.0f}%)",
-                end="",
-                flush=True,
-            )
-
-    print(f"\nAll plots saved to {FIGURES_PATH}/")
+        label="Progress",
+    )
+    print(f"All plots saved to {FIGURES_PATH}/")
 
 
 # =============================================================================

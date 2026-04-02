@@ -23,10 +23,7 @@ Options:
 """
 
 import argparse
-import os
-import pickle
 from dataclasses import dataclass
-from multiprocessing import Pool
 from pathlib import Path
 
 import matplotlib
@@ -34,9 +31,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from scipy import stats as scipy_stats
 
-from _common import CACHE_DIR, GAMMA_NAMES, BL_KEY_COLS, fmt_seeds
+from _cache import save_cache as _save_raw, load_cache as _load_raw
+from _common import CACHE_DIR, GAMMA_NAMES, BL_KEY_COLS, fmt_seeds, extract_curves
+from _parallel import run_pool
+from _stats import MetricStats, make_stats_log_ci, make_stats_linear_ci, wrap_deterministic
 
 
 # =============================================================================
@@ -62,18 +61,6 @@ BATCH_COLORS = {1: "C0", 2: "C2", 5: "C3", 10: "C1", 50: "C4"}
 # =============================================================================
 # Data Structures
 # =============================================================================
-
-
-@dataclass
-class MetricStats:
-    """Per-metric statistics with precomputed plotting quantities."""
-
-    mean: np.ndarray       # (n_steps,)
-    n: int
-    ci_lo: np.ndarray      # 95% CI lower
-    ci_hi: np.ndarray      # 95% CI upper
-    min_vals: np.ndarray | None   # None when n == 1
-    max_vals: np.ndarray | None
 
 
 @dataclass
@@ -111,75 +98,6 @@ class CompConfigStats:
     sgd_balance_diffs: dict[int, MetricStats]
     sgd_balance_ratios: dict[int, MetricStats]
     sgd_end_to_end: MetricStats | None
-
-
-# =============================================================================
-# Statistics Helpers
-# =============================================================================
-
-
-def _extract_curves(df: pl.DataFrame, col: str) -> np.ndarray:
-    """Extract metric curves as a (n_runs, n_steps) numpy array."""
-    return np.vstack(df[col].to_list())
-
-
-def _make_stats(curves: np.ndarray) -> MetricStats:
-    """Build MetricStats with log-space 95% CI."""
-    n = len(curves)
-    mean = curves.mean(axis=0)
-
-    if n == 1:
-        return MetricStats(
-            mean=mean, n=1, ci_lo=mean, ci_hi=mean,
-            min_vals=None, max_vals=None,
-        )
-
-    var = curves.var(axis=0, ddof=1)
-    t_val = scipy_stats.t.ppf(0.975, df=n - 1)
-    sem = np.sqrt(var / n)
-
-    relative_sem = sem / np.maximum(np.abs(mean), 1e-30)
-    ci_factor = np.exp(np.minimum(t_val * relative_sem, 700))
-
-    return MetricStats(
-        mean=mean, n=n,
-        ci_lo=mean / ci_factor,
-        ci_hi=mean * ci_factor,
-        min_vals=curves.min(axis=0),
-        max_vals=curves.max(axis=0),
-    )
-
-
-def _make_stats_linear_ci(curves: np.ndarray) -> MetricStats:
-    """Build MetricStats with linear 95% CI (for metrics that can be negative)."""
-    n = len(curves)
-    mean = curves.mean(axis=0)
-
-    if n == 1:
-        return MetricStats(
-            mean=mean, n=1, ci_lo=mean, ci_hi=mean,
-            min_vals=None, max_vals=None,
-        )
-
-    var = curves.var(axis=0, ddof=1)
-    t_val = scipy_stats.t.ppf(0.975, df=n - 1)
-    sem = np.sqrt(var / n)
-
-    return MetricStats(
-        mean=mean, n=n,
-        ci_lo=mean - t_val * sem,
-        ci_hi=mean + t_val * sem,
-        min_vals=curves.min(axis=0),
-        max_vals=curves.max(axis=0),
-    )
-
-
-def _wrap_deterministic(arr: np.ndarray) -> MetricStats:
-    """Wrap a deterministic array as MetricStats with n=1."""
-    return MetricStats(
-        mean=arr, n=1, ci_lo=arr, ci_hi=arr,
-        min_vals=None, max_vals=None,
-    )
 
 
 # =============================================================================
@@ -241,12 +159,12 @@ def _load_gd_ref(gd_dir: Path) -> dict[tuple, dict]:
             eff_raw = np.array(row["end_to_end_weight_norm"])
 
         result[key] = {
-            "layer_norms": {i: _wrap_deterministic(v) for i, v in layer_norms_raw.items()},
-            "gram_norms": {i: _wrap_deterministic(v) for i, v in gram_norms_raw.items()},
-            "balance_diffs": {i: _wrap_deterministic(v) for i, v in balance_diffs_raw.items()},
-            "balance_ratios": {i: _wrap_deterministic(v) for i, v in balance_ratios_raw.items()},
+            "layer_norms": {i: wrap_deterministic(v) for i, v in layer_norms_raw.items()},
+            "gram_norms": {i: wrap_deterministic(v) for i, v in gram_norms_raw.items()},
+            "balance_diffs": {i: wrap_deterministic(v) for i, v in balance_diffs_raw.items()},
+            "balance_ratios": {i: wrap_deterministic(v) for i, v in balance_ratios_raw.items()},
             "param_norm": param_norm,
-            "end_to_end_weight_norm": _wrap_deterministic(eff_raw) if eff_raw is not None else None,
+            "end_to_end_weight_norm": wrap_deterministic(eff_raw) if eff_raw is not None else None,
         }
 
     print(f"  {len(result)} GD configs loaded")
@@ -283,22 +201,22 @@ def _load_online_ref(baseline_dir: Path) -> dict[tuple, dict]:
         gram_norms = {}
         for i in range(n_layers):
             if f"layer_norm_{i}" in gdf.columns:
-                layer_norms[i] = _make_stats(_extract_curves(gdf, f"layer_norm_{i}"))
+                layer_norms[i] = make_stats_log_ci(extract_curves(gdf, f"layer_norm_{i}"))
             if f"gram_norm_{i}" in gdf.columns:
-                gram_norms[i] = _make_stats(_extract_curves(gdf, f"gram_norm_{i}"))
+                gram_norms[i] = make_stats_log_ci(extract_curves(gdf, f"gram_norm_{i}"))
 
         balance_diffs = {}
         balance_ratios = {}
         for i in range(n_pairs):
             col = f"balance_diff_{i}"
             if col in gdf.columns:
-                diff_curves = _extract_curves(gdf, col)
-                balance_diffs[i] = _make_stats(diff_curves)
+                diff_curves = extract_curves(gdf, col)
+                balance_diffs[i] = make_stats_log_ci(diff_curves)
                 gcol_l, gcol_r = f"gram_norm_{i}", f"gram_norm_{i + 1}"
                 if gcol_l in gdf.columns and gcol_r in gdf.columns:
-                    gl = _extract_curves(gdf, gcol_l)
-                    gr = _extract_curves(gdf, gcol_r)
-                    balance_ratios[i] = _make_stats_linear_ci(
+                    gl = extract_curves(gdf, gcol_l)
+                    gr = extract_curves(gdf, gcol_r)
+                    balance_ratios[i] = make_stats_linear_ci(
                         diff_curves / np.maximum(gl + gr, 1e-30)
                     )
 
@@ -309,7 +227,7 @@ def _load_online_ref(baseline_dir: Path) -> dict[tuple, dict]:
 
         eff = None
         if "end_to_end_weight_norm" in gdf.columns:
-            eff = _make_stats(_extract_curves(gdf, "end_to_end_weight_norm"))
+            eff = make_stats_log_ci(extract_curves(gdf, "end_to_end_weight_norm"))
 
         result[key] = {
             "layer_norms": layer_norms,
@@ -377,21 +295,21 @@ def compute_stats(
         width, gamma, noise, seed, batch_size = key
 
         # -- Loss --
-        loss_ref_curves = _extract_curves(gdf, "test_loss_a")
+        loss_ref_curves = extract_curves(gdf, "test_loss_a")
         if is_online:
-            loss_ref = _make_stats(loss_ref_curves)
+            loss_ref = make_stats_log_ci(loss_ref_curves)
         else:
-            loss_ref = _wrap_deterministic(loss_ref_curves.mean(axis=0))
-        loss_sgd = _make_stats(_extract_curves(gdf, "test_loss_b"))
+            loss_ref = wrap_deterministic(loss_ref_curves.mean(axis=0))
+        loss_sgd = make_stats_log_ci(extract_curves(gdf, "test_loss_b"))
 
         # -- Distances --
-        param_dist_curves = _extract_curves(gdf, "param_distance")
-        param_distance = _make_stats(param_dist_curves)
-        frobenius_distance = _make_stats(_extract_curves(gdf, "frobenius_distance"))
+        param_dist_curves = extract_curves(gdf, "param_distance")
+        param_distance = make_stats_log_ci(param_dist_curves)
+        frobenius_distance = make_stats_log_ci(extract_curves(gdf, "frobenius_distance"))
 
         layer_distances: dict[int, MetricStats] = {}
         for i in range(n_comp_layers):
-            layer_distances[i] = _make_stats(_extract_curves(gdf, f"layer_distance_{i}"))
+            layer_distances[i] = make_stats_log_ci(extract_curves(gdf, f"layer_distance_{i}"))
 
         # -- Ref model metrics (from preloaded ref_data) --
         ref_key = (width, gamma, noise, seed)
@@ -414,23 +332,23 @@ def compute_stats(
         sgd_ln_curves: dict[int, np.ndarray] = {}
         if has_b_metrics:
             for i in range(n_b_layers):
-                sgd_ln_curves[i] = _extract_curves(gdf, f"layer_norm_{i}_b")
-                sgd_layer_norms[i] = _make_stats(sgd_ln_curves[i])
+                sgd_ln_curves[i] = extract_curves(gdf, f"layer_norm_{i}_b")
+                sgd_layer_norms[i] = make_stats_log_ci(sgd_ln_curves[i])
 
             for i in range(n_b_layers):
-                sgd_gram_norms[i] = _make_stats(_extract_curves(gdf, f"gram_norm_{i}_b"))
+                sgd_gram_norms[i] = make_stats_log_ci(extract_curves(gdf, f"gram_norm_{i}_b"))
 
             for i in range(n_b_pairs):
-                diff_curves = _extract_curves(gdf, f"balance_diff_{i}_b")
-                sgd_balance_diffs[i] = _make_stats(diff_curves)
-                gl = _extract_curves(gdf, f"gram_norm_{i}_b")
-                gr = _extract_curves(gdf, f"gram_norm_{i + 1}_b")
-                sgd_balance_ratios[i] = _make_stats_linear_ci(
+                diff_curves = extract_curves(gdf, f"balance_diff_{i}_b")
+                sgd_balance_diffs[i] = make_stats_log_ci(diff_curves)
+                gl = extract_curves(gdf, f"gram_norm_{i}_b")
+                gr = extract_curves(gdf, f"gram_norm_{i + 1}_b")
+                sgd_balance_ratios[i] = make_stats_linear_ci(
                     diff_curves / np.maximum(gl + gr, 1e-30)
                 )
 
-            sgd_end_to_end = _make_stats(
-                _extract_curves(gdf, "end_to_end_weight_norm_b")
+            sgd_end_to_end = make_stats_log_ci(
+                extract_curves(gdf, "end_to_end_weight_norm_b")
             )
 
             # -- Cosine similarity (per-run via polarisation identity) --
@@ -440,7 +358,7 @@ def compute_stats(
                 if is_online and n_a_layers > 0:
                     # Per-run ref norms from _a columns
                     ref_pnorm_sq = sum(
-                        _extract_curves(gdf, f"layer_norm_{i}_a") ** 2
+                        extract_curves(gdf, f"layer_norm_{i}_a") ** 2
                         for i in range(n_a_layers)
                     )
                     ref_pn = np.sqrt(ref_pnorm_sq)
@@ -452,7 +370,7 @@ def compute_stats(
                 dot = (ref_pnorm_sq + sgd_pnorm_sq - param_dist_curves ** 2) / 2.0
                 sgd_pn = np.sqrt(sgd_pnorm_sq)
                 denom = ref_pn * np.maximum(sgd_pn, 1e-30)
-                cosine_sim = _make_stats_linear_ci(dot / denom)
+                cosine_sim = make_stats_linear_ci(dot / denom)
 
         stats[key] = CompConfigStats(
             steps=steps,
@@ -507,7 +425,6 @@ def _de_dict_ms(d: dict) -> dict[int, MetricStats]:
 
 
 def _save_cache(stats: dict[tuple, CompConfigStats], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = {}
     for key, cs in stats.items():
         data[key] = {
@@ -530,17 +447,15 @@ def _save_cache(stats: dict[tuple, CompConfigStats], path: Path) -> None:
             "sgd_balance_ratios": _ser_dict_ms(cs.sgd_balance_ratios),
             "sgd_end_to_end": _ser_ms(cs.sgd_end_to_end),
         }
-    with open(path, "wb") as f:
-        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_raw(data, path)
     print(f"Cache saved to {path}")
 
 
 def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
-    if not path.exists():
+    cache_data = _load_raw(path)
+    if cache_data is None:
         return None
     try:
-        with open(path, "rb") as f:
-            data = pickle.load(f)
         return {
             key: CompConfigStats(
                 steps=d["steps"],
@@ -562,9 +477,9 @@ def _load_cache(path: Path) -> dict[tuple, CompConfigStats] | None:
                 sgd_balance_ratios=_de_dict_ms(d.get("sgd_balance_ratios", {})),
                 sgd_end_to_end=_de_ms(d.get("sgd_end_to_end")),
             )
-            for key, d in data.items()
+            for key, d in cache_data.items()
         }
-    except (pickle.UnpicklingError, KeyError, TypeError) as e:
+    except (KeyError, TypeError) as e:
         print(f"Warning: Failed to load cache ({e}), will recompute")
         return None
 
@@ -954,22 +869,17 @@ def generate_all(
                         n_batch_seeds, f"layer_distances_{tag}",
                     ))
 
-    n_workers = min(N_WORKERS, len(tasks))
-    print(f"Generating {len(tasks)} {regime_name} figures across {n_workers} workers...")
+    print(f"Generating {len(tasks)} {regime_name} figures...")
 
-    with Pool(
-        n_workers,
+    run_pool(
+        _run_task, tasks,
+        max_workers=N_WORKERS,
         initializer=_init_worker,
         initargs=(stats, str(output_dir)),
-    ) as pool:
-        for i, _ in enumerate(pool.imap_unordered(_run_task, tasks), 1):
-            if i % 5 == 0 or i == len(tasks):
-                print(
-                    f"\r  {regime_name}: {i}/{len(tasks)} ({100 * i / len(tasks):.0f}%)",
-                    end="", flush=True,
-                )
+        label=regime_name,
+    )
 
-    print(f"\n{regime_name} plots saved to {output_dir}/")
+    print(f"{regime_name} plots saved to {output_dir}/")
 
 
 # =============================================================================

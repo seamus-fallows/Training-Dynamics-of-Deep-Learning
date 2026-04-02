@@ -15,8 +15,6 @@ Usage:
 """
 
 import argparse
-import hashlib
-import pickle
 import time
 from pathlib import Path
 
@@ -28,7 +26,11 @@ import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 
-from _common import CACHE_DIR, GAMMA_NAMES
+from _cache import load_fingerprinted_cache, save_fingerprinted_cache
+from _common import (
+    CACHE_DIR, GAMMA_NAMES,
+    compute_ci, data_fingerprint, pp_label, sync_ylims,
+)
 
 
 # ── Config ──────────────────────────────────────────────────────────────
@@ -96,31 +98,13 @@ def compute_erank(sv_array):
 
 # ── Statistics ──────────────────────────────────────────────────────────
 
-def compute_scalar_stats(curves):
-    """Compute mean and 95% CI for scalar curves.
-
-    curves: (n_seeds, n_steps)
-    Returns: mean, ci_lo, ci_hi — each (n_steps,)
-    """
-    n = curves.shape[0]
-    mean = curves.mean(axis=0)
-    if n == 1:
-        return mean, mean, mean
-    sem = curves.std(axis=0, ddof=1) / np.sqrt(n)
-    z = 1.96
-    return mean, mean - z * sem, mean + z * sem
+compute_scalar_stats = compute_ci
 
 
 # ── Caching ─────────────────────────────────────────────────────────────
 
 def _data_fingerprint():
-    h = hashlib.md5()
-    for name in DATA_SUBDIRS:
-        p = DATA_ROOT / name / "results.parquet"
-        if p.exists():
-            stat = p.stat()
-            h.update(f"{p}:{stat.st_mtime}:{stat.st_size}".encode())
-    return h.hexdigest()[:12]
+    return data_fingerprint(DATA_ROOT, DATA_SUBDIRS)
 
 
 BATCH_SIZE = 500  # rows per pyarrow batch — tested safe for ~2GB free RAM
@@ -219,10 +203,9 @@ def compute_all_stats(recompute=False):
     cache_path = CACHE_DIR / "erank_stats.pkl"
     fingerprint = _data_fingerprint()
 
-    if not recompute and cache_path.exists():
-        with open(cache_path, "rb") as f:
-            cached = pickle.load(f)
-        if cached.get("fingerprint") == fingerprint:
+    if not recompute:
+        cached = load_fingerprinted_cache(cache_path, fingerprint)
+        if cached is not None:
             print(f"Loaded cached erank stats ({len(cached['stats'])} configs)")
             return cached["stats"]
 
@@ -250,9 +233,7 @@ def compute_all_stats(recompute=False):
             stat_key = (regime_key, noise_std, hd, model_seed, gamma)
             all_stats[stat_key] = (gd_s, sgd_s)
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    with open(cache_path, "wb") as f:
-        pickle.dump({"fingerprint": fingerprint, "stats": all_stats}, f)
+    save_fingerprinted_cache({"stats": all_stats}, cache_path, fingerprint)
     print(f"Computed and cached erank stats ({len(all_stats)} configs)")
 
     return all_stats
@@ -264,29 +245,8 @@ GD_COLOR = "C0"
 SGD_COLOR = "C3"
 
 
-def pp_label(i, j):
-    if i == j:
-        return f"$W_{{{j}}}$"
-    layers = " ".join(f"W_{{{k}}}" for k in range(j, i - 1, -1))
-    return f"${layers}$"
-
-
 def pp_ylabel(i, j):
     return f"erank({pp_label(i, j)})"
-
-
-def gamma_label(gamma):
-    return GAMMA_NAMES[gamma]
-
-
-def _sync_ylims(axes):
-    """Set consistent y-axis limits across columns for each row."""
-    n_rows, n_cols = axes.shape
-    for r in range(n_rows):
-        ymin = min(axes[r, c].get_ylim()[0] for c in range(n_cols))
-        ymax = max(axes[r, c].get_ylim()[1] for c in range(n_cols))
-        for c in range(n_cols):
-            axes[r, c].set_ylim(ymin, ymax)
 
 
 def plot_erank_panel(ax, gd, sgd, pp_col):
@@ -313,7 +273,7 @@ def make_individual_figure(gamma_gd, gamma_sgd, gd_label, sgd_label):
             if c == 0:
                 ax.set_ylabel(pp_ylabel(i, j), fontsize=10)
             if r == 0:
-                ax.set_title(gamma_label(gamma), fontsize=10)
+                ax.set_title(GAMMA_NAMES[gamma], fontsize=10)
             if r == n_rows - 1:
                 ax.set_xlabel("Step")
 
@@ -323,7 +283,7 @@ def make_individual_figure(gamma_gd, gamma_sgd, gd_label, sgd_label):
                label=sgd_label),
     ]
     axes[0, -1].legend(handles=handles, fontsize=7, loc="lower right")
-    _sync_ylims(axes)
+    sync_ylims(axes)
     fig.tight_layout()
     return fig
 
@@ -346,7 +306,7 @@ def make_composite_figure(gamma_gd, gamma_sgd, products, gd_label, sgd_label,
             if c == 0:
                 ax.set_ylabel(pp_ylabel(i, j), fontsize=10)
             if r == 0:
-                ax.set_title(gamma_label(gamma), fontsize=10)
+                ax.set_title(GAMMA_NAMES[gamma], fontsize=10)
             if r == n_rows - 1:
                 ax.set_xlabel("Step")
 
@@ -359,7 +319,7 @@ def make_composite_figure(gamma_gd, gamma_sgd, products, gd_label, sgd_label,
     if legend_kwargs:
         leg_kw.update(legend_kwargs)
     axes[0, -1].legend(handles=handles, **leg_kw)
-    _sync_ylims(axes)
+    sync_ylims(axes)
     fig.tight_layout()
     return fig
 

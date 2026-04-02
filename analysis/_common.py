@@ -1,5 +1,6 @@
-"""Shared utilities for GPH analysis scripts."""
+"""Shared utilities for analysis scripts."""
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -59,9 +60,46 @@ def mean_centered_spread(
     return _interp(q_lo), _interp(q_hi)
 
 
+def compute_ci(
+    curves: np.ndarray, z: float = 1.96,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Mean and z-based confidence interval for (n_seeds, ...) curves.
+
+    Works for both 2D (n, steps) and 3D (n, steps, svs) arrays.
+    Returns (mean, ci_lo, ci_hi) with the same shape as curves[0].
+    """
+    n = curves.shape[0]
+    mean = curves.mean(axis=0)
+    if n == 1:
+        return mean, mean, mean
+    sem = curves.std(axis=0, ddof=1) / np.sqrt(n)
+    return mean, mean - z * sem, mean + z * sem
+
+
 # =============================================================================
 # Data Loading
 # =============================================================================
+
+
+def extract_curves(df: pl.DataFrame, col: str) -> np.ndarray:
+    """Extract a list-of-lists column as a (n_rows, n_steps) numpy array."""
+    return np.vstack(df[col].to_list())
+
+
+def extract_sv_3d(df: pl.DataFrame, col: str, n_rows: int) -> np.ndarray:
+    """Extract SV column as a (n_rows, n_steps, n_svs) numpy array."""
+    return np.stack([np.stack(df[col][i]) for i in range(n_rows)])
+
+
+def data_fingerprint(data_root: Path, subdirs: list[str]) -> str:
+    """MD5 hash of mtime+size of parquet files — invalidates cache on data change."""
+    h = hashlib.md5()
+    for name in subdirs:
+        p = data_root / name / "results.parquet"
+        if p.exists():
+            stat = p.stat()
+            h.update(f"{p}:{stat.st_mtime}:{stat.st_size}".encode())
+    return h.hexdigest()[:12]
 
 
 def build_filter(key_cols: list[str], values: tuple) -> pl.Expr:
@@ -126,3 +164,21 @@ def suptitle_params(
         f"Label noise std = {noise}",
     ]
     return " | ".join(parts)
+
+
+def pp_label(i: int, j: int) -> str:
+    """LaTeX label for partial product W_j ... W_i."""
+    if i == j:
+        return f"$W_{{{j}}}$"
+    layers = " ".join(f"W_{{{k}}}" for k in range(j, i - 1, -1))
+    return f"${layers}$"
+
+
+def sync_ylims(axes: np.ndarray) -> None:
+    """Set consistent y-axis limits across columns for each row."""
+    n_rows, n_cols = axes.shape
+    for r in range(n_rows):
+        ymin = min(axes[r, c].get_ylim()[0] for c in range(n_cols))
+        ymax = max(axes[r, c].get_ylim()[1] for c in range(n_cols))
+        for c in range(n_cols):
+            axes[r, c].set_ylim(ymin, ymax)

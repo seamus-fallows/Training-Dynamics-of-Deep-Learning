@@ -10,8 +10,6 @@ Usage:
     python analysis/lr_sweep.py
 """
 
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -20,13 +18,14 @@ import numpy as np
 import polars as pl
 
 from _common import GAMMA_NAMES
-
-DATA_PATH = Path("outputs/lr_sweep_online/results.parquet")
-FIGURES_PATH = Path("figures/lr_sweep_online")
+from _lr_sweep_common import DATA_PATH, FIGURES_PATH
 
 
 def main():
-    df = pl.read_parquet(DATA_PATH)
+    df = pl.scan_parquet(DATA_PATH).select([
+        "model.gamma", "model.model_seed", "training.batch_size",
+        "training.lr", "step", "test_loss",
+    ]).collect()
 
     gammas = sorted(df["model.gamma"].unique().to_list())
     model_seeds = sorted(df["model.model_seed"].unique().to_list())

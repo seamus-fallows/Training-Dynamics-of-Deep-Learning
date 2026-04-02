@@ -12,8 +12,6 @@ Usage:
     python analysis/lr_sweep_layer_sv.py
 """
 
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -21,20 +19,29 @@ import numpy as np
 import polars as pl
 
 from _common import GAMMA_NAMES
-
-DATA_PATH = Path("outputs/lr_sweep_online/results.parquet")
-FIGURES_PATH = Path("figures/lr_sweep_online")
+from _lr_sweep_common import DATA_PATH, FIGURES_PATH
 
 # Architecture: [5, 100, 100, 100, 5] -> 4 layers
 LAYER_SHAPES = [(100, 5), (100, 100), (100, 100), (5, 100)]
 N_PLOT_SVS = 5
 
 
+N_LAYERS = len(LAYER_SHAPES)
+
 PLOT_SEEDS = [0, 1]
 
 
 def main():
-    df = pl.read_parquet(DATA_PATH)
+    # Build list of layer SV columns needed
+    layer_sv_cols = [
+        f"layer_{layer_idx}_sv_{sv_idx}"
+        for layer_idx in range(N_LAYERS)
+        for sv_idx in range(N_PLOT_SVS)
+    ]
+    df = pl.scan_parquet(DATA_PATH).select([
+        "model.gamma", "model.model_seed", "training.batch_size",
+        "training.lr", "step",
+    ] + layer_sv_cols).collect()
 
     gammas = sorted(df["model.gamma"].unique().to_list())
     batch_sizes = sorted(df["training.batch_size"].unique().to_list(), reverse=True)
@@ -43,13 +50,11 @@ def main():
     cmap = plt.cm.winter
     lr_colors = {lr: cmap(i / (len(lrs) - 1)) for i, lr in enumerate(lrs)}
 
-    n_layers = len(LAYER_SHAPES)
-
     FIGURES_PATH.mkdir(parents=True, exist_ok=True)
 
     for bs in batch_sizes:
         for seed in PLOT_SEEDS:
-            for layer_idx in range(n_layers):
+            for layer_idx in range(N_LAYERS):
                 out_rows, out_cols = LAYER_SHAPES[layer_idx]
                 n_svs = min(out_rows, out_cols)
                 n_plot = min(N_PLOT_SVS, n_svs)
